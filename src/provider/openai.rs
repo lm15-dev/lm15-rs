@@ -4,7 +4,7 @@ use crate::errors::{map_http_error, LM15Error};
 use crate::transport::{HttpRequest, HttpResponse, SSEEvent, UreqTransport};
 use crate::types::*;
 use super::{Adapter, ProviderManifest};
-use super::common::message_to_openai_input;
+use super::common::{part_to_openai_input, parts_to_text};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -30,11 +30,54 @@ impl OpenAIAdapter {
         h
     }
 
+    fn build_input(messages: &[Message]) -> Vec<Value> {
+        let mut items: Vec<Value> = Vec::new();
+        for msg in messages {
+            if msg.role == Role::Tool {
+                for part in &msg.parts {
+                    if part.part_type == PartType::ToolResult {
+                        if let Some(id) = &part.id {
+                            let text = part.content.as_ref().map(|c| parts_to_text(c)).unwrap_or_default();
+                            items.push(serde_json::json!({
+                                "type": "function_call_output",
+                                "call_id": id,
+                                "output": text,
+                            }));
+                        }
+                    }
+                }
+                continue;
+            }
+            let content_parts: Vec<Value> = msg.parts.iter()
+                .filter(|p| p.part_type != PartType::ToolCall && p.part_type != PartType::ToolResult)
+                .map(part_to_openai_input)
+                .collect();
+            if !content_parts.is_empty() {
+                items.push(serde_json::json!({"role": msg.role, "content": content_parts}));
+            }
+            for part in &msg.parts {
+                if part.part_type == PartType::ToolCall {
+                    if let (Some(id), Some(name)) = (&part.id, &part.name) {
+                        let args = part.input.as_ref()
+                            .map(|i| serde_json::to_string(i).unwrap_or_else(|_| "{}".into()))
+                            .unwrap_or_else(|| "{}".into());
+                        items.push(serde_json::json!({
+                            "type": "function_call",
+                            "call_id": id,
+                            "name": name,
+                            "arguments": args,
+                        }));
+                    }
+                }
+            }
+        }
+        items
+    }
+
     fn payload(&self, request: &LMRequest, stream: bool) -> Value {
-        let messages: Vec<Value> = request.messages.iter().map(message_to_openai_input).collect();
         let mut p = serde_json::json!({
             "model": request.model,
-            "input": messages,
+            "input": Self::build_input(&request.messages),
             "stream": stream,
         });
 

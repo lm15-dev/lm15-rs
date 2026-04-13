@@ -54,13 +54,24 @@ impl AnthropicAdapter {
                 }
                 serde_json::json!({"type": "text", "text": ""})
             }
+            PartType::ToolCall => {
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": p.id,
+                    "name": p.name,
+                    "input": p.input.as_ref().unwrap_or(&HashMap::new()),
+                })
+            }
             PartType::ToolResult => {
                 let text = p.content.as_ref().map(|c| parts_to_text(c)).unwrap_or_default();
-                serde_json::json!({
-                    "type": "tool_result", "tool_use_id": p.id,
-                    "is_error": p.is_error.unwrap_or(false),
-                    "content": [{"type": "text", "text": text}],
-                })
+                let mut out = serde_json::json!({"type": "tool_result", "tool_use_id": p.id});
+                if !text.is_empty() {
+                    out["content"] = Value::String(text);
+                }
+                if p.is_error == Some(true) {
+                    out["is_error"] = Value::Bool(true);
+                }
+                out
             }
             _ => serde_json::json!({"type": "text", "text": p.text.as_deref().unwrap_or("")}),
         }
@@ -69,7 +80,8 @@ impl AnthropicAdapter {
     fn build_payload(&self, request: &LMRequest, stream: bool) -> Value {
         let messages: Vec<Value> = request.messages.iter().map(|m| {
             let content: Vec<Value> = m.parts.iter().map(|p| self.part_payload(p)).collect();
-            serde_json::json!({"role": m.role, "content": content})
+            let role = match m.role { Role::Tool => "user", Role::User => "user", Role::Assistant => "assistant" };
+            serde_json::json!({"role": role, "content": content})
         }).collect();
 
         let max_tokens = request.config.max_tokens.unwrap_or(1024);

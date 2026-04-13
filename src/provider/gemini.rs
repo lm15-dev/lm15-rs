@@ -51,12 +51,23 @@ impl GeminiAdapter {
                 }
                 serde_json::json!({"text": ""})
             }
+            PartType::ToolCall => {
+                let mut fc = serde_json::json!({"name": p.name.as_deref().unwrap_or(""), "args": p.input.as_ref().unwrap_or(&HashMap::new())});
+                if let Some(id) = &p.id {
+                    fc["id"] = Value::String(id.clone());
+                }
+                serde_json::json!({"functionCall": fc})
+            }
             PartType::ToolResult => {
                 let text = p.content.as_ref().map(|c| {
                     c.iter().filter(|x| x.part_type == PartType::Text)
                         .filter_map(|x| x.text.as_deref()).collect::<Vec<_>>().join("")
                 }).unwrap_or_default();
-                serde_json::json!({"functionResponse": {"name": p.name.as_deref().unwrap_or("tool"), "response": {"result": {"text": text}}}})
+                let mut fr = serde_json::json!({"name": p.name.as_deref().unwrap_or("tool"), "response": {"result": text}});
+                if let Some(id) = &p.id {
+                    fr["id"] = Value::String(id.clone());
+                }
+                serde_json::json!({"functionResponse": fr})
             }
             _ => serde_json::json!({"text": p.text.as_deref().unwrap_or("")}),
         }

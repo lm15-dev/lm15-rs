@@ -40,6 +40,8 @@ pub struct CurlOptions {
     pub max_tokens: Option<i64>,
     pub top_p: Option<f64>,
     pub stop: Option<Vec<String>>,
+    /// Provider-specific passthrough fields merged into config.provider.
+    pub provider_config: Option<JsonObject>,
 }
 
 fn build_lm_request(model: &str, prompt: Option<&str>, opts: &CurlOptions) -> Result<LMRequest, LM15Error> {
@@ -61,6 +63,13 @@ fn build_lm_request(model: &str, prompt: Option<&str>, opts: &CurlOptions) -> Re
     }
     if let Some(output) = &opts.output {
         provider_cfg.insert("output".into(), output.clone().into());
+    }
+
+    // Merge provider_config passthrough
+    if let Some(pc) = &opts.provider_config {
+        for (k, v) in pc {
+            provider_cfg.insert(k.clone(), v.clone());
+        }
     }
 
     let config = Config {

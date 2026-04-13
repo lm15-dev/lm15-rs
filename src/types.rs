@@ -398,6 +398,78 @@ impl Message {
     }
 }
 
+// ── Canonical JSON serialization ───────────────────────────────────
+
+/// Create a Part from a canonical JSON value.
+pub fn part_from_dict(v: &serde_json::Value) -> Part {
+    let t = v.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+    match t {
+        "text" => Part::text(v.get("text").and_then(|t| t.as_str()).unwrap_or("")),
+        "thinking" => {
+            let mut p = Part::thinking(v.get("text").and_then(|t| t.as_str()).unwrap_or(""));
+            if let Some(r) = v.get("redacted").and_then(|r| r.as_bool()) { p.redacted = Some(r); }
+            if let Some(s) = v.get("summary").and_then(|s| s.as_str()) { p.summary = Some(s.into()); }
+            p
+        }
+        "refusal" => Part::refusal(v.get("text").and_then(|t| t.as_str()).unwrap_or("")),
+        "image" | "audio" | "video" | "document" => {
+            let src = v.get("source").unwrap_or(&serde_json::Value::Null);
+            let source = DataSource {
+                source_type: src.get("type").and_then(|t| t.as_str()).unwrap_or("url").into(),
+                url: src.get("url").and_then(|u| u.as_str()).map(Into::into),
+                data: src.get("data").and_then(|d| d.as_str()).map(Into::into),
+                media_type: src.get("media_type").and_then(|m| m.as_str()).map(Into::into),
+                file_id: src.get("file_id").and_then(|f| f.as_str()).map(Into::into),
+                detail: src.get("detail").and_then(|d| d.as_str()).map(Into::into),
+            };
+            let pt = serde_json::from_value::<PartType>(serde_json::Value::String(t.into())).unwrap_or(PartType::Text);
+            Part {
+                part_type: pt,
+                source: Some(source),
+                ..Part::text("")
+            }
+        }
+        "tool_call" => Part::tool_call(
+            v.get("id").and_then(|i| i.as_str()).unwrap_or(""),
+            v.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+            v.get("arguments").and_then(|a| a.as_object()).map(|o| {
+                o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            }).unwrap_or_default(),
+        ),
+        "tool_result" => {
+            let content = match v.get("content") {
+                Some(serde_json::Value::String(s)) if !s.is_empty() => vec![Part::text(s)],
+                Some(serde_json::Value::Array(arr)) => arr.iter().map(part_from_dict).collect(),
+                _ => vec![],
+            };
+            Part::tool_result(
+                v.get("id").and_then(|i| i.as_str()).unwrap_or(""),
+                content,
+                v.get("name").and_then(|n| n.as_str()),
+            )
+        }
+        _ => Part::text(v.get("text").and_then(|t| t.as_str()).unwrap_or("")),
+    }
+}
+
+/// Create a Message from a canonical JSON value.
+pub fn message_from_dict(v: &serde_json::Value) -> Message {
+    let role = v.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+    let parts: Vec<Part> = v.get("parts").and_then(|p| p.as_array())
+        .map(|arr| arr.iter().map(part_from_dict).collect())
+        .unwrap_or_default();
+    Message {
+        role: serde_json::from_value::<Role>(serde_json::Value::String(role.into())).unwrap_or(Role::User),
+        parts,
+        name: v.get("name").and_then(|n| n.as_str()).map(Into::into),
+    }
+}
+
+/// Parse a JSON array of canonical messages.
+pub fn messages_from_json(data: &[serde_json::Value]) -> Vec<Message> {
+    data.iter().map(message_from_dict).collect()
+}
+
 // ── Request / Response ─────────────────────────────────────────────
 
 /// Normalized request to any provider.

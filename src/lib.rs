@@ -31,6 +31,7 @@ pub use types::{
     EmbeddingRequest, EmbeddingResponse,
     FileUploadRequest, FileUploadResponse,
     ImageGenerationRequest, ImageGenerationResponse,
+    messages_from_json, message_from_dict, part_from_dict,
 };
 pub use errors::LM15Error;
 pub use client::UniversalLM;

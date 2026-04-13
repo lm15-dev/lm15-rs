@@ -17,7 +17,11 @@ pub fn part_to_openai_input(p: &Part) -> Value {
         PartType::Image => {
             if let Some(source) = &p.source {
                 if source.source_type == "url" {
-                    return serde_json::json!({"type": "input_image", "image_url": source.url.as_deref().unwrap_or("")});
+                    let mut out = serde_json::json!({"type": "input_image", "image_url": source.url.as_deref().unwrap_or("")});
+                    if let Some(detail) = &source.detail {
+                        out["detail"] = Value::String(detail.clone());
+                    }
+                    return out;
                 }
                 if source.source_type == "base64" {
                     let url = format!("data:{};base64,{}", source.media_type.as_deref().unwrap_or("image/png"), source.data.as_deref().unwrap_or(""));
