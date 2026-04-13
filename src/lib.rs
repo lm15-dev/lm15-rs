@@ -3,19 +3,8 @@
 //! One interface for OpenAI, Anthropic, and Gemini. Minimal dependencies.
 //!
 //! ```rust,no_run
-//! use lm15::types::{LMRequest, Message};
-//! use lm15::factory::build_default;
-//!
-//! let client = build_default(None);
-//! let request = LMRequest {
-//!     model: "gpt-4.1-mini".into(),
-//!     messages: vec![Message::user("Hello!")],
-//!     system: None,
-//!     tools: vec![],
-//!     config: Default::default(),
-//! };
-//! let response = client.complete(&request, "").unwrap();
-//! println!("{}", response.text().unwrap_or_default());
+//! let mut result = lm15::call("gpt-4.1-mini", "Hello.", None);
+//! println!("{}", result.text().unwrap());
 //! ```
 
 pub mod types;
@@ -26,6 +15,11 @@ pub mod provider;
 pub mod client;
 pub mod conversation;
 pub mod factory;
+pub mod result;
+pub mod model;
+pub mod middleware;
+pub mod cost;
+pub mod api;
 
 // Re-export key types at crate root
 pub use types::{
@@ -41,3 +35,8 @@ pub use client::UniversalLM;
 pub use conversation::Conversation;
 pub use factory::{build_default, BuildOpts, providers};
 pub use capabilities::resolve_provider;
+pub use result::LMResult;
+pub use model::{Model, ModelOpts, CallOpts, HistoryEntry, Reasoning};
+pub use cost::{CostBreakdown, estimate_cost};
+pub use middleware::{with_retries, with_cache, with_history, MiddlewareHistoryEntry};
+pub use api::{call, model, prepare, send, configure, CallOptions};
