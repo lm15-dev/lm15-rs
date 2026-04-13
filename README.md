@@ -1,4 +1,6 @@
-# lm15
+<p align="center">
+  <img src="https://raw.githubusercontent.com/lm15-dev/.github/main/assets/banners/banner-1200x300.png" alt="lm15" width="600">
+</p>
 
 [![crates.io](https://img.shields.io/crates/v/lm15.svg)](https://crates.io/crates/lm15)
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -130,6 +132,22 @@ let client = build_default(Some(&BuildOpts {
     env_file: Some(".env".into()),
     ..Default::default()
 }));
+```
+
+### Dump curl / HTTP request
+
+```rust
+use lm15::{dump_curl, dump_http, CurlOptions};
+
+let opts = CurlOptions {
+    env: Some(".env".into()),
+    ..Default::default()
+};
+
+println!("{}", dump_curl("gpt-4.1-mini", Some("Hello."), Some(&opts)).unwrap());
+println!("{}", serde_json::to_string_pretty(
+    &dump_http("gpt-4.1-mini", Some("Hello."), Some(&opts)).unwrap()
+).unwrap());
 ```
 
 ## Architecture
