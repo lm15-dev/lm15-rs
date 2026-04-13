@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 fn builtin_to_anthropic(tool: &Tool) -> Value {
     let wire_type = match tool.name.as_str() {
+        "web_search" => "web_search_20250305",
         "code_execution" => "code_execution_20250522",
         other => other,
     };
