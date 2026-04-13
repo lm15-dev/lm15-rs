@@ -18,8 +18,10 @@ pub mod factory;
 pub mod result;
 pub mod model;
 pub mod middleware;
+pub mod model_catalog;
 pub mod cost;
 pub mod api;
+pub mod curl;
 
 // Re-export key types at crate root
 pub use types::{
@@ -37,6 +39,16 @@ pub use factory::{build_default, BuildOpts, providers};
 pub use capabilities::resolve_provider;
 pub use result::LMResult;
 pub use model::{Model, ModelOpts, CallOpts, HistoryEntry, Reasoning};
-pub use cost::{CostBreakdown, estimate_cost};
+pub use model_catalog::{ModelSpec, fetch_models_dev, build_provider_model_index};
+pub use cost::{
+    CostBreakdown, estimate_cost, estimate_cost_for_spec,
+    enable_cost_tracking, disable_cost_tracking,
+    get_cost_index, set_cost_index, lookup_cost, sum_costs,
+};
 pub use middleware::{with_retries, with_cache, with_history, MiddlewareHistoryEntry};
-pub use api::{call, model, prepare, send, configure, CallOptions};
+pub use api::{call, model, prepare, send, configure, configure_with_tracking, CallOptions};
+pub use curl::{
+    CurlOptions, HttpRequestDump,
+    build_http_request, dump_curl, dump_http,
+    http_request_to_curl, http_request_to_dict,
+};

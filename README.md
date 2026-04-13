@@ -122,6 +122,43 @@ conv.user("My name is Max.");
 // ... send conv.messages() as request messages
 ```
 
+### Cost tracking
+
+```rust
+use lm15::*;
+
+configure_with_tracking(None, None, true).unwrap();
+
+let mut result = call("gpt-4.1-mini", "Explain TCP.", None);
+println!("{:?}", result.cost().unwrap());
+
+let client = std::sync::Arc::new(build_default(None));
+let mut model = Model::new(client, ModelOpts {
+    model: "claude-sonnet-4".into(),
+    ..Default::default()
+});
+model.history.push(HistoryEntry {
+    request: LMRequest {
+        model: "claude-sonnet-4".into(),
+        messages: vec![Message::user("hi")],
+        system: None,
+        tools: vec![],
+        config: Default::default(),
+    },
+    response: LMResponse {
+        id: "r1".into(),
+        model: "claude-sonnet-4".into(),
+        message: Message { role: Role::Assistant, parts: vec![Part::text("ok")], name: None },
+        finish_reason: FinishReason::Stop,
+        usage: Usage::default(),
+        provider: None,
+    },
+});
+println!("{:?}", model.total_cost());
+```
+
+Manual estimation is also available with `estimate_cost()`, `fetch_models_dev()`, and `lookup_cost()`.
+
 ### Env file
 
 ```rust

@@ -49,6 +49,12 @@ impl UniversalLM {
         adapter.stream_events(request)
     }
 
+    /// Build the provider-level HTTP request without sending it.
+    pub fn build_http_request(&self, request: &LMRequest, provider: &str, stream: bool) -> Result<crate::transport::HttpRequest, LM15Error> {
+        let adapter = self.resolve(&request.model, provider)?;
+        Ok(adapter.build_request(request, stream))
+    }
+
     /// Run an embedding request.
     pub fn embeddings(&self, request: &EmbeddingRequest, provider: &str) -> Result<EmbeddingResponse, LM15Error> {
         let adapter = self.resolve(&request.model, provider)?;

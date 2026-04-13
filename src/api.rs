@@ -2,6 +2,7 @@
 
 use crate::capabilities::resolve_provider;
 use crate::client::UniversalLM;
+use crate::cost::{disable_cost_tracking, enable_cost_tracking};
 use crate::factory::{build_default, BuildOpts};
 use crate::model::{Model, ModelOpts, Reasoning};
 use crate::result::{LMResult, ResultOpts, StartStreamFn, ToolFn};
@@ -23,6 +24,16 @@ pub fn configure(env: Option<&str>, api_key: Option<&str>) {
     d.clear();
     if let Some(e) = env { d.insert("env".into(), e.into()); }
     if let Some(k) = api_key { d.insert("api_key".into(), k.into()); }
+    disable_cost_tracking();
+}
+
+/// Set module-level defaults and optionally enable automatic cost tracking.
+pub fn configure_with_tracking(env: Option<&str>, api_key: Option<&str>, track_costs: bool) -> Result<(), crate::errors::LM15Error> {
+    configure(env, api_key);
+    if track_costs {
+        enable_cost_tracking()?;
+    }
+    Ok(())
 }
 
 fn get_client(api_key: Option<&str>, env: Option<&str>) -> Arc<UniversalLM> {

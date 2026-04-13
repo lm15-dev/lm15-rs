@@ -1,5 +1,6 @@
 //! Result — lazy stream-backed response with auto tool execution.
 
+use crate::cost::{lookup_cost, CostBreakdown};
 use crate::errors::{error_for_code, is_transient, LM15Error};
 use crate::types::*;
 use std::collections::HashMap;
@@ -76,6 +77,12 @@ impl LMResult {
     pub fn usage(&mut self) -> Result<Usage, LM15Error> {
         let resp = self.response()?;
         Ok(resp.usage.clone())
+    }
+
+    /// Block and return estimated cost, or None if cost tracking is disabled.
+    pub fn cost(&mut self) -> Result<Option<CostBreakdown>, LM15Error> {
+        let resp = self.response()?;
+        Ok(lookup_cost(&resp.model, &resp.usage))
     }
 
     /// Block and return first image part.

@@ -2,6 +2,7 @@
 
 use crate::capabilities::resolve_provider;
 use crate::client::UniversalLM;
+use crate::cost::{lookup_cost, sum_costs, CostBreakdown};
 use crate::result::{LMResult, ResultOpts, StartStreamFn, ToolFn};
 use crate::types::*;
 use std::collections::HashMap;
@@ -69,6 +70,27 @@ impl Model {
         self.history.clear();
         self.conversation.clear();
         self.pending_tool_calls.clear();
+    }
+
+    /// Sum the estimated cost of all responses in history.
+    pub fn total_cost(&self) -> Option<CostBreakdown> {
+        if self.history.is_empty() {
+            return if crate::cost::get_cost_index().is_some() {
+                Some(CostBreakdown::default())
+            } else {
+                None
+            };
+        }
+
+        let found: Vec<CostBreakdown> = self.history.iter()
+            .filter_map(|entry| lookup_cost(&entry.response.model, &entry.response.usage))
+            .collect();
+
+        if found.is_empty() {
+            None
+        } else {
+            Some(sum_costs(found.iter()))
+        }
     }
 
     /// Prepare an LMRequest without sending it.

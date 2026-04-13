@@ -282,6 +282,8 @@ fn parse_openai_usage(data: &Value) -> Usage {
         total_tokens: u.and_then(|u| u.get("total_tokens")).and_then(|t| t.as_i64()).unwrap_or(0),
         reasoning_tokens: u_out.and_then(|d| d.get("reasoning_tokens")).and_then(|t| t.as_i64()),
         cache_read_tokens: u_in.and_then(|d| d.get("cached_tokens")).and_then(|t| t.as_i64()),
+        input_audio_tokens: u_in.and_then(|d| d.get("audio_tokens")).and_then(|t| t.as_i64()),
+        output_audio_tokens: u_out.and_then(|d| d.get("audio_tokens")).and_then(|t| t.as_i64()),
         ..Usage::default()
     }
 }
