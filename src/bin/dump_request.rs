@@ -15,6 +15,7 @@ struct TestCase {
     stream: Option<bool>,
     reasoning: Option<HashMap<String, serde_json::Value>>,
     tools: Option<Vec<TestTool>>,
+    builtin_tools: Option<Vec<TestBuiltinTool>>,
     provider: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -23,6 +24,12 @@ struct TestTool {
     name: String,
     description: Option<String>,
     parameters: Option<lm15::JsonObject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TestBuiltinTool {
+    name: String,
+    builtin_config: Option<lm15::JsonObject>,
 }
 
 fn main() {
@@ -39,7 +46,7 @@ fn main() {
         }
     };
 
-    let tools: Vec<Tool> = tc.tools.unwrap_or_default().into_iter().map(|t| {
+    let mut tools: Vec<Tool> = tc.tools.unwrap_or_default().into_iter().map(|t| {
         Tool::function(
             &t.name,
             t.description.as_deref().unwrap_or(""),
@@ -51,6 +58,13 @@ fn main() {
             }),
         )
     }).collect();
+    for bt in tc.builtin_tools.unwrap_or_default() {
+        if let Some(cfg) = bt.builtin_config {
+            tools.push(Tool::builtin_with_config(&bt.name, cfg));
+        } else {
+            tools.push(Tool::builtin(&bt.name));
+        }
+    }
 
     // Build messages from canonical format
     let messages = tc.messages.as_ref().map(|m| messages_from_json(m));

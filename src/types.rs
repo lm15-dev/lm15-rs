@@ -269,6 +269,8 @@ pub struct Tool {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<JsonObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin_config: Option<JsonObject>,
     /// Auto-execute function. Not serialized.
     #[serde(skip)]
     pub func: Option<Box<dyn Fn(&JsonObject) -> Result<serde_json::Value, String> + Send + Sync>>,
@@ -281,6 +283,7 @@ impl std::fmt::Debug for Tool {
             .field("name", &self.name)
             .field("description", &self.description)
             .field("parameters", &self.parameters)
+            .field("builtin_config", &self.builtin_config)
             .field("func", &self.func.as_ref().map(|_| "<fn>"))
             .finish()
     }
@@ -293,6 +296,7 @@ impl Clone for Tool {
             name: self.name.clone(),
             description: self.description.clone(),
             parameters: self.parameters.clone(),
+            builtin_config: self.builtin_config.clone(),
             func: None, // functions are not cloneable
         }
     }
@@ -306,6 +310,7 @@ impl Tool {
             name: name.into(),
             description: Some(description.into()),
             parameters: Some(parameters),
+            builtin_config: None,
             func: None,
         }
     }
@@ -322,6 +327,7 @@ impl Tool {
             name: name.into(),
             description: Some(description.into()),
             parameters: Some(parameters),
+            builtin_config: None,
             func: Some(Box::new(f)),
         }
     }
@@ -333,6 +339,19 @@ impl Tool {
             name: name.into(),
             description: None,
             parameters: None,
+            builtin_config: None,
+            func: None,
+        }
+    }
+
+    /// Create a builtin tool with config.
+    pub fn builtin_with_config(name: &str, config: JsonObject) -> Self {
+        Self {
+            tool_type: "builtin".into(),
+            name: name.into(),
+            description: None,
+            parameters: None,
+            builtin_config: Some(config),
             func: None,
         }
     }

@@ -8,6 +8,23 @@ use super::common::{part_to_openai_input, parts_to_text};
 use serde_json::Value;
 use std::collections::HashMap;
 
+fn builtin_to_openai(tool: &Tool) -> Value {
+    let wire_type = match tool.name.as_str() {
+        "web_search" => "web_search_preview",
+        "code_execution" => "code_interpreter",
+        "file_search" => "file_search",
+        "computer_use" => "computer_use_preview",
+        other => other,
+    };
+    let mut out = serde_json::json!({"type": wire_type});
+    if let Some(cfg) = &tool.builtin_config {
+        for (k, v) in cfg {
+            out[k] = serde_json::json!(v);
+        }
+    }
+    out
+}
+
 pub struct OpenAIAdapter {
     pub api_key: String,
     pub base_url: String,
@@ -91,15 +108,19 @@ impl OpenAIAdapter {
             p["temperature"] = serde_json::json!(temp);
         }
 
-        let tools: Vec<Value> = request.tools.iter()
-            .filter(|t| t.tool_type == "function")
-            .map(|t| serde_json::json!({
-                "type": "function",
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters.as_ref().unwrap_or(&HashMap::new()),
-            }))
-            .collect();
+        let mut tools: Vec<Value> = Vec::new();
+        for t in &request.tools {
+            if t.tool_type == "function" {
+                tools.push(serde_json::json!({
+                    "type": "function",
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters.as_ref().unwrap_or(&HashMap::new()),
+                }));
+            } else if t.tool_type == "builtin" {
+                tools.push(builtin_to_openai(t));
+            }
+        }
         if !tools.is_empty() {
             p["tools"] = Value::Array(tools);
         }

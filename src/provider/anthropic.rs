@@ -8,6 +8,20 @@ use super::common::parts_to_text;
 use serde_json::Value;
 use std::collections::HashMap;
 
+fn builtin_to_anthropic(tool: &Tool) -> Value {
+    let wire_type = match tool.name.as_str() {
+        "code_execution" => "code_execution_20250522",
+        other => other,
+    };
+    let mut out = serde_json::json!({"type": wire_type, "name": tool.name});
+    if let Some(cfg) = &tool.builtin_config {
+        for (k, v) in cfg {
+            out[k] = serde_json::json!(v);
+        }
+    }
+    out
+}
+
 pub struct AnthropicAdapter {
     pub api_key: String,
     pub base_url: String,
@@ -97,13 +111,17 @@ impl AnthropicAdapter {
             payload["temperature"] = serde_json::json!(temp);
         }
 
-        let tools: Vec<Value> = request.tools.iter()
-            .filter(|t| t.tool_type == "function")
-            .map(|t| serde_json::json!({
-                "name": t.name, "description": t.description,
-                "input_schema": t.parameters.as_ref().unwrap_or(&HashMap::new()),
-            }))
-            .collect();
+        let mut tools: Vec<Value> = Vec::new();
+        for t in &request.tools {
+            if t.tool_type == "function" {
+                tools.push(serde_json::json!({
+                    "name": t.name, "description": t.description,
+                    "input_schema": t.parameters.as_ref().unwrap_or(&HashMap::new()),
+                }));
+            } else if t.tool_type == "builtin" {
+                tools.push(builtin_to_anthropic(t));
+            }
+        }
         if !tools.is_empty() {
             payload["tools"] = Value::Array(tools);
         }

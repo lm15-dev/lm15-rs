@@ -7,6 +7,18 @@ use super::{Adapter, ProviderManifest};
 use serde_json::Value;
 use std::collections::HashMap;
 
+fn builtin_to_gemini(tool: &Tool) -> Value {
+    let wire_key = match tool.name.as_str() {
+        "web_search" => "googleSearch",
+        "code_execution" => "codeExecution",
+        other => other,
+    };
+    let cfg = tool.builtin_config.as_ref()
+        .map(|c| serde_json::json!(c))
+        .unwrap_or(serde_json::json!({}));
+    serde_json::json!({ wire_key: cfg })
+}
+
 pub struct GeminiAdapter {
     pub api_key: String,
     pub base_url: String,
@@ -100,15 +112,24 @@ impl GeminiAdapter {
             payload["generationConfig"] = Value::Object(cfg);
         }
 
-        let tools: Vec<Value> = request.tools.iter()
+        let func_decls: Vec<Value> = request.tools.iter()
             .filter(|t| t.tool_type == "function")
             .map(|t| serde_json::json!({
                 "name": t.name, "description": t.description,
                 "parameters": t.parameters.as_ref().unwrap_or(&HashMap::new()),
             }))
             .collect();
-        if !tools.is_empty() {
-            payload["tools"] = serde_json::json!([{"functionDeclarations": tools}]);
+        let mut tools_wire: Vec<Value> = Vec::new();
+        if !func_decls.is_empty() {
+            tools_wire.push(serde_json::json!({"functionDeclarations": func_decls}));
+        }
+        for t in &request.tools {
+            if t.tool_type == "builtin" {
+                tools_wire.push(builtin_to_gemini(t));
+            }
+        }
+        if !tools_wire.is_empty() {
+            payload["tools"] = Value::Array(tools_wire);
         }
 
         if let Some(provider) = &request.config.provider {
