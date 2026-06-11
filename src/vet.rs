@@ -28,8 +28,6 @@ pub const OPS: &[&str] = &[
     "validate",
 ];
 
-const UNIMPLEMENTED_OPS: &[&str] = &["replay_stream"];
-
 /// Decode standard base64 (with padding; whitespace ignored). Hand-rolled to
 /// keep the dependency footprint flat.
 fn b64_decode(input: &str) -> Result<Vec<u8>, String> {
@@ -216,10 +214,43 @@ fn handle(op: &str, msg: &Value) -> Result<Value, OpError> {
                 "message": err.to_string(),
             }))
         }
-        op if UNIMPLEMENTED_OPS.contains(&op) => Err(OpError::new(
-            "Unimplemented",
-            format!("op not implemented yet in the rust port: {op}"),
-        )),
+        "replay_stream" => {
+            let provider = msg
+                .get("provider")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing provider"))?;
+            let canonical = msg
+                .get("canonical_request")
+                .cloned()
+                .ok_or_else(|| OpError::new("ValueError", "missing canonical_request"))?;
+            let request: Request = serde_json::from_value(canonical)
+                .map_err(|e| OpError::new("ValueError", e.to_string()))?;
+            let body_b64 = msg
+                .get("body_b64")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing body_b64"))?;
+            let body = b64_decode(body_b64).map_err(|e| OpError::new("ValueError", e))?;
+            let events = crate::stream::parse_stream_body(provider, &request, &body)
+                .map_err(|message| OpError::new("ValueError", message))?;
+            let response = crate::stream::materialize_response(&events, &request);
+            let events_json = serde_json::to_value(&events)
+                .map_err(|e| OpError::new("TypeError", e.to_string()))?;
+            let canonical_response = serde_json::to_value(&response)
+                .map_err(|e| OpError::new("TypeError", e.to_string()))?;
+            let mut result = json!({
+                "events": events_json,
+                "canonical_response": canonical_response,
+            });
+            // Surface the unmapped canary if the stream path recorded any.
+            if let Some(unmapped) = response
+                .provider_data
+                .as_ref()
+                .and_then(|pd| pd.get("_lm15_unmapped"))
+            {
+                result["unmapped"] = unmapped.clone();
+            }
+            Ok(result)
+        }
         other => Err(OpError::new("ValueError", format!("unknown op: {other}"))),
     }
 }

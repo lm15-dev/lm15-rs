@@ -606,3 +606,106 @@ pub fn parse_response(
         unmapped,
     })
 }
+
+// ─── Stream parsing (reference: OpenAIChatLM.parse_stream_events) ───
+
+use crate::types::{Delta, Request as CanonicalRequest, StreamEvent};
+
+use super::common::{first_truthy_str, str_if_truthy};
+
+/// Map one SSE frame to canonical events. Servers in this dialect split the
+/// terminal data: a finish_reason chunk, then (with
+/// `stream_options.include_usage`) a usage-only chunk, then `[DONE]` — each
+/// maps to its own end event here; the MAP-3 coalescer merges them.
+pub fn parse_stream_events(
+    _request: &CanonicalRequest,
+    data: &str,
+) -> Result<Vec<StreamEvent>, String> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    if data == "[DONE]" {
+        return Ok(vec![StreamEvent::End {
+            finish_reason: None,
+            usage: None,
+            provider_data: None,
+        }]);
+    }
+    let payload: JValue =
+        serde_json::from_str(data).map_err(|e| format!("bad stream frame: {e}"))?;
+    let Some(payload) = payload.as_object() else {
+        return Ok(Vec::new());
+    };
+
+    if let Some(err) = dict_of(payload, "error") {
+        let provider_code =
+            first_truthy_str(err, &["code", "type"]).unwrap_or_else(|| "provider".to_string());
+        let message = str_or_empty(err.get("message"));
+        return Ok(vec![StreamEvent::Error {
+            error: super::openai::stream_error_detail(&provider_code, &message),
+        }]);
+    }
+
+    let mut events = Vec::new();
+    let empty = Map::new();
+    let choice = list_of(payload, "choices")
+        .first()
+        .and_then(JValue::as_object)
+        .unwrap_or(&empty);
+    let delta = dict_of(choice, "delta").unwrap_or(&empty);
+
+    if let Some(reasoning) = first_truthy_str(delta, &["reasoning_content", "reasoning"]) {
+        events.push(StreamEvent::Delta {
+            delta: Delta::Thinking {
+                text: reasoning,
+                part_index: 0,
+            },
+        });
+    }
+
+    if let Some(JValue::String(content)) = delta.get("content") {
+        if !content.is_empty() {
+            events.push(StreamEvent::Delta {
+                delta: Delta::Text {
+                    text: content.clone(),
+                    part_index: 0,
+                },
+            });
+        }
+    }
+
+    for call in list_of(delta, "tool_calls") {
+        let Some(call) = call.as_object() else {
+            continue;
+        };
+        let function = dict_of(call, "function").unwrap_or(&empty);
+        events.push(StreamEvent::Delta {
+            delta: Delta::ToolCall {
+                input: str_or_empty(function.get("arguments")),
+                part_index: count_or_zero(call.get("index")),
+                id: str_if_truthy(call.get("id")),
+                name: str_if_truthy(function.get("name")),
+            },
+        });
+    }
+
+    let finish_raw = str_or_empty(choice.get("finish_reason"));
+    let usage_data = dict_of(payload, "usage");
+    if !finish_raw.is_empty() {
+        events.push(StreamEvent::End {
+            finish_reason: Some(
+                map_finish_reason(&finish_raw).unwrap_or("stop").to_string(),
+            ),
+            usage: usage_data.map(usage_from_chat),
+            provider_data: None,
+        });
+    } else if let Some(usage_data) = usage_data {
+        // Final usage-only chunk (stream_options.include_usage).
+        events.push(StreamEvent::End {
+            finish_reason: None,
+            usage: Some(usage_from_chat(usage_data)),
+            provider_data: None,
+        });
+    }
+    Ok(events)
+}

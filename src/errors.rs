@@ -127,6 +127,21 @@ pub enum ErrorClass {
 }
 
 impl ErrorClass {
+    /// Canonical ErrorCode literal for this class.
+    pub fn code(self) -> &'static str {
+        match self {
+            ErrorClass::Auth => "auth",
+            ErrorClass::Billing => "billing",
+            ErrorClass::RateLimit => "rate_limit",
+            ErrorClass::InvalidRequest => "invalid_request",
+            ErrorClass::ContextLength => "context_length",
+            ErrorClass::UnsupportedModel => "unsupported_model",
+            ErrorClass::Timeout => "timeout",
+            ErrorClass::Server => "server",
+            ErrorClass::Provider => "provider",
+        }
+    }
+
     pub fn build(self, message: String, meta: ErrorMeta) -> Lm15Error {
         match self {
             ErrorClass::Auth => Lm15Error::Auth { message, meta },

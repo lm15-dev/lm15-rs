@@ -674,3 +674,203 @@ pub fn parse_response(request: &Request, data: &Map<String, JValue>) -> Result<P
         unmapped,
     })
 }
+
+// ─── Stream parsing (reference: OpenAILM.parse_stream_events) ───────
+
+use super::common::{py_str, str_if_truthy};
+use crate::types::{Delta, ErrorDetail, StreamEvent};
+
+/// `_stream_error_code_map` (response map + streaming extras).
+fn stream_error_class(provider_code: &str) -> ErrorClass {
+    match provider_code {
+        "server_error" => ErrorClass::Server,
+        "rate_limit_exceeded" | "rate_limit_error" => ErrorClass::RateLimit,
+        "invalid_prompt"
+        | "invalid_image"
+        | "invalid_image_format"
+        | "invalid_base64_image"
+        | "invalid_image_url"
+        | "image_too_large"
+        | "image_too_small"
+        | "image_parse_error"
+        | "image_content_policy_violation"
+        | "invalid_image_mode"
+        | "image_file_too_large"
+        | "unsupported_image_media_type"
+        | "empty_image_file"
+        | "failed_to_download_image"
+        | "image_file_not_found" => ErrorClass::InvalidRequest,
+        "vector_store_timeout" => ErrorClass::Timeout,
+        "model_not_found" | "model_not_available" | "unsupported_model" => {
+            ErrorClass::UnsupportedModel
+        }
+        "context_length_exceeded" => ErrorClass::ContextLength,
+        "invalid_api_key" | "authentication_error" => ErrorClass::Auth,
+        "insufficient_quota" => ErrorClass::Billing,
+        _ => ErrorClass::Provider,
+    }
+}
+
+/// Reference `OpenAILM._error_detail` (shared with openai_chat).
+pub(crate) fn stream_error_detail(provider_code: &str, message: &str) -> ErrorDetail {
+    super::common::error_detail(stream_error_class(provider_code), provider_code, message)
+}
+
+fn usage_from_response_obj(response: &Map<String, JValue>) -> Usage {
+    let empty = Map::new();
+    let usage_data = dict_of(response, "usage").unwrap_or(&empty);
+    let input_details = dict_of(usage_data, "input_tokens_details").unwrap_or(&empty);
+    let output_details = dict_of(usage_data, "output_tokens_details").unwrap_or(&empty);
+    Usage {
+        input_tokens: Some(count_or_zero(usage_data.get("input_tokens"))),
+        output_tokens: Some(count_or_zero(usage_data.get("output_tokens"))),
+        total_tokens: count_opt(usage_data.get("total_tokens")),
+        cache_read_tokens: count_opt(input_details.get("cached_tokens")),
+        cache_write_tokens: None,
+        reasoning_tokens: count_opt(output_details.get("reasoning_tokens")),
+        input_audio_tokens: count_opt(input_details.get("audio_tokens")),
+        output_audio_tokens: count_opt(output_details.get("audio_tokens")),
+    }
+}
+
+/// Map one SSE frame to at most one canonical event
+/// (reference: OpenAILM._parse_single_stream_event).
+pub fn parse_stream_events(request: &Request, data: &str) -> Result<Vec<StreamEvent>, String> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    if data == "[DONE]" {
+        return Ok(vec![StreamEvent::End {
+            finish_reason: Some("stop".to_string()),
+            usage: None,
+            provider_data: None,
+        }]);
+    }
+    let payload: JValue =
+        serde_json::from_str(data).map_err(|e| format!("bad stream frame: {e}"))?;
+    let payload = payload
+        .as_object()
+        .ok_or_else(|| "stream frame is not a JSON object".to_string())?;
+    let et = str_or_empty(payload.get("type"));
+    let empty = Map::new();
+    let part_index = count_or_zero(payload.get("output_index"));
+
+    let event = match et.as_str() {
+        "response.created" => {
+            let response = dict_of(payload, "response").unwrap_or(&empty);
+            let id = response.get("id").filter(|v| truthy(v)).map(py_str);
+            let mut model = str_or_empty(response.get("model"));
+            if model.is_empty() {
+                model = request.model.clone();
+            }
+            Some(StreamEvent::Start {
+                id,
+                model: Some(model),
+            })
+        }
+        "response.output_text.delta" | "response.refusal.delta" => Some(StreamEvent::Delta {
+            delta: Delta::Text {
+                text: str_or_empty(payload.get("delta")),
+                part_index,
+            },
+        }),
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            Some(StreamEvent::Delta {
+                delta: Delta::Thinking {
+                    text: str_or_empty(payload.get("delta")),
+                    part_index,
+                },
+            })
+        }
+        "response.output_text.annotation.added" => dict_of(payload, "annotation")
+            .and_then(|a| citation_from_annotation(a, None))
+            .and_then(|part| match part {
+                Part::Citation {
+                    text, url, title, ..
+                } => Some(StreamEvent::Delta {
+                    delta: Delta::Citation {
+                        text,
+                        url,
+                        title,
+                        part_index,
+                    },
+                }),
+                _ => None,
+            }),
+        "response.output_audio.delta" => Some(StreamEvent::Delta {
+            delta: Delta::Audio {
+                data: Some(str_or_empty(payload.get("delta"))),
+                url: None,
+                file_id: None,
+                part_index,
+                media_type: Some("audio/wav".to_string()),
+            },
+        }),
+        "response.output_image.delta" | "response.image.delta" => Some(StreamEvent::Delta {
+            delta: Delta::Image {
+                data: Some(str_or_empty(payload.get("delta"))),
+                url: None,
+                file_id: None,
+                part_index,
+                media_type: Some("image/png".to_string()),
+            },
+        }),
+        "response.output_item.added" => {
+            let item = dict_of(payload, "item").unwrap_or(&empty);
+            if str_or_empty(item.get("type")) == "function_call" {
+                Some(StreamEvent::Delta {
+                    delta: Delta::ToolCall {
+                        input: str_or_empty(item.get("arguments")),
+                        part_index,
+                        id: first_truthy_str(item, &["call_id", "id"]),
+                        name: str_if_truthy(item.get("name")),
+                    },
+                })
+            } else {
+                None
+            }
+        }
+        "response.function_call_arguments.delta" => Some(StreamEvent::Delta {
+            delta: Delta::ToolCall {
+                input: str_or_empty(payload.get("delta")),
+                part_index,
+                id: first_truthy_str(payload, &["call_id", "id"]),
+                name: str_if_truthy(payload.get("name")),
+            },
+        }),
+        "response.completed" => {
+            let response = dict_of(payload, "response").unwrap_or(&empty);
+            let has_tool = list_of(response, "output").iter().any(|item| {
+                item.as_object()
+                    .is_some_and(|i| str_or_empty(i.get("type")) == "function_call")
+            });
+            Some(StreamEvent::End {
+                finish_reason: Some(if has_tool { "tool_call" } else { "stop" }.to_string()),
+                usage: Some(usage_from_response_obj(response)),
+                provider_data: Some(response.clone()),
+            })
+        }
+        "response.error" | "error" => {
+            let (provider_code, message) = match dict_of(payload, "error") {
+                Some(err) => (
+                    first_truthy_str(err, &["code", "type"])
+                        .or_else(|| str_if_truthy(payload.get("code")))
+                        .unwrap_or_else(|| "provider".to_string()),
+                    first_truthy_str(err, &["message"])
+                        .or_else(|| str_if_truthy(payload.get("message")))
+                        .unwrap_or_default(),
+                ),
+                None => (
+                    first_truthy_str(payload, &["code", "error_type"])
+                        .unwrap_or_else(|| "provider".to_string()),
+                    str_or_empty(payload.get("message")),
+                ),
+            };
+            Some(StreamEvent::Error {
+                error: stream_error_detail(&provider_code, &message),
+            })
+        }
+        _ => None,
+    };
+    Ok(event.into_iter().collect())
+}

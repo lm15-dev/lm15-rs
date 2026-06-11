@@ -646,3 +646,221 @@ pub fn parse_response(
         unmapped,
     })
 }
+
+// ─── Stream parsing (reference: AnthropicLM.parse_stream_events) ────
+
+use crate::types::{Delta, ErrorDetail, StreamEvent};
+
+use super::common::{json_compact, str_if_truthy};
+
+/// Reference `AnthropicLM._error_detail`.
+fn stream_error_detail(provider_code: &str, message: &str) -> ErrorDetail {
+    let class = if is_context_length_message(message) {
+        ErrorClass::ContextLength
+    } else if provider_code == "not_found_error" && is_model_error(message) {
+        ErrorClass::UnsupportedModel
+    } else {
+        class_for_type(provider_code).unwrap_or(ErrorClass::Provider)
+    };
+    super::common::error_detail(class, provider_code, message)
+}
+
+/// Map one SSE frame to canonical events. Anthropic splits the terminal data
+/// across `message_delta` (stop_reason + usage) and a bare `message_stop`;
+/// both map to end events here and the MAP-3 coalescer merges them.
+pub fn parse_stream_events(request: &Request, data: &str) -> Result<Vec<StreamEvent>, String> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let payload: JValue =
+        serde_json::from_str(data).map_err(|e| format!("bad stream frame: {e}"))?;
+    let payload = payload
+        .as_object()
+        .ok_or_else(|| "stream frame is not a JSON object".to_string())?;
+    let et = str_or_empty(payload.get("type"));
+    let empty = Map::new();
+    let mut events = Vec::new();
+
+    match et.as_str() {
+        "message_start" => {
+            let msg = dict_of(payload, "message").unwrap_or(&empty);
+            let id = msg.get("id").filter(|v| truthy(v)).map(py_str);
+            let mut model = str_or_empty(msg.get("model"));
+            if model.is_empty() {
+                model = request.model.clone();
+            }
+            events.push(StreamEvent::Start {
+                id: id.clone(),
+                model: Some(model),
+            });
+            if let Some(id) = id {
+                let mut data = Map::new();
+                data.insert("id".into(), JValue::String(id));
+                events.push(StreamEvent::Delta {
+                    delta: Delta::Continuation {
+                        provider: "anthropic".to_string(),
+                        kind: "message_id".to_string(),
+                        data,
+                        part_index: None,
+                    },
+                });
+            }
+        }
+        "content_block_start" => {
+            let block = dict_of(payload, "content_block").unwrap_or(&empty);
+            let idx = count_or_zero(payload.get("index"));
+            match str_or_empty(block.get("type")).as_str() {
+                "tool_use" => {
+                    let input = match block.get("input") {
+                        Some(JValue::Object(map)) => json_compact(map),
+                        other => str_or_empty(other),
+                    };
+                    events.push(StreamEvent::Delta {
+                        delta: Delta::ToolCall {
+                            input,
+                            part_index: idx,
+                            id: str_if_truthy(block.get("id")),
+                            name: str_if_truthy(block.get("name")),
+                        },
+                    });
+                }
+                "redacted_thinking" => {
+                    if let Some(block_data) =
+                        block.get("data").filter(|v| !matches!(v, JValue::Null))
+                    {
+                        events.push(StreamEvent::Delta {
+                            delta: Delta::Thinking {
+                                text: "[redacted]".to_string(),
+                                part_index: idx,
+                            },
+                        });
+                        let mut data = Map::new();
+                        data.insert("data".into(), block_data.clone());
+                        events.push(StreamEvent::Delta {
+                            delta: Delta::Continuation {
+                                provider: "anthropic".to_string(),
+                                kind: "redacted_thinking".to_string(),
+                                data,
+                                part_index: Some(idx),
+                            },
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        "content_block_delta" => {
+            let delta = dict_of(payload, "delta").unwrap_or(&empty);
+            let idx = count_or_zero(payload.get("index"));
+            match str_or_empty(delta.get("type")).as_str() {
+                "text_delta" => events.push(StreamEvent::Delta {
+                    delta: Delta::Text {
+                        text: str_or_empty(delta.get("text")),
+                        part_index: idx,
+                    },
+                }),
+                "input_json_delta" => events.push(StreamEvent::Delta {
+                    delta: Delta::ToolCall {
+                        input: str_or_empty(delta.get("partial_json")),
+                        part_index: idx,
+                        id: None,
+                        name: None,
+                    },
+                }),
+                "thinking_delta" => events.push(StreamEvent::Delta {
+                    delta: Delta::Thinking {
+                        text: str_or_empty(delta.get("thinking")),
+                        part_index: idx,
+                    },
+                }),
+                "signature_delta" => {
+                    if let Some(signature) = str_if_truthy(delta.get("signature")) {
+                        let mut data = Map::new();
+                        data.insert("signature".into(), JValue::String(signature));
+                        events.push(StreamEvent::Delta {
+                            delta: Delta::Continuation {
+                                provider: "anthropic".to_string(),
+                                kind: "thinking_signature".to_string(),
+                                data,
+                                part_index: Some(idx),
+                            },
+                        });
+                    }
+                }
+                "citation_delta" | "citations_delta" => {
+                    let citation = dict_of(delta, "citation").unwrap_or(delta);
+                    events.push(StreamEvent::Delta {
+                        delta: Delta::Citation {
+                            text: first_truthy_str(citation, &["cited_text", "text"]),
+                            url: str_if_truthy(citation.get("url")),
+                            title: str_if_truthy(citation.get("title")),
+                            part_index: idx,
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+        "message_delta" => {
+            // Anthropic sends the authoritative stop_reason and final usage
+            // here; message_stop is just the terminator.
+            let delta = dict_of(payload, "delta").unwrap_or(&empty);
+            let usage_payload = dict_of(payload, "usage").unwrap_or(&empty);
+            let usage = if usage_payload.is_empty() {
+                None
+            } else {
+                let input_tokens = count_or_zero(usage_payload.get("input_tokens"));
+                let output_tokens = count_or_zero(usage_payload.get("output_tokens"));
+                Some(Usage {
+                    input_tokens: Some(input_tokens),
+                    output_tokens: Some(output_tokens),
+                    total_tokens: Some(input_tokens + output_tokens),
+                    cache_read_tokens: count_opt(usage_payload.get("cache_read_input_tokens")),
+                    cache_write_tokens: count_opt(
+                        usage_payload.get("cache_creation_input_tokens"),
+                    ),
+                    ..Usage::default()
+                })
+            };
+            let stop_reason = delta
+                .get("stop_reason")
+                .filter(|v| !matches!(v, JValue::Null));
+            if stop_reason.is_some() || usage.is_some() {
+                events.push(StreamEvent::End {
+                    finish_reason: stop_reason.map(|sr| finish_reason(Some(sr), false)),
+                    usage,
+                    provider_data: None,
+                });
+            }
+        }
+        "message_stop" => {
+            events.push(StreamEvent::End {
+                finish_reason: None,
+                usage: None,
+                provider_data: None,
+            });
+        }
+        "error" => {
+            let (provider_code, message) = match dict_of(payload, "error") {
+                Some(err) => (
+                    first_truthy_str(err, &["type", "code"])
+                        .or_else(|| str_if_truthy(payload.get("code")))
+                        .unwrap_or_else(|| "provider".to_string()),
+                    first_truthy_str(err, &["message"])
+                        .or_else(|| str_if_truthy(payload.get("message")))
+                        .unwrap_or_default(),
+                ),
+                None => (
+                    first_truthy_str(payload, &["code", "error_type"])
+                        .unwrap_or_else(|| "provider".to_string()),
+                    str_or_empty(payload.get("message")),
+                ),
+            };
+            events.push(StreamEvent::Error {
+                error: stream_error_detail(&provider_code, &message),
+            });
+        }
+        _ => {}
+    }
+    Ok(events)
+}

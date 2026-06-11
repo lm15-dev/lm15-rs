@@ -485,3 +485,27 @@ pub fn py_slice(s: &str, start: i64, end: i64) -> Option<String> {
         None
     }
 }
+
+/// Reference `_error_detail` message/provider_code fallbacks, shared by the
+/// per-provider stream error mappers.
+pub fn error_detail(
+    class: crate::errors::ErrorClass,
+    provider_code: &str,
+    message: &str,
+) -> crate::types::ErrorDetail {
+    crate::types::ErrorDetail {
+        code: class.code().to_string(),
+        message: if !message.is_empty() {
+            message.to_string()
+        } else if !provider_code.is_empty() {
+            provider_code.to_string()
+        } else {
+            "provider error".to_string()
+        },
+        provider_code: Some(if provider_code.is_empty() {
+            "provider".to_string()
+        } else {
+            provider_code.to_string()
+        }),
+    }
+}

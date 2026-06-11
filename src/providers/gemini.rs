@@ -875,3 +875,217 @@ pub fn parse_response(
         unmapped,
     })
 }
+
+// ─── Stream parsing (reference: GeminiLM.parse_stream_events) ───────
+
+use crate::types::{Delta, ErrorDetail, StreamEvent};
+
+use super::common::{json_compact, str_if_truthy};
+
+/// Reference `GeminiLM._error_detail`.
+fn stream_error_detail(provider_code: &str, message: &str) -> ErrorDetail {
+    let class = if is_context_length_message(message) {
+        ErrorClass::ContextLength
+    } else if provider_code == "NOT_FOUND" && is_model_error(message) {
+        ErrorClass::UnsupportedModel
+    } else {
+        class_for_status(provider_code).unwrap_or(ErrorClass::Provider)
+    };
+    super::common::error_detail(class, provider_code, message)
+}
+
+/// Reference `GeminiLM._usage_from_payload`.
+fn usage_from_payload(payload: &Map<String, JValue>) -> Usage {
+    let empty = Map::new();
+    let usage_payload = dict_of(payload, "usageMetadata").unwrap_or(&empty);
+    let output_count = match usage_payload.get("candidatesTokenCount") {
+        Some(v) => count_or_zero(Some(v)),
+        None => count_or_zero(usage_payload.get("responseTokenCount")),
+    };
+    Usage {
+        input_tokens: Some(count_or_zero(usage_payload.get("promptTokenCount"))),
+        output_tokens: Some(output_count),
+        total_tokens: count_opt(usage_payload.get("totalTokenCount")),
+        cache_read_tokens: count_opt(usage_payload.get("cachedContentTokenCount")),
+        reasoning_tokens: count_opt(usage_payload.get("thoughtsTokenCount")),
+        ..Usage::default()
+    }
+}
+
+fn thought_signature_delta(value: &JValue, part_index: u64) -> StreamEvent {
+    let mut data = Map::new();
+    data.insert("value".into(), JValue::String(py_str(value)));
+    StreamEvent::Delta {
+        delta: Delta::Continuation {
+            provider: "gemini".to_string(),
+            kind: "thought_signature".to_string(),
+            data,
+            part_index: Some(part_index),
+        },
+    }
+}
+
+/// Map one streamed chunk to canonical events.
+pub fn parse_stream_events(_request: &Request, data: &str) -> Result<Vec<StreamEvent>, String> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let payload: JValue =
+        serde_json::from_str(data).map_err(|e| format!("bad stream frame: {e}"))?;
+    let Some(payload) = payload.as_object() else {
+        return Ok(Vec::new());
+    };
+
+    if let Some(err) = payload.get("error") {
+        let (provider_code, message) = match err.as_object() {
+            Some(err) => (
+                first_truthy_str(err, &["status", "code"])
+                    .unwrap_or_else(|| "provider".to_string()),
+                str_or_empty(err.get("message")),
+            ),
+            None => ("provider".to_string(), String::new()),
+        };
+        return Ok(vec![StreamEvent::Error {
+            error: stream_error_detail(&provider_code, &message),
+        }]);
+    }
+
+    if let Some(ParseFailure::Error(inband)) = inband_error(payload) {
+        return Ok(vec![StreamEvent::Error {
+            error: ErrorDetail {
+                code: inband.code().to_string(),
+                message: inband.to_string(),
+                provider_code: Some("inband_finish_reason".to_string()),
+            },
+        }]);
+    }
+
+    let mut events = Vec::new();
+    let mut yielded_delta = false;
+    let mut saw_tool = false;
+    let mut finish = String::new();
+
+    if let Some(candidate) = list_of(payload, "candidates")
+        .first()
+        .and_then(JValue::as_object)
+    {
+        let empty = Map::new();
+        let content = dict_of(candidate, "content").unwrap_or(&empty);
+        for (idx, part) in list_of(content, "parts").iter().enumerate() {
+            let Some(part) = part.as_object() else {
+                continue;
+            };
+            let idx = idx as u64;
+            if truthy(part.get("thought").unwrap_or(&JValue::Null)) && part.contains_key("text") {
+                yielded_delta = true;
+                events.push(StreamEvent::Delta {
+                    delta: Delta::Thinking {
+                        text: str_or_empty(part.get("text")),
+                        part_index: idx,
+                    },
+                });
+                if let Some(sig) = part
+                    .get("thoughtSignature")
+                    .filter(|v| !matches!(v, JValue::Null))
+                {
+                    events.push(thought_signature_delta(sig, idx));
+                }
+            } else if part.contains_key("text") {
+                yielded_delta = true;
+                events.push(StreamEvent::Delta {
+                    delta: Delta::Text {
+                        text: str_or_empty(part.get("text")),
+                        part_index: idx,
+                    },
+                });
+            } else if let Some(fc) = dict_of(part, "functionCall") {
+                saw_tool = true;
+                yielded_delta = true;
+                let args = match fc.get("args") {
+                    Some(JValue::Object(map)) => json_compact(map),
+                    _ => "{}".to_string(),
+                };
+                events.push(StreamEvent::Delta {
+                    delta: Delta::ToolCall {
+                        input: args,
+                        part_index: idx,
+                        id: str_if_truthy(fc.get("id")),
+                        name: str_if_truthy(fc.get("name")),
+                    },
+                });
+                if let Some(sig) = part
+                    .get("thoughtSignature")
+                    .filter(|v| truthy(v))
+                    .or_else(|| fc.get("thoughtSignature").filter(|v| !matches!(v, JValue::Null)))
+                {
+                    events.push(thought_signature_delta(sig, idx));
+                }
+            } else if let Some(inline) = dict_of(part, "inlineData") {
+                let mime = {
+                    let m = str_or_empty(inline.get("mimeType"));
+                    if m.is_empty() {
+                        "application/octet-stream".to_string()
+                    } else {
+                        m
+                    }
+                };
+                let data = str_or_empty(inline.get("data"));
+                if mime.starts_with("audio/") {
+                    yielded_delta = true;
+                    events.push(StreamEvent::Delta {
+                        delta: Delta::Audio {
+                            data: Some(data),
+                            url: None,
+                            file_id: None,
+                            part_index: idx,
+                            media_type: Some(mime),
+                        },
+                    });
+                } else if mime.starts_with("image/") {
+                    yielded_delta = true;
+                    events.push(StreamEvent::Delta {
+                        delta: Delta::Image {
+                            data: Some(data),
+                            url: None,
+                            file_id: None,
+                            part_index: idx,
+                            media_type: Some(mime),
+                        },
+                    });
+                }
+            }
+        }
+        finish = str_or_empty(candidate.get("finishReason"));
+    }
+
+    if let Some(response_id) = payload
+        .get("responseId")
+        .filter(|v| !matches!(v, JValue::Null))
+    {
+        let mut data = Map::new();
+        data.insert("id".into(), JValue::String(py_str(response_id)));
+        events.push(StreamEvent::Delta {
+            delta: Delta::Continuation {
+                provider: "gemini".to_string(),
+                kind: "response_id".to_string(),
+                data,
+                part_index: None,
+            },
+        });
+    }
+
+    if !finish.is_empty() {
+        events.push(StreamEvent::End {
+            finish_reason: Some(finish_reason(Some(&JValue::String(finish)), saw_tool)),
+            usage: Some(usage_from_payload(payload)),
+            provider_data: Some(payload.clone()),
+        });
+    } else if !yielded_delta && payload.contains_key("usageMetadata") {
+        events.push(StreamEvent::End {
+            finish_reason: Some("stop".to_string()),
+            usage: Some(usage_from_payload(payload)),
+            provider_data: Some(payload.clone()),
+        });
+    }
+    Ok(events)
+}

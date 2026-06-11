@@ -116,11 +116,11 @@ fn unknown_kind_and_discriminator_reject() {
 }
 
 #[test]
-fn unimplemented_ops_report_unimplemented() {
+fn replay_stream_missing_fields_rejected() {
     let reply =
         lm15::vet::process_line(&json!({"op": "replay_stream", "id": "t"}).to_string());
     assert_eq!(reply.get("ok"), Some(&Value::Bool(false)));
-    assert_eq!(reply["error"]["type"], "Unimplemented");
+    assert_eq!(reply["error"]["type"], "ValueError");
 }
 
 #[test]
@@ -246,4 +246,30 @@ fn chat_presets_max_tokens_policy() {
         assert_eq!(preset.default_base_url(), base);
     }
     assert!(ChatPreset::parse("nope").is_err());
+}
+
+
+#[test]
+fn replay_stream_coalesces_post_finish_usage() {
+    // vLLM/SGLang/Groq shape: finish_reason chunk, then a usage-only chunk,
+    // then [DONE] -- exactly one final end event carries both (MAP-3).
+    let req = json!({"model": "m", "messages": [
+        {"role": "user", "parts": [{"type": "text", "text": "hi"}]}
+    ]});
+    let reply = lm15::vet::process_line(
+        &json!({"op": "replay_stream", "id": "t", "provider": "openai_chat",
+                "canonical_request": req, "body_b64": "ZGF0YTogeyJpZCI6ImMxIiwibW9kZWwiOiJtIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiSGVsIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0KCmRhdGE6IHsiaWQiOiJjMSIsIm1vZGVsIjoibSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoibG8ifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQoKZGF0YTogeyJpZCI6ImMxIiwibW9kZWwiOiJtIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7fSwiZmluaXNoX3JlYXNvbiI6InN0b3AifV19CgpkYXRhOiB7ImlkIjoiYzEiLCJtb2RlbCI6Im0iLCJjaG9pY2VzIjpbXSwidXNhZ2UiOnsicHJvbXB0X3Rva2VucyI6MywiY29tcGxldGlvbl90b2tlbnMiOjIsInRvdGFsX3Rva2VucyI6NX19CgpkYXRhOiBbRE9ORV0KCg=="})
+            .to_string(),
+    );
+    assert_eq!(reply["ok"], true, "{reply}");
+    let events = reply["result"]["events"].as_array().unwrap();
+    let ends: Vec<_> = events.iter().filter(|e| e["type"] == "end").collect();
+    assert_eq!(ends.len(), 1);
+    assert_eq!(events.last().unwrap()["type"], "end");
+    assert_eq!(ends[0]["finish_reason"], "stop");
+    assert_eq!(ends[0]["usage"]["total_tokens"], 5);
+    let resp = &reply["result"]["canonical_response"];
+    assert_eq!(resp["message"]["parts"][0]["text"], "Hello");
+    assert_eq!(resp["finish_reason"], "stop");
+    assert_eq!(resp["usage"]["input_tokens"], 3);
 }
