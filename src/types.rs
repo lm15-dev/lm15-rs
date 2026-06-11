@@ -1,708 +1,887 @@
-//! Core types for lm15.
+//! Canonical lm15 types, per `lm15-contract/spec/types.md`.
+//!
+//! Serde honors the canonical wire rules (`lm15-python2/docs/serde-rules.md`):
+//! one omission rule applied at each typed serializer's own top level,
+//! opaque payloads round-trip verbatim, the Number rule (float fields are
+//! `f64`, int fields are `u64`), and required-with-shape fields are always
+//! emitted even when empty.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value};
 
-/// JSON value alias.
-pub type JsonObject = HashMap<String, serde_json::Value>;
+pub type JsonObject = Map<String, Value>;
 
-// ── Enums ──────────────────────────────────────────────────────────
+// ─── omission-rule helpers ───────────────────────────────────────────
 
-/// Message role.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    User,
-    Assistant,
-    Tool,
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
-/// Content part type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PartType {
-    Text,
-    Image,
-    Audio,
-    Video,
-    Document,
-    ToolCall,
-    ToolResult,
-    Thinking,
-    Refusal,
-    Citation,
+fn empty_opt_map(v: &Option<JsonObject>) -> bool {
+    v.as_ref().is_none_or(|m| m.is_empty())
 }
 
-/// Why the model stopped generating.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FinishReason {
-    Stop,
-    Length,
-    ToolCall,
-    ContentFilter,
-    Error,
+fn empty_opt_str(v: &Option<String>) -> bool {
+    v.as_deref().is_none_or(str::is_empty)
 }
 
-// ── DataSource ─────────────────────────────────────────────────────
-
-/// Where media data comes from.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DataSource {
-    #[serde(rename = "type")]
-    pub source_type: String, // "base64", "url", "file"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub media_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+fn default_parameters() -> JsonObject {
+    let mut m = Map::new();
+    m.insert("type".into(), Value::String("object".into()));
+    m.insert("properties".into(), Value::Object(Map::new()));
+    m
 }
 
-impl DataSource {
-    /// Create a base64 data source.
-    pub fn base64(data: &str, media_type: &str) -> Self {
-        Self {
-            source_type: "base64".into(),
-            media_type: Some(media_type.into()),
-            data: Some(data.into()),
-            url: None,
-            file_id: None,
-            detail: None,
-        }
-    }
+// ─── ContinuationState ───────────────────────────────────────────────
 
-    /// Create a URL data source.
-    pub fn url(url: &str, media_type: Option<&str>) -> Self {
-        Self {
-            source_type: "url".into(),
-            media_type: media_type.map(Into::into),
-            data: None,
-            url: Some(url.into()),
-            file_id: None,
-            detail: None,
-        }
-    }
-
-    /// Create a file reference data source.
-    pub fn file(file_id: &str, media_type: Option<&str>) -> Self {
-        Self {
-            source_type: "file".into(),
-            media_type: media_type.map(Into::into),
-            data: None,
-            url: None,
-            file_id: Some(file_id.into()),
-            detail: None,
-        }
-    }
-
-    /// Decode base64 data to bytes.
-    pub fn bytes(&self) -> Result<Vec<u8>, String> {
-        use base64::Engine;
-        let data = self.data.as_deref().ok_or("no inline data")?;
-        base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string())
-    }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContinuationState {
+    pub provider: String,
+    pub kind: String,
+    /// Opaque payload; required-with-shape (always emitted, even `{}`).
+    #[serde(default)]
+    pub data: JsonObject,
 }
 
-// ── Part ───────────────────────────────────────────────────────────
+// ─── Parts ───────────────────────────────────────────────────────────
 
-/// A single piece of content in a message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Part {
-    #[serde(rename = "type")]
-    pub part_type: PartType,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<DataSource>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input: Option<JsonObject>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<Vec<Part>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_error: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redacted: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<JsonObject>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Part {
+    Text {
+        #[serde(default)]
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Thinking {
+        #[serde(default)]
+        text: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        redacted: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Refusal {
+        #[serde(default)]
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Citation {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Image {
+        #[serde(default)]
+        media_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Audio {
+        #[serde(default)]
+        media_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Video {
+        #[serde(default)]
+        media_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Document {
+        #[serde(default)]
+        media_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    Binary {
+        #[serde(default)]
+        media_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        /// Opaque payload; always emitted, even `{}` (INV-002).
+        #[serde(default)]
+        input: JsonObject,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
+    ToolResult {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Required-with-shape: emitted as `[]` when empty.
+        #[serde(default)]
+        content: Vec<Part>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        is_error: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        continuation: Vec<ContinuationState>,
+    },
 }
 
-impl Part {
-    /// Create a text part.
-    pub fn text(text: impl Into<String>) -> Self {
-        Self {
-            part_type: PartType::Text,
-            text: Some(text.into()),
-            ..Self::empty()
-        }
-    }
+// ─── Messages ────────────────────────────────────────────────────────
 
-    /// Create a thinking part.
-    pub fn thinking(text: impl Into<String>) -> Self {
-        Self {
-            part_type: PartType::Thinking,
-            text: Some(text.into()),
-            ..Self::empty()
-        }
-    }
-
-    /// Create a refusal part.
-    pub fn refusal(text: impl Into<String>) -> Self {
-        Self {
-            part_type: PartType::Refusal,
-            text: Some(text.into()),
-            ..Self::empty()
-        }
-    }
-
-    /// Create a citation part.
-    pub fn citation(text: Option<&str>, url: Option<&str>, title: Option<&str>) -> Self {
-        Self {
-            part_type: PartType::Citation,
-            text: text.map(Into::into),
-            url: url.map(Into::into),
-            title: title.map(Into::into),
-            ..Self::empty()
-        }
-    }
-
-    /// Create an image part from a URL.
-    pub fn image_url(url: &str) -> Self {
-        Self {
-            part_type: PartType::Image,
-            source: Some(DataSource::url(url, Some("image/png"))),
-            ..Self::empty()
-        }
-    }
-
-    /// Create an image part from base64 data.
-    pub fn image_base64(data: &str, media_type: &str) -> Self {
-        Self {
-            part_type: PartType::Image,
-            source: Some(DataSource::base64(data, media_type)),
-            ..Self::empty()
-        }
-    }
-
-    /// Create an audio part from base64 data.
-    pub fn audio_base64(data: &str, media_type: &str) -> Self {
-        Self {
-            part_type: PartType::Audio,
-            source: Some(DataSource::base64(data, media_type)),
-            ..Self::empty()
-        }
-    }
-
-    /// Create a document part from a URL.
-    pub fn document_url(url: &str) -> Self {
-        Self {
-            part_type: PartType::Document,
-            source: Some(DataSource::url(url, Some("application/pdf"))),
-            ..Self::empty()
-        }
-    }
-
-    /// Create a tool call part.
-    pub fn tool_call(id: &str, name: &str, input: JsonObject) -> Self {
-        Self {
-            part_type: PartType::ToolCall,
-            id: Some(id.into()),
-            name: Some(name.into()),
-            input: Some(input),
-            ..Self::empty()
-        }
-    }
-
-    /// Create a tool result part.
-    pub fn tool_result(id: &str, content: Vec<Part>, name: Option<&str>) -> Self {
-        Self {
-            part_type: PartType::ToolResult,
-            id: Some(id.into()),
-            name: name.map(Into::into),
-            content: Some(content),
-            ..Self::empty()
-        }
-    }
-
-    fn empty() -> Self {
-        Self {
-            part_type: PartType::Text,
-            text: None,
-            source: None,
-            id: None,
-            name: None,
-            input: None,
-            content: None,
-            is_error: None,
-            redacted: None,
-            summary: None,
-            url: None,
-            title: None,
-            metadata: None,
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub parts: Vec<Part>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuation: Vec<ContinuationState>,
 }
 
-// ── Tool ───────────────────────────────────────────────────────────
+// ─── Tools ───────────────────────────────────────────────────────────
 
-/// A function or builtin tool the model can call.
-#[derive(Serialize, Deserialize)]
-pub struct Tool {
-    #[serde(rename = "type")]
-    pub tool_type: String, // "function" or "builtin"
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<JsonObject>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub builtin_config: Option<JsonObject>,
-    /// Auto-execute function. Not serialized.
-    #[serde(skip)]
-    pub func: Option<Box<dyn Fn(&JsonObject) -> Result<serde_json::Value, String> + Send + Sync>>,
-}
-
-impl std::fmt::Debug for Tool {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Tool")
-            .field("tool_type", &self.tool_type)
-            .field("name", &self.name)
-            .field("description", &self.description)
-            .field("parameters", &self.parameters)
-            .field("builtin_config", &self.builtin_config)
-            .field("func", &self.func.as_ref().map(|_| "<fn>"))
-            .finish()
-    }
-}
-
-impl Clone for Tool {
-    fn clone(&self) -> Self {
-        Self {
-            tool_type: self.tool_type.clone(),
-            name: self.name.clone(),
-            description: self.description.clone(),
-            parameters: self.parameters.clone(),
-            builtin_config: self.builtin_config.clone(),
-            func: None, // functions are not cloneable
-        }
-    }
-}
-
-impl Tool {
-    /// Create a function tool.
-    pub fn function(name: &str, description: &str, parameters: JsonObject) -> Self {
-        Self {
-            tool_type: "function".into(),
-            name: name.into(),
-            description: Some(description.into()),
-            parameters: Some(parameters),
-            builtin_config: None,
-            func: None,
-        }
-    }
-
-    /// Create a function tool with an auto-execute function.
-    pub fn function_with_fn(
-        name: &str,
-        description: &str,
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Tool {
+    Function {
+        name: String,
+        #[serde(skip_serializing_if = "empty_opt_str")]
+        description: Option<String>,
+        /// Opaque JSON-Schema payload; required-with-shape, always emitted
+        /// even as the explicit `{}` (INV-033).
         parameters: JsonObject,
-        f: impl Fn(&JsonObject) -> Result<serde_json::Value, String> + Send + Sync + 'static,
-    ) -> Self {
-        Self {
-            tool_type: "function".into(),
-            name: name.into(),
-            description: Some(description.into()),
-            parameters: Some(parameters),
-            builtin_config: None,
-            func: Some(Box::new(f)),
-        }
-    }
+    },
+    Builtin {
+        name: String,
+        #[serde(skip_serializing_if = "empty_opt_map")]
+        config: Option<JsonObject>,
+    },
+}
 
-    /// Create a builtin tool reference.
-    pub fn builtin(name: &str) -> Self {
-        Self {
-            tool_type: "builtin".into(),
-            name: name.into(),
-            description: None,
-            parameters: None,
-            builtin_config: None,
-            func: None,
+/// INV-034: `"type": "builtin"` dispatches to BuiltinTool; anything else
+/// (including an absent `type`) is a FunctionTool.
+impl<'de> Deserialize<'de> for Tool {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("tool must be a JSON object"))?;
+        let name = obj
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| D::Error::custom("tool requires a string name"))?
+            .to_string();
+        if obj.get("type").and_then(Value::as_str) == Some("builtin") {
+            let config = match obj.get("config") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(m)) => Some(m.clone()),
+                Some(_) => return Err(D::Error::custom("builtin tool config must be an object")),
+            };
+            return Ok(Tool::Builtin { name, config });
         }
-    }
-
-    /// Create a builtin tool with config.
-    pub fn builtin_with_config(name: &str, config: JsonObject) -> Self {
-        Self {
-            tool_type: "builtin".into(),
-            name: name.into(),
-            description: None,
-            parameters: None,
-            builtin_config: Some(config),
-            func: None,
-        }
+        let description = match obj.get("description") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(_) => return Err(D::Error::custom("tool description must be a string")),
+        };
+        let parameters = match obj.get("parameters") {
+            None | Some(Value::Null) => default_parameters(),
+            Some(Value::Object(m)) => m.clone(),
+            Some(_) => return Err(D::Error::custom("tool parameters must be an object")),
+        };
+        Ok(Tool::Function {
+            name,
+            description,
+            parameters,
+        })
     }
 }
 
-/// Info about a pending tool call (passed to on_tool_call callback).
-#[derive(Debug, Clone)]
-pub struct ToolCallInfo {
-    pub id: String,
-    pub name: String,
-    pub input: JsonObject,
+// ─── Configuration ───────────────────────────────────────────────────
+
+fn mode_auto() -> String {
+    "auto".to_string()
 }
 
-// ── Config ─────────────────────────────────────────────────────────
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolChoice {
+    #[serde(default = "mode_auto")]
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel: Option<bool>,
+}
 
-/// Generation parameters.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Reasoning {
+    pub effort: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_budget: Option<u64>,
+    #[serde(skip_serializing_if = "empty_opt_str")]
+    pub summary: Option<String>,
+}
+
+/// Honors the legacy `enabled`/`budget` read leniency (INV-043) and the
+/// `effort="off"` budget discard.
+impl<'de> Deserialize<'de> for Reasoning {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("reasoning must be a JSON object"))?;
+        let default_effort = if obj.get("enabled") == Some(&Value::Bool(false)) {
+            "off"
+        } else {
+            "medium"
+        };
+        let effort = match obj.get("effort") {
+            None => default_effort.to_string(),
+            Some(Value::String(s)) => s.clone(),
+            Some(_) => return Err(D::Error::custom("reasoning effort must be a string")),
+        };
+        if effort == "off" {
+            return Ok(Reasoning {
+                effort,
+                thinking_budget: None,
+                total_budget: None,
+                summary: None,
+            });
+        }
+        let int_field = |key: &str| -> Result<Option<u64>, D::Error> {
+            match obj.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => v
+                    .as_u64()
+                    .map(Some)
+                    .ok_or_else(|| D::Error::custom(format!("reasoning {key} must be an int"))),
+            }
+        };
+        let thinking_budget = match int_field("thinking_budget")? {
+            Some(v) => Some(v),
+            None => int_field("budget")?,
+        };
+        let summary = match obj.get("summary") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(_) => return Err(D::Error::custom("reasoning summary must be a string")),
+        };
+        Ok(Reasoning {
+            effort,
+            thinking_budget,
+            total_budget: int_field("total_budget")?,
+            summary,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CacheConfig {
+    pub mode: String,
+    #[serde(skip_serializing_if = "empty_opt_str")]
+    pub retention: Option<String>,
+    #[serde(skip_serializing_if = "empty_opt_str")]
+    pub key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix_until_index: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for CacheConfig {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default = "mode_auto")]
+            mode: String,
+            #[serde(default)]
+            retention: Option<String>,
+            #[serde(default)]
+            key: Option<String>,
+            #[serde(default)]
+            prefix_until_index: Option<u64>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        if raw.mode != "auto" && raw.mode != "off" {
+            return Err(D::Error::custom(format!(
+                "unsupported cache mode: {}",
+                raw.mode
+            )));
+        }
+        if let Some(r) = raw.retention.as_deref() {
+            if r != "short" && r != "long" {
+                return Err(D::Error::custom(format!(
+                    "unsupported cache retention: {r}"
+                )));
+            }
+        }
+        Ok(CacheConfig {
+            mode: raw.mode,
+            retention: raw.retention,
+            key: raw.key,
+            prefix_until_index: raw.prefix_until_index,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<i64>,
+    pub max_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning: Option<JsonObject>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<JsonObject>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stop: Vec<String>,
+    #[serde(skip_serializing_if = "empty_opt_map")]
     pub response_format: Option<JsonObject>,
-}
-
-// ── Message ────────────────────────────────────────────────────────
-
-/// A single turn in a conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub role: Role,
-    pub parts: Vec<Part>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Reasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheConfig>,
+    #[serde(skip_serializing_if = "empty_opt_map")]
+    pub extensions: Option<JsonObject>,
 }
 
-impl Message {
-    /// Create a user message.
-    pub fn user(text: &str) -> Self {
-        Self { role: Role::User, parts: vec![Part::text(text)], name: None }
-    }
-
-    /// Create an assistant message.
-    pub fn assistant(text: &str) -> Self {
-        Self { role: Role::Assistant, parts: vec![Part::text(text)], name: None }
-    }
-
-    /// Create a tool result message.
-    pub fn tool_results(results: &[(&str, &str)]) -> Self {
-        let parts = results.iter().map(|(id, result)| {
-            Part::tool_result(id, vec![Part::text(*result)], None)
-        }).collect();
-        Self { role: Role::Tool, parts, name: None }
+impl Config {
+    /// True when the config serializes to `{}` (and is therefore omitted
+    /// from an enclosing Request — the omission rule).
+    pub fn is_empty(&self) -> bool {
+        self == &Config::default()
+            || serde_json::to_value(self).is_ok_and(|v| v == Value::Object(Map::new()))
     }
 }
 
-// ── Canonical JSON serialization ───────────────────────────────────
-
-/// Create a Part from a canonical JSON value.
-pub fn part_from_dict(v: &serde_json::Value) -> Part {
-    let t = v.get("type").and_then(|t| t.as_str()).unwrap_or("text");
-    match t {
-        "text" => Part::text(v.get("text").and_then(|t| t.as_str()).unwrap_or("")),
-        "thinking" => {
-            let mut p = Part::thinking(v.get("text").and_then(|t| t.as_str()).unwrap_or(""));
-            if let Some(r) = v.get("redacted").and_then(|r| r.as_bool()) { p.redacted = Some(r); }
-            if let Some(s) = v.get("summary").and_then(|s| s.as_str()) { p.summary = Some(s.into()); }
-            p
-        }
-        "refusal" => Part::refusal(v.get("text").and_then(|t| t.as_str()).unwrap_or("")),
-        "image" | "audio" | "video" | "document" => {
-            let src = v.get("source").unwrap_or(&serde_json::Value::Null);
-            let source = DataSource {
-                source_type: src.get("type").and_then(|t| t.as_str()).unwrap_or("url").into(),
-                url: src.get("url").and_then(|u| u.as_str()).map(Into::into),
-                data: src.get("data").and_then(|d| d.as_str()).map(Into::into),
-                media_type: src.get("media_type").and_then(|m| m.as_str()).map(Into::into),
-                file_id: src.get("file_id").and_then(|f| f.as_str()).map(Into::into),
-                detail: src.get("detail").and_then(|d| d.as_str()).map(Into::into),
-            };
-            let pt = serde_json::from_value::<PartType>(serde_json::Value::String(t.into())).unwrap_or(PartType::Text);
-            Part {
-                part_type: pt,
-                source: Some(source),
-                ..Part::text("")
+/// INV-042: a present non-object `tool_choice`/`reasoning`/`cache` nest is
+/// malformed canonical JSON and must be an error, never silent loss.
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("config must be a JSON object"))?;
+        fn nest<'a, E: DeError>(obj: &'a JsonObject, key: &str) -> Result<Option<&'a Value>, E> {
+            match obj.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v @ Value::Object(_)) => Ok(Some(v)),
+                Some(v) => Err(E::custom(format!(
+                    "config.{key} must be a JSON object, got {v}"
+                ))),
             }
         }
-        "tool_call" => Part::tool_call(
-            v.get("id").and_then(|i| i.as_str()).unwrap_or(""),
-            v.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-            v.get("arguments").and_then(|a| a.as_object()).map(|o| {
-                o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            }).unwrap_or_default(),
-        ),
-        "tool_result" => {
-            let content = match v.get("content") {
-                Some(serde_json::Value::String(s)) if !s.is_empty() => vec![Part::text(s)],
-                Some(serde_json::Value::Array(arr)) => arr.iter().map(part_from_dict).collect(),
-                _ => vec![],
-            };
-            Part::tool_result(
-                v.get("id").and_then(|i| i.as_str()).unwrap_or(""),
-                content,
-                v.get("name").and_then(|n| n.as_str()),
-            )
+        fn opt<T: serde::de::DeserializeOwned, E: DeError>(
+            obj: &JsonObject,
+            key: &str,
+        ) -> Result<Option<T>, E> {
+            match obj.get(key) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => serde_json::from_value(v.clone())
+                    .map(Some)
+                    .map_err(|e| E::custom(format!("config.{key}: {e}"))),
+            }
         }
-        _ => Part::text(v.get("text").and_then(|t| t.as_str()).unwrap_or("")),
+        let parse_nest = |key: &str| -> Result<Option<Value>, D::Error> {
+            Ok(nest::<D::Error>(obj, key)?.cloned())
+        };
+        Ok(Config {
+            max_tokens: opt(obj, "max_tokens")?,
+            temperature: opt(obj, "temperature")?,
+            top_p: opt(obj, "top_p")?,
+            top_k: opt(obj, "top_k")?,
+            stop: opt(obj, "stop")?.unwrap_or_default(),
+            response_format: opt(obj, "response_format")?,
+            tool_choice: parse_nest("tool_choice")?
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(D::Error::custom)?,
+            reasoning: parse_nest("reasoning")?
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(D::Error::custom)?,
+            cache: parse_nest("cache")?
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(D::Error::custom)?,
+            extensions: opt(obj, "extensions")?,
+        })
     }
 }
 
-/// Create a Message from a canonical JSON value.
-pub fn message_from_dict(v: &serde_json::Value) -> Message {
-    let role = v.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-    let parts: Vec<Part> = v.get("parts").and_then(|p| p.as_array())
-        .map(|arr| arr.iter().map(part_from_dict).collect())
-        .unwrap_or_default();
-    Message {
-        role: serde_json::from_value::<Role>(serde_json::Value::String(role.into())).unwrap_or(Role::User),
-        parts,
-        name: v.get("name").and_then(|n| n.as_str()).map(Into::into),
-    }
-}
+// ─── ErrorDetail ─────────────────────────────────────────────────────
 
-/// Parse a JSON array of canonical messages.
-pub fn messages_from_json(data: &[serde_json::Value]) -> Vec<Message> {
-    data.iter().map(message_from_dict).collect()
-}
-
-// ── Request / Response ─────────────────────────────────────────────
-
-/// Normalized request to any provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LMRequest {
-    pub model: String,
-    pub messages: Vec<Message>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<Tool>,
-    #[serde(default)]
-    pub config: Config,
-}
-
-/// Token usage counts.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Usage {
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub total_tokens: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_read_tokens: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_write_tokens: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_tokens: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_audio_tokens: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_audio_tokens: Option<i64>,
-}
-
-/// Normalized response from any provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LMResponse {
-    pub id: String,
-    pub model: String,
-    pub message: Message,
-    pub finish_reason: FinishReason,
-    pub usage: Usage,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<JsonObject>,
-}
-
-impl LMResponse {
-    /// Concatenated text from response parts.
-    pub fn text(&self) -> Option<String> {
-        let texts: Vec<&str> = self.message.parts.iter()
-            .filter(|p| p.part_type == PartType::Text)
-            .filter_map(|p| p.text.as_deref())
-            .collect();
-        if texts.is_empty() { None } else { Some(texts.join("\n")) }
-    }
-
-    /// Concatenated thinking text.
-    pub fn thinking(&self) -> Option<String> {
-        let texts: Vec<&str> = self.message.parts.iter()
-            .filter(|p| p.part_type == PartType::Thinking)
-            .filter_map(|p| p.text.as_deref())
-            .collect();
-        if texts.is_empty() { None } else { Some(texts.join("\n")) }
-    }
-
-    /// Tool call parts.
-    pub fn tool_calls(&self) -> Vec<&Part> {
-        self.message.parts.iter()
-            .filter(|p| p.part_type == PartType::ToolCall)
-            .collect()
-    }
-
-    /// First image part.
-    pub fn image(&self) -> Option<&Part> {
-        self.message.parts.iter().find(|p| p.part_type == PartType::Image)
-    }
-
-    /// First audio part.
-    pub fn audio(&self) -> Option<&Part> {
-        self.message.parts.iter().find(|p| p.part_type == PartType::Audio)
-    }
-
-    /// Parse response text as JSON.
-    pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, String> {
-        let text = self.text().ok_or("response contains no text")?;
-        serde_json::from_str(&text).map_err(|e| e.to_string())
-    }
-}
-
-// ── Streaming ──────────────────────────────────────────────────────
-
-/// Error info from a stream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorInfo {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ErrorDetail {
     pub code: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "empty_opt_str")]
     pub provider_code: Option<String>,
 }
 
-/// Partial update during streaming.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PartDelta {
-    #[serde(rename = "type")]
-    pub delta_type: String, // "text", "tool_call", "thinking", "audio"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input: Option<String>,
+// ─── Deltas ──────────────────────────────────────────────────────────
+
+/// Delta serializers drop only `null` fields — empty strings ARE emitted,
+/// and `part_index` is always emitted (spec/types.md "Deltas").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Delta {
+    Text {
+        text: String,
+        #[serde(default)]
+        part_index: u64,
+    },
+    Thinking {
+        text: String,
+        #[serde(default)]
+        part_index: u64,
+    },
+    Audio {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        #[serde(default)]
+        part_index: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+    },
+    Image {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        #[serde(default)]
+        part_index: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+    },
+    ToolCall {
+        #[serde(default)]
+        input: String,
+        #[serde(default)]
+        part_index: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    Citation {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default)]
+        part_index: u64,
+    },
+    Continuation {
+        provider: String,
+        kind: String,
+        #[serde(default)]
+        data: JsonObject,
+        /// `null` attaches to the Message; an int attaches to that part.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        part_index: Option<u64>,
+    },
 }
 
-/// A single event from a streaming response.
-#[derive(Debug, Clone)]
-pub struct StreamEvent {
-    pub event_type: String, // "start", "delta", "end", "error", etc.
+// ─── Usage ───────────────────────────────────────────────────────────
+
+/// All counters `Option<u64>`: `null` means "not reported", distinct from a
+/// reported `0`. `Usage::default()` serializes to `{}` and is omitted by
+/// enclosing serializers.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Usage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_audio_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_audio_tokens: Option<u64>,
+}
+
+impl Usage {
+    pub fn is_empty(&self) -> bool {
+        self == &Usage::default()
+    }
+}
+
+fn empty_opt_usage(u: &Option<Usage>) -> bool {
+    u.as_ref().is_none_or(Usage::is_empty)
+}
+
+// ─── Stream events ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamEvent {
+    Start {
+        #[serde(default, skip_serializing_if = "empty_opt_str")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "empty_opt_str")]
+        model: Option<String>,
+    },
+    Delta {
+        delta: Delta,
+    },
+    End {
+        #[serde(default, skip_serializing_if = "empty_opt_str")]
+        finish_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "empty_opt_usage")]
+        usage: Option<Usage>,
+        #[serde(default, skip_serializing_if = "empty_opt_map")]
+        provider_data: Option<JsonObject>,
+    },
+    Error {
+        error: ErrorDetail,
+    },
+}
+
+// ─── Request / Response ─────────────────────────────────────────────
+
+/// `Request.system`: a string or an array of prompt Parts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum System {
+    Text(String),
+    Parts(Vec<Part>),
+}
+
+fn empty_opt_system(s: &Option<System>) -> bool {
+    match s {
+        None => true,
+        Some(System::Text(t)) => t.is_empty(),
+        Some(System::Parts(p)) => p.is_empty(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(default, skip_serializing_if = "empty_opt_system")]
+    pub system: Option<System>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Config::is_empty")]
+    pub config: Config,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Response {
+    #[serde(default, skip_serializing_if = "empty_opt_str")]
     pub id: Option<String>,
-    pub model: Option<String>,
-    pub part_index: Option<usize>,
-    pub delta: Option<PartDelta>,
-    pub delta_raw: Option<JsonObject>,
-    pub part_type: Option<String>,
-    pub finish_reason: Option<FinishReason>,
-    pub usage: Option<Usage>,
-    pub error: Option<ErrorInfo>,
-}
-
-impl StreamEvent {
-    pub fn start(id: &str, model: &str) -> Self {
-        Self { event_type: "start".into(), id: Some(id.into()), model: Some(model.into()), ..Self::default() }
-    }
-    pub fn end(finish_reason: FinishReason, usage: Usage) -> Self {
-        Self { event_type: "end".into(), finish_reason: Some(finish_reason), usage: Some(usage), ..Self::default() }
-    }
-    pub fn text_delta(part_index: usize, text: &str) -> Self {
-        Self {
-            event_type: "delta".into(),
-            part_index: Some(part_index),
-            delta: Some(PartDelta { delta_type: "text".into(), text: Some(text.into()), data: None, input: None }),
-            ..Self::default()
-        }
-    }
-    pub fn error(info: ErrorInfo) -> Self {
-        Self { event_type: "error".into(), error: Some(info), ..Self::default() }
-    }
-}
-
-impl Default for StreamEvent {
-    fn default() -> Self {
-        Self {
-            event_type: String::new(), id: None, model: None, part_index: None,
-            delta: None, delta_raw: None, part_type: None, finish_reason: None,
-            usage: None, error: None,
-        }
-    }
-}
-
-/// Higher-level chunk emitted by Result.
-#[derive(Debug, Clone)]
-pub struct StreamChunk {
-    pub chunk_type: String, // "text", "thinking", "audio", "tool_call", "tool_result", "finished"
-    pub text: Option<String>,
-    pub name: Option<String>,
-    pub input: Option<JsonObject>,
-    pub response: Option<LMResponse>,
-}
-
-// ── Auxiliary types ────────────────────────────────────────────────
-
-/// Embedding request.
-#[derive(Debug, Clone)]
-pub struct EmbeddingRequest {
     pub model: String,
-    pub inputs: Vec<String>,
-    pub provider: Option<JsonObject>,
-}
-
-/// Embedding response.
-#[derive(Debug, Clone)]
-pub struct EmbeddingResponse {
-    pub model: String,
-    pub vectors: Vec<Vec<f64>>,
+    pub message: Message,
+    pub finish_reason: String,
+    #[serde(default, skip_serializing_if = "Usage::is_empty")]
     pub usage: Usage,
-    pub provider: Option<JsonObject>,
+    /// Never serialized by default (the vet protocol serializes responses
+    /// WITHOUT provider_data).
+    #[serde(default, skip_serializing)]
+    pub provider_data: Option<JsonObject>,
 }
 
-/// File upload request.
-#[derive(Debug, Clone)]
-pub struct FileUploadRequest {
-    pub model: Option<String>,
-    pub filename: String,
-    pub bytes_data: Vec<u8>,
-    pub media_type: String,
+// ─── ModelInfo ───────────────────────────────────────────────────────
+
+fn currency_usd() -> String {
+    "USD".to_string()
 }
 
-/// File upload response.
-#[derive(Debug, Clone)]
-pub struct FileUploadResponse {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InferencePricing {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_per_million: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_per_million: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_per_million: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_per_million: Option<f64>,
+    #[serde(default = "currency_usd", skip_serializing_if = "String::is_empty")]
+    pub currency: String,
+    #[serde(default, skip_serializing_if = "empty_opt_map")]
+    pub dimensions: Option<JsonObject>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrainingPricing {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub training_tokens_per_million: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_second: Option<f64>,
+    #[serde(default = "currency_usd", skip_serializing_if = "String::is_empty")]
+    pub currency: String,
+    #[serde(default, skip_serializing_if = "empty_opt_map")]
+    pub dimensions: Option<JsonObject>,
+}
+
+fn modalities_text() -> Vec<String> {
+    vec!["text".to_string()]
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InferenceModelInfo {
+    #[serde(default = "modalities_text", skip_serializing_if = "Vec::is_empty")]
+    pub input_modalities: Vec<String>,
+    #[serde(default = "modalities_text", skip_serializing_if = "Vec::is_empty")]
+    pub output_modalities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_reasoning: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_efforts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<InferencePricing>,
+    #[serde(default, skip_serializing_if = "empty_opt_map")]
+    pub extensions: Option<JsonObject>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrainingModelInfo {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_lora: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub supports_full_finetune: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trainable_modalities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<TrainingPricing>,
+    #[serde(default, skip_serializing_if = "empty_opt_map")]
+    pub extensions: Option<JsonObject>,
+}
+
+fn origin_provider() -> String {
+    "provider".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelOrigin {
+    #[serde(rename = "type", default = "origin_provider")]
+    pub origin_type: String,
+    #[serde(default, skip_serializing_if = "empty_opt_str")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "empty_opt_str")]
+    pub base_model: Option<String>,
+    #[serde(default, skip_serializing_if = "empty_opt_map")]
+    pub provider_data: Option<JsonObject>,
+}
+
+impl Default for ModelOrigin {
+    fn default() -> Self {
+        ModelOrigin {
+            origin_type: origin_provider(),
+            id: None,
+            base_model: None,
+            provider_data: None,
+        }
+    }
+}
+
+/// The default origin (`{"type": "provider"}`) carries no information and is
+/// omitted from ModelInfo JSON.
+fn origin_is_default(o: &ModelOrigin) -> bool {
+    o.origin_type == "provider"
+        && empty_opt_str(&o.id)
+        && empty_opt_str(&o.base_model)
+        && empty_opt_map(&o.provider_data)
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelInfo {
     pub id: String,
-    pub provider: Option<JsonObject>,
+    pub provider: String,
+    pub api_family: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    #[serde(default, skip_serializing_if = "origin_is_default")]
+    pub origin: ModelOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inference: Option<InferenceModelInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub training: Option<TrainingModelInfo>,
+    #[serde(default, skip_serializing_if = "empty_opt_map")]
+    pub extensions: Option<JsonObject>,
 }
 
-/// Image generation request.
-#[derive(Debug, Clone)]
-pub struct ImageGenerationRequest {
+// ─── Audio / Live ────────────────────────────────────────────────────
+
+fn channels_one() -> u64 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AudioFormat {
+    pub encoding: String,
+    pub sample_rate: u64,
+    #[serde(default = "channels_one")]
+    pub channels: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveConfig {
     pub model: String,
-    pub prompt: String,
-    pub size: Option<String>,
-    pub provider: Option<JsonObject>,
+    #[serde(default, skip_serializing_if = "empty_opt_system")]
+    pub system: Option<System>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "empty_opt_str")]
+    pub voice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_format: Option<AudioFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<AudioFormat>,
+    #[serde(default, skip_serializing_if = "empty_opt_map")]
+    pub extensions: Option<JsonObject>,
 }
 
-/// Image generation response.
-#[derive(Debug, Clone)]
-pub struct ImageGenerationResponse {
-    pub images: Vec<DataSource>,
-    pub provider: Option<JsonObject>,
+fn turn_complete_true() -> bool {
+    true
+}
+
+fn audio_pcm_16k() -> String {
+    "audio/pcm;rate=16000".to_string()
+}
+
+fn image_jpeg() -> String {
+    "image/jpeg".to_string()
+}
+
+/// Live events are serialized without cleaning: all fields verbatim,
+/// including `turn_complete` when `false` (spec/types.md).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LiveClientEvent {
+    Turn {
+        #[serde(default)]
+        parts: Vec<Part>,
+        #[serde(default = "turn_complete_true")]
+        turn_complete: bool,
+    },
+    Audio {
+        data: String,
+        #[serde(default = "audio_pcm_16k")]
+        media_type: String,
+    },
+    Image {
+        data: String,
+        #[serde(default = "image_jpeg")]
+        media_type: String,
+    },
+    Text {
+        #[serde(default)]
+        text: String,
+    },
+    ToolResult {
+        id: String,
+        #[serde(default)]
+        content: Vec<Part>,
+    },
+    Interrupt,
+    EndAudio,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LiveServerEvent {
+    Audio {
+        data: String,
+        #[serde(default, skip_serializing_if = "empty_opt_str")]
+        media_type: Option<String>,
+    },
+    Text {
+        #[serde(default)]
+        text: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        #[serde(default)]
+        input: JsonObject,
+    },
+    ToolCallDelta {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        input_delta: String,
+        #[serde(default, skip_serializing_if = "empty_opt_str")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "empty_opt_str")]
+        name: Option<String>,
+    },
+    Interrupted,
+    TurnEnd {
+        #[serde(default, skip_serializing_if = "Usage::is_empty")]
+        usage: Usage,
+    },
+    Error {
+        error: ErrorDetail,
+    },
 }

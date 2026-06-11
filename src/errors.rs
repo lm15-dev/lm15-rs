@@ -1,86 +1,94 @@
-//! Error hierarchy for lm15.
+//! Canonical lm15 error hierarchy (spec/vocabularies.md "ErrorCode").
+//!
+//! Rust has no class inheritance; the hierarchy SHAPE is replicated as one
+//! enum whose variants map bidirectionally to the canonical class names and
+//! ErrorCode literals. Retryable set: rate_limit, timeout, server, transport.
 
-use std::fmt;
+use thiserror::Error;
 
-/// Base error type for all lm15 errors.
-#[derive(Debug)]
-pub enum LM15Error {
-    Transport(String),
-    Auth(String),
-    Billing(String),
-    RateLimit(String),
-    InvalidRequest(String),
-    ContextLength(String),
-    Timeout(String),
-    Server(String),
-    UnsupportedModel(String),
-    UnsupportedFeature(String),
-    Provider(String),
+/// Shared error metadata (every canonical error class carries these).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ErrorMeta {
+    pub provider: Option<String>,
+    pub provider_code: Option<String>,
+    pub status: Option<u16>,
+    pub request_id: Option<String>,
+    /// Float-typed per the Number rule (int coerces).
+    pub retry_after: Option<f64>,
 }
 
-impl fmt::Display for LM15Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum Lm15Error {
+    #[error("{message}")]
+    Transport { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    NotConfigured { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    UnsupportedFeature { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    Auth { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    Billing { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    RateLimit { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    InvalidRequest { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    ContextLength { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    UnsupportedModel { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    Timeout { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    Server { message: String, meta: ErrorMeta },
+    #[error("{message}")]
+    Provider { message: String, meta: ErrorMeta },
+}
+
+impl Lm15Error {
+    /// Canonical class name (the vet protocol's `error.type`).
+    pub fn class_name(&self) -> &'static str {
         match self {
-            Self::Transport(m) => write!(f, "TransportError: {m}"),
-            Self::Auth(m) => write!(f, "AuthError: {m}"),
-            Self::Billing(m) => write!(f, "BillingError: {m}"),
-            Self::RateLimit(m) => write!(f, "RateLimitError: {m}"),
-            Self::InvalidRequest(m) => write!(f, "InvalidRequestError: {m}"),
-            Self::ContextLength(m) => write!(f, "ContextLengthError: {m}"),
-            Self::Timeout(m) => write!(f, "TimeoutError: {m}"),
-            Self::Server(m) => write!(f, "ServerError: {m}"),
-            Self::UnsupportedModel(m) => write!(f, "UnsupportedModelError: {m}"),
-            Self::UnsupportedFeature(m) => write!(f, "UnsupportedFeatureError: {m}"),
-            Self::Provider(m) => write!(f, "ProviderError: {m}"),
+            Lm15Error::Transport { .. } => "TransportError",
+            Lm15Error::NotConfigured { .. } => "NotConfiguredError",
+            Lm15Error::UnsupportedFeature { .. } => "UnsupportedFeatureError",
+            Lm15Error::Auth { .. } => "AuthError",
+            Lm15Error::Billing { .. } => "BillingError",
+            Lm15Error::RateLimit { .. } => "RateLimitError",
+            Lm15Error::InvalidRequest { .. } => "InvalidRequestError",
+            Lm15Error::ContextLength { .. } => "ContextLengthError",
+            Lm15Error::UnsupportedModel { .. } => "UnsupportedModelError",
+            Lm15Error::Timeout { .. } => "TimeoutError",
+            Lm15Error::Server { .. } => "ServerError",
+            Lm15Error::Provider { .. } => "ProviderError",
         }
     }
-}
 
-impl std::error::Error for LM15Error {}
-
-/// Map an HTTP status code to a typed error.
-pub fn map_http_error(status: u16, message: &str) -> LM15Error {
-    match status {
-        401 | 403 => LM15Error::Auth(message.into()),
-        402 => LM15Error::Billing(message.into()),
-        429 => LM15Error::RateLimit(message.into()),
-        408 | 504 => LM15Error::Timeout(message.into()),
-        400 | 404 | 409 | 413 | 422 => LM15Error::InvalidRequest(message.into()),
-        500..=599 => LM15Error::Server(message.into()),
-        _ => LM15Error::Provider(message.into()),
+    /// Canonical ErrorCode literal.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Lm15Error::Transport { .. } => "transport",
+            Lm15Error::NotConfigured { .. } => "not_configured",
+            Lm15Error::UnsupportedFeature { .. } => "unsupported_feature",
+            Lm15Error::Auth { .. } => "auth",
+            Lm15Error::Billing { .. } => "billing",
+            Lm15Error::RateLimit { .. } => "rate_limit",
+            Lm15Error::InvalidRequest { .. } => "invalid_request",
+            Lm15Error::ContextLength { .. } => "context_length",
+            Lm15Error::UnsupportedModel { .. } => "unsupported_model",
+            Lm15Error::Timeout { .. } => "timeout",
+            Lm15Error::Server { .. } => "server",
+            Lm15Error::Provider { .. } => "provider",
+        }
     }
-}
 
-/// Canonical error code string.
-pub fn canonical_error_code(err: &LM15Error) -> &'static str {
-    match err {
-        LM15Error::ContextLength(_) => "context_length",
-        LM15Error::Auth(_) => "auth",
-        LM15Error::Billing(_) => "billing",
-        LM15Error::RateLimit(_) => "rate_limit",
-        LM15Error::InvalidRequest(_) => "invalid_request",
-        LM15Error::Timeout(_) => "timeout",
-        LM15Error::Server(_) => "server",
-        LM15Error::Transport(_) => "provider",
-        _ => "provider",
+    pub fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Lm15Error::RateLimit { .. }
+                | Lm15Error::Timeout { .. }
+                | Lm15Error::Server { .. }
+                | Lm15Error::Transport { .. }
+        )
     }
-}
-
-/// Construct a typed error from a canonical code string.
-pub fn error_for_code(code: &str, message: &str) -> LM15Error {
-    match code {
-        "auth" => LM15Error::Auth(message.into()),
-        "billing" => LM15Error::Billing(message.into()),
-        "rate_limit" => LM15Error::RateLimit(message.into()),
-        "invalid_request" => LM15Error::InvalidRequest(message.into()),
-        "context_length" => LM15Error::ContextLength(message.into()),
-        "timeout" => LM15Error::Timeout(message.into()),
-        "server" => LM15Error::Server(message.into()),
-        _ => LM15Error::Provider(message.into()),
-    }
-}
-
-/// Whether an error is transient (worth retrying).
-pub fn is_transient(err: &LM15Error) -> bool {
-    matches!(err, LM15Error::RateLimit(_) | LM15Error::Timeout(_) | LM15Error::Server(_) | LM15Error::Transport(_))
 }
