@@ -444,3 +444,205 @@ pub fn build_request(
         body: Value::Object(payload(request, stream)?),
     })
 }
+
+// ─── Response parsing (reference: AnthropicLM.parse_response) ──────
+
+use serde_json::Value as JValue;
+
+use super::common::{
+    count_opt, count_or_zero, dict_of, first_truthy_str, list_of, py_str, py_type_name,
+    record_unmapped, str_or_empty, truthy, ParseFailure, ParsedResponse,
+};
+use crate::types::{ContinuationState, Message, Response, Usage};
+
+/// Content blocks executed by the provider (MAP-1: never become parts).
+pub(crate) const PROVIDER_EXECUTED_BLOCKS: &[&str] = &[
+    "server_tool_use",
+    "web_search_tool_result",
+    "code_execution_tool_result",
+];
+
+/// Reference `_finish_reason` (anthropic stop_reason map).
+fn finish_reason(stop_reason: Option<&JValue>, has_tool_call: bool) -> String {
+    if has_tool_call {
+        return "tool_call".to_string();
+    }
+    let reason = str_or_empty(stop_reason).to_lowercase();
+    match reason.as_str() {
+        "max_tokens" | "model_context_window_exceeded" => "length",
+        "tool_use" | "pause_turn" => "tool_call",
+        "refusal" | "safety" | "content_filter" => "content_filter",
+        _ => "stop",
+    }
+    .to_string()
+}
+
+/// Reference `_citation_from_anthropic`.
+fn citation_from_anthropic(citation: &Map<String, JValue>) -> Option<Part> {
+    let url = first_truthy_str(citation, &["url", "uri"]);
+    let title = first_truthy_str(citation, &["title", "document_title", "source_title"]);
+    let text = first_truthy_str(citation, &["cited_text", "text", "quote"]);
+    if url.is_none() && title.is_none() && text.is_none() {
+        return None;
+    }
+    Some(Part::Citation {
+        text,
+        url,
+        title,
+        continuation: Vec::new(),
+    })
+}
+
+fn one_continuation(provider: &str, kind: &str, key: &str, value: JValue) -> Vec<ContinuationState> {
+    let mut data = Map::new();
+    data.insert(key.to_string(), value);
+    vec![ContinuationState {
+        provider: provider.to_string(),
+        kind: kind.to_string(),
+        data,
+    }]
+}
+
+pub fn parse_response(
+    request: &Request,
+    data: &Map<String, JValue>,
+) -> Result<ParsedResponse, ParseFailure> {
+    let mut parts: Vec<Part> = Vec::new();
+    let mut unmapped: Vec<JValue> = Vec::new();
+    for (block_index, block) in list_of(data, "content").iter().enumerate() {
+        let Some(block) = block.as_object() else {
+            record_unmapped(
+                &mut unmapped,
+                format!("content[{block_index}]"),
+                py_type_name(block),
+            );
+            continue;
+        };
+        let block_type = block.get("type").and_then(JValue::as_str).unwrap_or("");
+        match block_type {
+            "text" => {
+                parts.push(Part::Text {
+                    text: str_or_empty(block.get("text")),
+                    continuation: Vec::new(),
+                });
+                for citation in list_of(block, "citations") {
+                    if let Some(citation) = citation.as_object() {
+                        if let Some(part) = citation_from_anthropic(citation) {
+                            parts.push(part);
+                        }
+                    }
+                }
+            }
+            "tool_use" => {
+                let mut id = str_or_empty(block.get("id"));
+                if id.is_empty() {
+                    id = format!("tool_{}", parts.len());
+                }
+                let mut name = str_or_empty(block.get("name"));
+                if name.is_empty() {
+                    name = "tool".to_string();
+                }
+                parts.push(Part::ToolCall {
+                    id,
+                    name,
+                    input: block
+                        .get("input")
+                        .and_then(JValue::as_object)
+                        .cloned()
+                        .unwrap_or_default(),
+                    continuation: Vec::new(),
+                });
+            }
+            "thinking" => {
+                let continuation = block
+                    .get("signature")
+                    .filter(|v| truthy(v))
+                    .map(|sig| {
+                        one_continuation(
+                            "anthropic",
+                            "thinking_signature",
+                            "signature",
+                            JValue::String(py_str(sig)),
+                        )
+                    })
+                    .unwrap_or_default();
+                let mut text = str_or_empty(block.get("thinking"));
+                if text.is_empty() {
+                    text = str_or_empty(block.get("text"));
+                }
+                parts.push(Part::Thinking {
+                    text,
+                    redacted: false,
+                    continuation,
+                });
+            }
+            "redacted_thinking" => {
+                let continuation = match block.get("data") {
+                    None | Some(JValue::Null) => Vec::new(),
+                    Some(payload) => one_continuation(
+                        "anthropic",
+                        "redacted_thinking",
+                        "data",
+                        payload.clone(),
+                    ),
+                };
+                parts.push(Part::Thinking {
+                    text: "[redacted]".to_string(),
+                    redacted: true,
+                    continuation,
+                });
+            }
+            t if PROVIDER_EXECUTED_BLOCKS.contains(&t) => {}
+            other => record_unmapped(&mut unmapped, format!("content[{block_index}]"), other),
+        }
+    }
+
+    if parts.is_empty() {
+        // MAP-2: a response message is never empty.
+        parts.push(Part::Text {
+            text: String::new(),
+            continuation: Vec::new(),
+        });
+    }
+
+    let empty = Map::new();
+    let usage_payload = dict_of(data, "usage").unwrap_or(&empty);
+    let input_tokens = count_or_zero(usage_payload.get("input_tokens"));
+    let output_tokens = count_or_zero(usage_payload.get("output_tokens"));
+    let usage = Usage {
+        input_tokens: Some(input_tokens),
+        output_tokens: Some(output_tokens),
+        total_tokens: Some(input_tokens + output_tokens),
+        cache_read_tokens: count_opt(usage_payload.get("cache_read_input_tokens")),
+        cache_write_tokens: count_opt(usage_payload.get("cache_creation_input_tokens")),
+        reasoning_tokens: None,
+        input_audio_tokens: None,
+        output_audio_tokens: None,
+    };
+
+    let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall { .. }));
+    let id = data.get("id").filter(|v| truthy(v)).map(py_str);
+    let continuation = id
+        .as_ref()
+        .map(|id| one_continuation("anthropic", "message_id", "id", JValue::String(id.clone())))
+        .unwrap_or_default();
+    let mut model = str_or_empty(data.get("model"));
+    if model.is_empty() {
+        model = request.model.clone();
+    }
+    Ok(ParsedResponse {
+        response: Response {
+            id,
+            model,
+            message: Message {
+                role: "assistant".to_string(),
+                parts,
+                continuation,
+            },
+            finish_reason: finish_reason(data.get("stop_reason"), has_tool),
+            usage,
+            provider_data: None,
+        },
+        unmapped,
+    })
+}

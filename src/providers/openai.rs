@@ -358,3 +358,319 @@ pub fn build_request(
         body: Value::Object(payload(request, stream)),
     })
 }
+
+// ─── Response parsing (reference: OpenAILM.parse_response) ─────────
+
+use serde_json::Value as JValue;
+
+use super::common::{
+    count_opt, count_or_zero, dict_of, first_truthy_str, int_or_none, list_of, parse_json_object,
+    py_slice, py_type_name, record_unmapped, str_or_empty, str_or_none, truthy, ParseFailure,
+    ParsedResponse,
+};
+use crate::types::{ContinuationState, Message, Response, Usage};
+
+/// Output item types executed by the provider (MAP-1: never become parts).
+pub(crate) const PROVIDER_EXECUTED_ITEMS: &[&str] = &[
+    "web_search_call",
+    "file_search_call",
+    "code_interpreter_call",
+    "computer_call",
+    "computer_use_call",
+];
+
+fn annotation_text(annotation: &Map<String, JValue>, source_text: Option<&str>) -> Option<String> {
+    for key in ["text", "snippet", "cited_text", "quote"] {
+        if let Some(text) = str_or_none(annotation.get(key)) {
+            return Some(text);
+        }
+    }
+    let start = int_or_none(annotation.get("start_index"))?;
+    let end = int_or_none(annotation.get("end_index"))?;
+    py_slice(source_text?, start, end)
+}
+
+/// Reference `_citation_from_openai_annotation`.
+pub(crate) fn citation_from_annotation(
+    annotation: &Map<String, JValue>,
+    source_text: Option<&str>,
+) -> Option<Part> {
+    let url = first_truthy_str(annotation, &["url", "uri"]);
+    let title = first_truthy_str(annotation, &["title", "filename", "file_id"]);
+    let text = annotation_text(annotation, source_text);
+    if url.is_none() && title.is_none() && text.is_none() {
+        return None;
+    }
+    Some(Part::Citation {
+        text,
+        url,
+        title,
+        continuation: Vec::new(),
+    })
+}
+
+/// Reference `_finish_from_status`.
+fn finish_from_status(data: &Map<String, JValue>, has_tool_call: bool) -> String {
+    if has_tool_call {
+        return "tool_call".to_string();
+    }
+    let status = str_or_empty(data.get("status")).to_lowercase();
+    let reason = dict_of(data, "incomplete_details")
+        .map(|d| str_or_empty(d.get("reason")).to_lowercase())
+        .unwrap_or_default();
+    if status == "incomplete" && reason.contains("token") {
+        return "length".to_string();
+    }
+    if reason.contains("content_filter") || reason.contains("safety") {
+        return "content_filter".to_string();
+    }
+    "stop".to_string()
+}
+
+/// In-band `error` object on a 200 body (reference: `_response_error`).
+pub(crate) fn response_error(provider: &str, code: &str, message: &str) -> Lm15Error {
+    let class = match code {
+        "server_error" => ErrorClass::Server,
+        "rate_limit_exceeded" => ErrorClass::RateLimit,
+        "invalid_prompt" | "invalid_image" | "invalid_image_format" | "invalid_base64_image"
+        | "invalid_image_url" | "image_too_large" | "image_too_small" | "image_parse_error"
+        | "image_content_policy_violation" | "invalid_image_mode" | "image_file_too_large"
+        | "unsupported_image_media_type" | "empty_image_file" | "failed_to_download_image"
+        | "image_file_not_found" => ErrorClass::InvalidRequest,
+        "vector_store_timeout" => ErrorClass::Timeout,
+        "model_not_found" | "model_not_available" | "unsupported_model" => {
+            ErrorClass::UnsupportedModel
+        }
+        _ => ErrorClass::Server,
+    };
+    let msg = if !message.is_empty() {
+        message
+    } else if !code.is_empty() {
+        code
+    } else {
+        "provider error"
+    };
+    class.build(
+        msg.to_string(),
+        ErrorMeta {
+            provider: Some(provider.to_string()),
+            provider_code: (!code.is_empty()).then(|| code.to_string()),
+            ..ErrorMeta::default()
+        },
+    )
+}
+
+pub fn parse_response(request: &Request, data: &Map<String, JValue>) -> Result<ParsedResponse, ParseFailure> {
+    if let Some(err) = dict_of(data, "error") {
+        let code = str_or_empty(err.get("code"));
+        let message = str_or_empty(err.get("message"));
+        let message = if message.is_empty() {
+            JValue::Object(err.clone()).to_string()
+        } else {
+            message
+        };
+        return Err(ParseFailure::Error(Box::new(response_error(
+            "openai", &code, &message,
+        ))));
+    }
+
+    let mut parts: Vec<Part> = Vec::new();
+    let mut unmapped: Vec<JValue> = Vec::new();
+    for (item_index, item) in list_of(data, "output").iter().enumerate() {
+        let Some(item) = item.as_object() else {
+            record_unmapped(&mut unmapped, format!("output[{item_index}]"), py_type_name(item));
+            continue;
+        };
+        let item_type = item.get("type").and_then(JValue::as_str).unwrap_or("");
+        match item_type {
+            "message" => {
+                for (content_index, content) in list_of(item, "content").iter().enumerate() {
+                    let path = format!("output[{item_index}].content[{content_index}]");
+                    let Some(content) = content.as_object() else {
+                        record_unmapped(&mut unmapped, path, py_type_name(content));
+                        continue;
+                    };
+                    let ctype = content.get("type").and_then(JValue::as_str).unwrap_or("");
+                    match ctype {
+                        "output_text" | "text" => {
+                            let text = str_or_empty(content.get("text"));
+                            parts.push(Part::Text {
+                                text: text.clone(),
+                                continuation: Vec::new(),
+                            });
+                            for annotation in list_of(content, "annotations") {
+                                if let Some(annotation) = annotation.as_object() {
+                                    if let Some(citation) =
+                                        citation_from_annotation(annotation, Some(&text))
+                                    {
+                                        parts.push(citation);
+                                    }
+                                }
+                            }
+                        }
+                        "refusal" => {
+                            let mut text = str_or_empty(content.get("refusal"));
+                            if text.is_empty() {
+                                text = str_or_empty(content.get("text"));
+                            }
+                            if text.is_empty() {
+                                parts.push(Part::Text {
+                                    text: String::new(),
+                                    continuation: Vec::new(),
+                                });
+                            } else {
+                                parts.push(Part::Refusal {
+                                    text,
+                                    continuation: Vec::new(),
+                                });
+                            }
+                        }
+                        "output_image" => {
+                            let mut b64 = str_or_empty(content.get("b64_json"));
+                            if b64.is_empty() {
+                                b64 = str_or_empty(content.get("image_base64"));
+                            }
+                            if !b64.is_empty() {
+                                parts.push(Part::Image {
+                                    media_type: "image/png".to_string(),
+                                    data: Some(b64),
+                                    url: None,
+                                    file_id: None,
+                                    path: None,
+                                    detail: None,
+                                    continuation: Vec::new(),
+                                });
+                            }
+                        }
+                        "output_audio" => {
+                            let mut b64 = dict_of(content, "audio")
+                                .map(|a| str_or_empty(a.get("data")))
+                                .unwrap_or_default();
+                            if b64.is_empty() {
+                                b64 = str_or_empty(content.get("b64_json"));
+                            }
+                            if !b64.is_empty() {
+                                parts.push(Part::Audio {
+                                    media_type: "audio/wav".to_string(),
+                                    data: Some(b64),
+                                    url: None,
+                                    file_id: None,
+                                    path: None,
+                                    continuation: Vec::new(),
+                                });
+                            }
+                        }
+                        other => record_unmapped(&mut unmapped, path, other),
+                    }
+                }
+            }
+            "function_call" => {
+                let mut id = str_or_empty(item.get("call_id"));
+                if id.is_empty() {
+                    id = str_or_empty(item.get("id"));
+                }
+                if id.is_empty() {
+                    id = format!("call_{}", parts.len());
+                }
+                let mut name = str_or_empty(item.get("name"));
+                if name.is_empty() {
+                    name = "tool".to_string();
+                }
+                parts.push(Part::ToolCall {
+                    id,
+                    name,
+                    input: parse_json_object(item.get("arguments")),
+                    continuation: Vec::new(),
+                });
+            }
+            "reasoning" => {
+                let text = match item.get("summary") {
+                    Some(JValue::Array(entries)) => entries
+                        .iter()
+                        .map(|x| match x {
+                            JValue::Object(o) => super::common::py_str(
+                                o.get("text").unwrap_or(&JValue::Null),
+                            ),
+                            other => super::common::py_str(other),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    summary => {
+                        let s = str_or_empty(summary);
+                        if s.is_empty() {
+                            str_or_empty(item.get("text"))
+                        } else {
+                            s
+                        }
+                    }
+                };
+                if !text.is_empty() {
+                    parts.push(Part::Thinking {
+                        text,
+                        redacted: false,
+                        continuation: Vec::new(),
+                    });
+                }
+            }
+            t if PROVIDER_EXECUTED_ITEMS.contains(&t) => {}
+            other => record_unmapped(&mut unmapped, format!("output[{item_index}]"), other),
+        }
+    }
+
+    if parts.is_empty() {
+        // MAP-2: a response message is never empty.
+        parts.push(Part::Text {
+            text: str_or_empty(data.get("output_text")),
+            continuation: Vec::new(),
+        });
+    }
+
+    let empty = Map::new();
+    let usage_data = dict_of(data, "usage").unwrap_or(&empty);
+    let input_details = dict_of(usage_data, "input_tokens_details").unwrap_or(&empty);
+    let output_details = dict_of(usage_data, "output_tokens_details").unwrap_or(&empty);
+    let usage = Usage {
+        input_tokens: Some(count_or_zero(usage_data.get("input_tokens"))),
+        output_tokens: Some(count_or_zero(usage_data.get("output_tokens"))),
+        total_tokens: count_opt(usage_data.get("total_tokens")),
+        cache_read_tokens: count_opt(input_details.get("cached_tokens")),
+        cache_write_tokens: None,
+        reasoning_tokens: count_opt(output_details.get("reasoning_tokens")),
+        input_audio_tokens: count_opt(input_details.get("audio_tokens")),
+        output_audio_tokens: count_opt(output_details.get("audio_tokens")),
+    };
+
+    let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall { .. }));
+    let id = data.get("id").filter(|v| truthy(v)).map(super::common::py_str);
+    let continuation = id
+        .as_ref()
+        .map(|id| {
+            let mut payload = Map::new();
+            payload.insert("id".into(), JValue::String(id.clone()));
+            vec![ContinuationState {
+                provider: "openai".to_string(),
+                kind: "response_id".to_string(),
+                data: payload,
+            }]
+        })
+        .unwrap_or_default();
+    let mut model = str_or_empty(data.get("model"));
+    if model.is_empty() {
+        model = request.model.clone();
+    }
+    Ok(ParsedResponse {
+        response: Response {
+            id,
+            model,
+            message: Message {
+                role: "assistant".to_string(),
+                parts,
+                continuation,
+            },
+            finish_reason: finish_from_status(data, has_tool),
+            usage,
+            provider_data: None,
+        },
+        unmapped,
+    })
+}

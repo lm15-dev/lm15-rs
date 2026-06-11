@@ -307,3 +307,181 @@ pub fn system_present(system: &System) -> bool {
         System::Parts(p) => !p.is_empty(),
     }
 }
+
+// ─── Response-parsing helpers (reference: provider parse_response) ──
+
+use crate::types::Response;
+
+/// `parse_response` output: the canonical Response plus the `_lm15_unmapped`
+/// recorder entries (PROTOCOL.md — non-empty fails a case).
+#[derive(Debug)]
+pub struct ParsedResponse {
+    pub response: Response,
+    pub unmapped: Vec<Value>,
+}
+
+/// How `parse_response` fails: an undecodable body, or a typed in-band
+/// provider error surfaced from a 200 body.
+#[derive(Debug)]
+pub enum ParseFailure {
+    BadJson(String),
+    Error(Box<crate::errors::Lm15Error>),
+}
+
+/// `_record_unmapped`: `{"path": ..., "type": str(typ or "<missing>")}`.
+pub fn record_unmapped(unmapped: &mut Vec<Value>, path: String, typ: &str) {
+    let typ = if typ.is_empty() { "<missing>" } else { typ };
+    unmapped.push(json!({"path": path, "type": typ}));
+}
+
+/// Python `type(x).__name__` for a JSON value.
+pub fn py_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "NoneType",
+        Value::Bool(_) => "bool",
+        Value::Number(n) => {
+            if n.is_f64() {
+                "float"
+            } else {
+                "int"
+            }
+        }
+        Value::String(_) => "str",
+        Value::Array(_) => "list",
+        Value::Object(_) => "dict",
+    }
+}
+
+/// Python truthiness of a JSON value.
+pub fn truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+    }
+}
+
+/// Python `str(x)` for the scalar shapes parse paths feed it.
+pub fn py_str(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Null => "None".to_string(),
+        Value::Bool(b) => (if *b { "True" } else { "False" }).to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// `str(x or "")`.
+pub fn str_or_empty(value: Option<&Value>) -> String {
+    match value {
+        Some(v) if truthy(v) => py_str(v),
+        _ => String::new(),
+    }
+}
+
+/// `str(x) if x else None` (truthiness-gated).
+pub fn str_if_truthy(value: Option<&Value>) -> Option<String> {
+    value.filter(|v| truthy(v)).map(py_str)
+}
+
+/// First truthy value among `keys` of `obj`, stringified.
+pub fn first_truthy_str(obj: &JsonObject, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|k| str_if_truthy(obj.get(*k)))
+}
+
+/// Reference `_str_or_none`: None for absent/None/`""`, else `str(value)`.
+pub fn str_or_none(value: Option<&Value>) -> Option<String> {
+    match value {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.is_empty() => None,
+        Some(v) => Some(py_str(v)),
+    }
+}
+
+/// Reference `_int_or_none`: int passthrough/truncation, bools and
+/// unparseable values are None.
+pub fn int_or_none(value: Option<&Value>) -> Option<i64> {
+    match value {
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| n.as_f64().map(|f| f.trunc() as i64)),
+        Some(Value::String(s)) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+/// `int(x or 0)` for usage counters.
+pub fn count_or_zero(value: Option<&Value>) -> u64 {
+    match value {
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .or_else(|| n.as_f64().map(|f| f.trunc().max(0.0) as u64))
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// Optional usage counter: absent/null -> None, number -> Some.
+pub fn count_opt(value: Option<&Value>) -> Option<u64> {
+    match value {
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .or_else(|| n.as_f64().map(|f| f.trunc().max(0.0) as u64)),
+        _ => None,
+    }
+}
+
+/// Reference `common.parse_json_object` (tool-call arguments).
+pub fn parse_json_object(value: Option<&Value>) -> JsonObject {
+    match value {
+        Some(Value::Object(m)) => m.clone(),
+        Some(Value::String(s)) if !s.is_empty() => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Object(m)) => m,
+            Ok(other) => {
+                let mut out = Map::new();
+                out.insert("value".into(), other);
+                out
+            }
+            Err(_) => {
+                let mut out = Map::new();
+                out.insert("partial_json".into(), Value::String(s.clone()));
+                out
+            }
+        },
+        _ => Map::new(),
+    }
+}
+
+/// `obj.get(key)` over a Value known to be an object (None otherwise).
+pub fn vget<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    value.as_object().and_then(|o| o.get(key))
+}
+
+/// `data.get(key, []) or []` -> iterate items.
+pub fn list_of<'a>(obj: &'a JsonObject, key: &str) -> &'a [Value] {
+    match obj.get(key) {
+        Some(Value::Array(items)) => items,
+        _ => &[],
+    }
+}
+
+/// `data.get(key) if isinstance(..., dict) else {}`.
+pub fn dict_of<'a>(obj: &'a JsonObject, key: &str) -> Option<&'a JsonObject> {
+    obj.get(key).and_then(Value::as_object)
+}
+
+/// Python `s[start:end]` (code points), with the caller's bounds contract
+/// `0 <= start < end <= len(s)` checked here.
+pub fn py_slice(s: &str, start: i64, end: i64) -> Option<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len() as i64;
+    if 0 <= start && start < end && end <= n {
+        Some(chars[start as usize..end as usize].iter().collect())
+    } else {
+        None
+    }
+}

@@ -386,3 +386,223 @@ pub fn build_request_with_preset(
         body: Value::Object(payload(request, stream, preset)),
     })
 }
+
+// ─── Response parsing (reference: OpenAIChatLM.parse_response) ─────
+
+use serde_json::Value as JValue;
+
+use super::common::{
+    count_opt, count_or_zero, dict_of, list_of, parse_json_object, py_str, py_type_name,
+    record_unmapped, str_or_empty, truthy, ParseFailure, ParsedResponse,
+};
+use crate::types::{Message, Response, Usage};
+
+/// Chat Completions finish_reason -> canonical (unknown values recorded).
+fn map_finish_reason(raw: &str) -> Option<&'static str> {
+    match raw {
+        "stop" => Some("stop"),
+        "length" => Some("length"),
+        "tool_calls" | "function_call" => Some("tool_call"),
+        "content_filter" => Some("content_filter"),
+        _ => None,
+    }
+}
+
+fn finish_reason(raw: Option<&JValue>, has_tool_call: bool, unmapped: &mut Vec<JValue>) -> String {
+    if has_tool_call {
+        return "tool_call".to_string();
+    }
+    let raw = match raw {
+        None | Some(JValue::Null) => return "stop".to_string(),
+        Some(JValue::String(s)) if s.is_empty() => return "stop".to_string(),
+        Some(v) => py_str(v),
+    };
+    match map_finish_reason(&raw) {
+        Some(mapped) => mapped.to_string(),
+        None => {
+            record_unmapped(unmapped, "choices[0].finish_reason".to_string(), &raw);
+            "stop".to_string()
+        }
+    }
+}
+
+/// Reference `_usage_from_chat`.
+pub(crate) fn usage_from_chat(usage_data: &Map<String, JValue>) -> Usage {
+    let empty = Map::new();
+    let prompt_details = dict_of(usage_data, "prompt_tokens_details").unwrap_or(&empty);
+    let completion_details = dict_of(usage_data, "completion_tokens_details").unwrap_or(&empty);
+    Usage {
+        input_tokens: Some(count_or_zero(usage_data.get("prompt_tokens"))),
+        output_tokens: Some(count_or_zero(usage_data.get("completion_tokens"))),
+        total_tokens: count_opt(usage_data.get("total_tokens")),
+        cache_read_tokens: count_opt(prompt_details.get("cached_tokens")),
+        cache_write_tokens: None,
+        reasoning_tokens: count_opt(completion_details.get("reasoning_tokens")),
+        input_audio_tokens: count_opt(prompt_details.get("audio_tokens")),
+        output_audio_tokens: count_opt(completion_details.get("audio_tokens")),
+    }
+}
+
+pub fn parse_response(
+    request: &Request,
+    data: &Map<String, JValue>,
+) -> Result<ParsedResponse, ParseFailure> {
+    if let Some(err) = dict_of(data, "error") {
+        let code = str_or_empty(err.get("code"));
+        let message = str_or_empty(err.get("message"));
+        let message = if message.is_empty() {
+            JValue::Object(err.clone()).to_string()
+        } else {
+            message
+        };
+        return Err(ParseFailure::Error(Box::new(super::openai::response_error(
+            "openai_chat",
+            &code,
+            &message,
+        ))));
+    }
+
+    let mut parts: Vec<Part> = Vec::new();
+    let mut unmapped: Vec<JValue> = Vec::new();
+    let choices = list_of(data, "choices");
+    let empty = Map::new();
+    let choice = match choices.first() {
+        Some(JValue::Object(o)) => o,
+        Some(other) => {
+            record_unmapped(&mut unmapped, "choices[0]".to_string(), py_type_name(other));
+            &empty
+        }
+        None => &empty,
+    };
+    let message = dict_of(choice, "message").unwrap_or(&empty);
+
+    let reasoning_text = message
+        .get("reasoning_content")
+        .filter(|v| truthy(v))
+        .or_else(|| message.get("reasoning").filter(|v| truthy(v)));
+    if let Some(text) = reasoning_text {
+        parts.push(Part::Thinking {
+            text: py_str(text),
+            redacted: false,
+            continuation: Vec::new(),
+        });
+    }
+
+    match message.get("content") {
+        Some(JValue::String(content)) => {
+            if !content.is_empty() {
+                parts.push(Part::Text {
+                    text: content.clone(),
+                    continuation: Vec::new(),
+                });
+            }
+        }
+        Some(JValue::Array(content)) => {
+            for (content_index, item) in content.iter().enumerate() {
+                let item_obj = item.as_object();
+                let is_text = item_obj
+                    .is_some_and(|o| o.get("type").and_then(JValue::as_str) == Some("text"));
+                if is_text {
+                    parts.push(Part::Text {
+                        text: str_or_empty(item_obj.and_then(|o| o.get("text"))),
+                        continuation: Vec::new(),
+                    });
+                } else {
+                    let typ = match item_obj {
+                        Some(o) => str_or_empty(o.get("type")),
+                        None => py_type_name(item).to_string(),
+                    };
+                    record_unmapped(
+                        &mut unmapped,
+                        format!("choices[0].message.content[{content_index}]"),
+                        &typ,
+                    );
+                }
+            }
+        }
+        None | Some(JValue::Null) => {}
+        Some(other) => record_unmapped(
+            &mut unmapped,
+            "choices[0].message.content".to_string(),
+            py_type_name(other),
+        ),
+    }
+
+    if let Some(refusal) = message.get("refusal").filter(|v| truthy(v)) {
+        parts.push(Part::Refusal {
+            text: py_str(refusal),
+            continuation: Vec::new(),
+        });
+    }
+
+    for (call_index, call) in list_of(message, "tool_calls").iter().enumerate() {
+        let Some(call) = call.as_object() else {
+            record_unmapped(
+                &mut unmapped,
+                format!("choices[0].message.tool_calls[{call_index}]"),
+                py_type_name(call),
+            );
+            continue;
+        };
+        let call_type = match call.get("type") {
+            None | Some(JValue::Null) => "function".to_string(),
+            Some(JValue::String(s)) if s.is_empty() => "function".to_string(),
+            Some(v) => py_str(v),
+        };
+        if call_type != "function" {
+            record_unmapped(
+                &mut unmapped,
+                format!("choices[0].message.tool_calls[{call_index}]"),
+                &call_type,
+            );
+            continue;
+        }
+        let function = dict_of(call, "function").unwrap_or(&empty);
+        let mut id = str_or_empty(call.get("id"));
+        if id.is_empty() {
+            id = format!("call_{}", parts.len());
+        }
+        let mut name = str_or_empty(function.get("name"));
+        if name.is_empty() {
+            name = "tool".to_string();
+        }
+        parts.push(Part::ToolCall {
+            id,
+            name,
+            input: parse_json_object(function.get("arguments")),
+            continuation: Vec::new(),
+        });
+    }
+
+    if parts.is_empty() {
+        // MAP-2: a response message is never empty.
+        parts.push(Part::Text {
+            text: String::new(),
+            continuation: Vec::new(),
+        });
+    }
+
+    let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall { .. }));
+    let usage = usage_from_chat(dict_of(data, "usage").unwrap_or(&empty));
+    let id = data.get("id").filter(|v| truthy(v)).map(py_str);
+    let mut model = str_or_empty(data.get("model"));
+    if model.is_empty() {
+        model = request.model.clone();
+    }
+    let finish = finish_reason(choice.get("finish_reason"), has_tool, &mut unmapped);
+    Ok(ParsedResponse {
+        response: Response {
+            id,
+            model,
+            message: Message {
+                role: "assistant".to_string(),
+                parts,
+                continuation: Vec::new(),
+            },
+            finish_reason: finish,
+            usage,
+            provider_data: None,
+        },
+        unmapped,
+    })
+}

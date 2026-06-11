@@ -28,7 +28,37 @@ pub const OPS: &[&str] = &[
     "validate",
 ];
 
-const UNIMPLEMENTED_OPS: &[&str] = &["parse_response", "replay_stream"];
+const UNIMPLEMENTED_OPS: &[&str] = &["replay_stream"];
+
+/// Decode standard base64 (with padding; whitespace ignored). Hand-rolled to
+/// keep the dependency footprint flat.
+fn b64_decode(input: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Result<u32, String> {
+        match c {
+            b'A'..=b'Z' => Ok((c - b'A') as u32),
+            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err(format!("invalid base64 byte: {c}")),
+        }
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    for &c in input.as_bytes() {
+        if c.is_ascii_whitespace() || c == b'=' {
+            continue;
+        }
+        acc = (acc << 6) | val(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
 
 struct OpError {
     kind: String,
@@ -124,6 +154,44 @@ fn handle(op: &str, msg: &Value) -> Result<Value, OpError> {
             let built = crate::providers::build_request(provider, &request, stream, api_key, base_url)
                 .map_err(|message| OpError::new("ValueError", message))?;
             Ok(built.to_value())
+        }
+        "parse_response" => {
+            let provider = msg
+                .get("provider")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing provider"))?;
+            let canonical = msg
+                .get("canonical_request")
+                .cloned()
+                .ok_or_else(|| OpError::new("ValueError", "missing canonical_request"))?;
+            let request: Request = serde_json::from_value(canonical)
+                .map_err(|e| OpError::new("ValueError", e.to_string()))?;
+            let status = msg
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|s| u16::try_from(s).ok())
+                .ok_or_else(|| OpError::new("ValueError", "missing/invalid status"))?;
+            let body_b64 = msg
+                .get("body_b64")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing body_b64"))?;
+            let body = b64_decode(body_b64).map_err(|e| OpError::new("ValueError", e))?;
+            let parsed = crate::providers::parse_response(provider, &request, status, &body)
+                .map_err(|failure| match failure {
+                    crate::providers::ParseFailure::BadJson(message) => {
+                        OpError::new("JSONDecodeError", message)
+                    }
+                    crate::providers::ParseFailure::Error(err) => {
+                        OpError::new(err.class_name(), err.to_string())
+                    }
+                })?;
+            let canonical_response = serde_json::to_value(&parsed.response)
+                .map_err(|e| OpError::new("TypeError", e.to_string()))?;
+            let mut result = json!({"canonical_response": canonical_response});
+            if !parsed.unmapped.is_empty() {
+                result["unmapped"] = Value::Array(parsed.unmapped);
+            }
+            Ok(result)
         }
         "normalize_error" => {
             let provider = msg

@@ -117,12 +117,10 @@ fn unknown_kind_and_discriminator_reject() {
 
 #[test]
 fn unimplemented_ops_report_unimplemented() {
-    for op in ["parse_response", "replay_stream"] {
-        let reply =
-            lm15::vet::process_line(&json!({"op": op, "id": "t"}).to_string());
-        assert_eq!(reply.get("ok"), Some(&Value::Bool(false)));
-        assert_eq!(reply["error"]["type"], "Unimplemented");
-    }
+    let reply =
+        lm15::vet::process_line(&json!({"op": "replay_stream", "id": "t"}).to_string());
+    assert_eq!(reply.get("ok"), Some(&Value::Bool(false)));
+    assert_eq!(reply["error"]["type"], "Unimplemented");
 }
 
 #[test]

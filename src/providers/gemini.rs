@@ -510,3 +510,368 @@ pub fn build_request(
         body: Value::Object(payload(request)),
     })
 }
+
+// ─── Response parsing (reference: GeminiLM.parse_response) ─────────
+
+use serde_json::Value as JValue;
+
+use super::common::{
+    count_opt, count_or_zero, dict_of, first_truthy_str, int_or_none, list_of, py_slice, py_str,
+    py_type_name, record_unmapped, str_or_empty, truthy, ParseFailure, ParsedResponse,
+};
+use crate::types::{ContinuationState, Response, Usage};
+
+/// Candidate part keys executed by the provider (MAP-1: never become parts).
+pub(crate) const PROVIDER_EXECUTED_PART_KEYS: &[&str] = &["executableCode", "codeExecutionResult"];
+
+/// Reference `_finish_reason` (gemini finishReason map).
+fn finish_reason(reason: Option<&JValue>, has_tool_call: bool) -> String {
+    if has_tool_call {
+        return "tool_call".to_string();
+    }
+    let r = str_or_empty(reason).to_uppercase();
+    match r.as_str() {
+        "MAX_TOKENS" => "length",
+        "SAFETY" | "RECITATION" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "SPII" => "content_filter",
+        _ => "stop",
+    }
+    .to_string()
+}
+
+/// finishReason values that mean the candidate was blocked (in-band error).
+fn is_candidate_finish_error(finish_reason: &str) -> bool {
+    matches!(
+        finish_reason,
+        "SAFETY"
+            | "RECITATION"
+            | "LANGUAGE"
+            | "BLOCKLIST"
+            | "PROHIBITED_CONTENT"
+            | "SPII"
+            | "MALFORMED_FUNCTION_CALL"
+            | "IMAGE_SAFETY"
+            | "IMAGE_PROHIBITED_CONTENT"
+    )
+}
+
+fn invalid_request(message: String, provider_code: &str) -> ParseFailure {
+    ParseFailure::Error(Box::new(ErrorClass::InvalidRequest.build(
+        message,
+        ErrorMeta {
+            provider: Some("gemini".to_string()),
+            provider_code: Some(provider_code.to_string()),
+            ..ErrorMeta::default()
+        },
+    )))
+}
+
+/// Reference `_inband_error`: promptFeedback block or blocked candidate.
+fn inband_error(data: &Map<String, JValue>) -> Option<ParseFailure> {
+    if let Some(feedback) = dict_of(data, "promptFeedback") {
+        let block_reason = str_or_empty(feedback.get("blockReason"));
+        if !block_reason.is_empty() && block_reason != "BLOCK_REASON_UNSPECIFIED" {
+            return Some(invalid_request(
+                format!("Prompt blocked: {block_reason}"),
+                "promptFeedback",
+            ));
+        }
+    }
+    let candidates = list_of(data, "candidates");
+    if let Some(candidate) = candidates.first().and_then(JValue::as_object) {
+        let fr = str_or_empty(candidate.get("finishReason"));
+        if is_candidate_finish_error(&fr) {
+            let finish_message = str_or_empty(candidate.get("finishMessage"));
+            let message = if finish_message.is_empty() {
+                format!("Candidate blocked: {fr}")
+            } else {
+                finish_message
+            };
+            let code = if fr.is_empty() { "finishReason" } else { &fr };
+            return Some(invalid_request(message, code));
+        }
+    }
+    None
+}
+
+fn one_continuation(kind: &str, key: &str, value: String) -> Vec<ContinuationState> {
+    let mut data = Map::new();
+    data.insert(key.to_string(), JValue::String(value));
+    vec![ContinuationState {
+        provider: "gemini".to_string(),
+        kind: kind.to_string(),
+        data,
+    }]
+}
+
+/// Reference `_parse_candidate_parts`.
+fn parse_candidate_parts(
+    parts_payload: &[JValue],
+    unmapped: &mut Vec<JValue>,
+    path_prefix: &str,
+) -> Vec<Part> {
+    let mut parts: Vec<Part> = Vec::new();
+    for (part_index, part) in parts_payload.iter().enumerate() {
+        let Some(part) = part.as_object() else {
+            record_unmapped(
+                unmapped,
+                format!("{path_prefix}[{part_index}]"),
+                py_type_name(part),
+            );
+            continue;
+        };
+        let thought = part.get("thought").is_some_and(truthy);
+        let text_truthy = part.get("text").is_some_and(truthy);
+        if thought && text_truthy {
+            let continuation = match part.get("thoughtSignature") {
+                None | Some(JValue::Null) => Vec::new(),
+                Some(sig) => one_continuation("thought_signature", "value", py_str(sig)),
+            };
+            parts.push(Part::Thinking {
+                text: str_or_empty(part.get("text")),
+                redacted: false,
+                continuation,
+            });
+        } else if part.contains_key("text") {
+            parts.push(Part::Text {
+                text: str_or_empty(part.get("text")),
+                continuation: Vec::new(),
+            });
+        } else if let Some(fc) = dict_of(part, "functionCall") {
+            let signature = match part.get("thoughtSignature").filter(|v| truthy(v)) {
+                Some(sig) => Some(sig),
+                None => fc.get("thoughtSignature").filter(|v| truthy(v)),
+            };
+            let continuation = match signature {
+                Some(sig) => one_continuation("thought_signature", "value", py_str(sig)),
+                None => Vec::new(),
+            };
+            let mut id = str_or_empty(fc.get("id"));
+            if id.is_empty() {
+                id = format!("fc_{}", parts.len());
+            }
+            let mut name = str_or_empty(fc.get("name"));
+            if name.is_empty() {
+                name = "tool".to_string();
+            }
+            parts.push(Part::ToolCall {
+                id,
+                name,
+                input: fc
+                    .get("args")
+                    .and_then(JValue::as_object)
+                    .cloned()
+                    .unwrap_or_default(),
+                continuation,
+            });
+        } else if let Some(inline) = dict_of(part, "inlineData") {
+            let mut mime = str_or_empty(inline.get("mimeType"));
+            if mime.is_empty() {
+                mime = "application/octet-stream".to_string();
+            }
+            let data = str_or_empty(inline.get("data"));
+            if data.is_empty() {
+                continue;
+            }
+            parts.push(media_part(&mime, Some(data), None));
+        } else if let Some(fd) = dict_of(part, "fileData") {
+            let uri = str_or_empty(fd.get("fileUri"));
+            let mut mime = str_or_empty(fd.get("mimeType"));
+            if mime.is_empty() {
+                mime = "application/octet-stream".to_string();
+            }
+            if uri.is_empty() {
+                continue;
+            }
+            parts.push(media_part(&mime, None, Some(uri)));
+        } else if PROVIDER_EXECUTED_PART_KEYS
+            .iter()
+            .any(|key| part.contains_key(*key))
+        {
+            // MAP-1: provider-executed tool activity never becomes parts.
+        } else {
+            let mut keys: Vec<&str> = part.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            let joined = keys.join("+");
+            let typ = if joined.is_empty() { "<empty>" } else { &joined };
+            record_unmapped(unmapped, format!("{path_prefix}[{part_index}]"), typ);
+        }
+    }
+    parts
+}
+
+fn media_part(mime: &str, data: Option<String>, url: Option<String>) -> Part {
+    if mime.starts_with("image/") {
+        Part::Image {
+            media_type: mime.to_string(),
+            data,
+            url,
+            file_id: None,
+            path: None,
+            detail: None,
+            continuation: Vec::new(),
+        }
+    } else if mime.starts_with("audio/") {
+        Part::Audio {
+            media_type: mime.to_string(),
+            data,
+            url,
+            file_id: None,
+            path: None,
+            continuation: Vec::new(),
+        }
+    } else {
+        Part::Document {
+            media_type: mime.to_string(),
+            data,
+            url,
+            file_id: None,
+            path: None,
+            continuation: Vec::new(),
+        }
+    }
+}
+
+/// Reference `_gemini_segment_text`.
+fn segment_text(segment: &Map<String, JValue>, full_text: &str) -> Option<String> {
+    if let Some(JValue::String(text)) = segment.get("text") {
+        if !text.is_empty() {
+            return Some(text.clone());
+        }
+    }
+    let start = int_or_none(segment.get("startIndex"))?;
+    let end = int_or_none(segment.get("endIndex"))?;
+    py_slice(full_text, start, end)
+}
+
+/// Reference `_gemini_citations` (groundingMetadata -> CitationParts).
+fn gemini_citations(candidate: &Map<String, JValue>, full_text: &str) -> Vec<Part> {
+    let Some(grounding) = dict_of(candidate, "groundingMetadata") else {
+        return Vec::new();
+    };
+    let chunks: &[JValue] = match grounding.get("groundingChunks") {
+        Some(JValue::Array(items)) => items,
+        _ => &[],
+    };
+    let supports: &[JValue] = match grounding.get("groundingSupports") {
+        Some(JValue::Array(items)) => items,
+        _ => return Vec::new(),
+    };
+    let mut citations: Vec<Part> = Vec::new();
+    let mut seen: Vec<(Option<String>, Option<String>, Option<String>)> = Vec::new();
+    for support in supports {
+        let Some(support) = support.as_object() else {
+            continue;
+        };
+        let empty = Map::new();
+        let segment = dict_of(support, "segment").unwrap_or(&empty);
+        let cited_text = segment_text(segment, full_text);
+        let Some(JValue::Array(indices)) = support.get("groundingChunkIndices") else {
+            continue;
+        };
+        for index in indices {
+            let chunk = int_or_none(Some(index))
+                .filter(|i| *i >= 0 && (*i as usize) < chunks.len())
+                .and_then(|i| chunks[i as usize].as_object());
+            let source = chunk
+                .and_then(|c| {
+                    ["web", "retrievedContext", "googleSearch"]
+                        .iter()
+                        .find_map(|k| c.get(*k).filter(|v| truthy(v)))
+                })
+                .and_then(JValue::as_object);
+            let (url, title) = match source {
+                Some(source) => (
+                    first_truthy_str(source, &["uri", "url"]),
+                    first_truthy_str(source, &["title", "name"]),
+                ),
+                None => (None, None),
+            };
+            let key = (url.clone(), title.clone(), cited_text.clone());
+            if seen.contains(&key) || (url.is_none() && title.is_none() && cited_text.is_none()) {
+                continue;
+            }
+            seen.push(key);
+            citations.push(Part::Citation {
+                text: cited_text.clone(),
+                url,
+                title,
+                continuation: Vec::new(),
+            });
+        }
+    }
+    citations
+}
+
+pub fn parse_response(
+    request: &Request,
+    data: &Map<String, JValue>,
+) -> Result<ParsedResponse, ParseFailure> {
+    if let Some(error) = inband_error(data) {
+        return Err(error);
+    }
+    let empty = Map::new();
+    let candidate = list_of(data, "candidates")
+        .first()
+        .and_then(JValue::as_object)
+        .unwrap_or(&empty);
+    let content = dict_of(candidate, "content").unwrap_or(&empty);
+    let mut unmapped: Vec<JValue> = Vec::new();
+    let mut parts = parse_candidate_parts(
+        list_of(content, "parts"),
+        &mut unmapped,
+        "candidates[0].content.parts",
+    );
+    let full_text: String = parts
+        .iter()
+        .filter_map(|p| match p {
+            Part::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    parts.extend(gemini_citations(candidate, &full_text));
+    if parts.is_empty() {
+        // MAP-2: a response message is never empty.
+        parts.push(Part::Text {
+            text: String::new(),
+            continuation: Vec::new(),
+        });
+    }
+
+    let usage_payload = dict_of(data, "usageMetadata").unwrap_or(&empty);
+    let output_count = match usage_payload.get("candidatesTokenCount") {
+        Some(v) => count_or_zero(Some(v)),
+        None => count_or_zero(usage_payload.get("responseTokenCount")),
+    };
+    let usage = Usage {
+        input_tokens: Some(count_or_zero(usage_payload.get("promptTokenCount"))),
+        output_tokens: Some(output_count),
+        total_tokens: count_opt(usage_payload.get("totalTokenCount")),
+        cache_read_tokens: count_opt(usage_payload.get("cachedContentTokenCount")),
+        cache_write_tokens: None,
+        reasoning_tokens: count_opt(usage_payload.get("thoughtsTokenCount")),
+        input_audio_tokens: None,
+        output_audio_tokens: None,
+    };
+
+    let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall { .. }));
+    let id = data.get("responseId").filter(|v| truthy(v)).map(py_str);
+    let continuation = id
+        .as_ref()
+        .map(|id| one_continuation("response_id", "id", id.clone()))
+        .unwrap_or_default();
+    Ok(ParsedResponse {
+        response: Response {
+            id,
+            model: request.model.clone(),
+            message: Message {
+                role: "assistant".to_string(),
+                parts,
+                continuation,
+            },
+            finish_reason: finish_reason(candidate.get("finishReason"), has_tool),
+            usage,
+            provider_data: None,
+        },
+        unmapped,
+    })
+}
