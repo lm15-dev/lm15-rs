@@ -28,7 +28,7 @@ pub const OPS: &[&str] = &[
     "validate",
 ];
 
-const UNIMPLEMENTED_OPS: &[&str] = &["build_request", "parse_response", "replay_stream"];
+const UNIMPLEMENTED_OPS: &[&str] = &["parse_response", "replay_stream"];
 
 struct OpError {
     kind: String,
@@ -104,6 +104,27 @@ fn handle(op: &str, msg: &Value) -> Result<Value, OpError> {
             }
         }
         "surface_dump" => Ok(surface_dump()),
+        "build_request" => {
+            let provider = msg
+                .get("provider")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing provider"))?;
+            let canonical = msg
+                .get("canonical_request")
+                .cloned()
+                .ok_or_else(|| OpError::new("ValueError", "missing canonical_request"))?;
+            let request: Request = serde_json::from_value(canonical)
+                .map_err(|e| OpError::new("ValueError", e.to_string()))?;
+            let stream = msg.get("stream").and_then(Value::as_bool).unwrap_or(false);
+            let api_key = msg
+                .get("api_key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing api_key"))?;
+            let base_url = msg.get("base_url").and_then(Value::as_str);
+            let built = crate::providers::build_request(provider, &request, stream, api_key, base_url)
+                .map_err(|message| OpError::new("ValueError", message))?;
+            Ok(built.to_value())
+        }
         "normalize_error" => {
             let provider = msg
                 .get("provider")

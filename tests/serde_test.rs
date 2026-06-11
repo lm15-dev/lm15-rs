@@ -117,7 +117,7 @@ fn unknown_kind_and_discriminator_reject() {
 
 #[test]
 fn unimplemented_ops_report_unimplemented() {
-    for op in ["build_request", "parse_response", "replay_stream"] {
+    for op in ["parse_response", "replay_stream"] {
         let reply =
             lm15::vet::process_line(&json!({"op": op, "id": "t"}).to_string());
         assert_eq!(reply.get("ok"), Some(&Value::Bool(false)));
@@ -162,4 +162,90 @@ fn normalize_error_op() {
     assert_eq!(reply["result"]["code"], "auth");
     assert_eq!(reply["result"]["provider_code"], "PERMISSION_DENIED");
     assert_eq!(reply["result"]["message"], "API key not valid");
+}
+
+#[test]
+fn build_request_basic_anthropic() {
+    let reply = lm15::vet::process_line(
+        &json!({"op": "build_request", "id": "t", "provider": "anthropic",
+                "api_key": "k", "stream": false,
+                "canonical_request": {"model": "m", "messages": [
+                    {"role": "user", "parts": [{"type": "text", "text": "hi"}]}]}})
+        .to_string(),
+    );
+    assert_eq!(reply["ok"], true);
+    let result = &reply["result"];
+    assert_eq!(result["url"], "https://api.anthropic.com/v1/messages");
+    assert_eq!(result["headers"]["x-api-key"], "k");
+    // Default visible budget when no max_tokens / thinking configured.
+    assert_eq!(result["body"]["max_tokens"], 1024);
+}
+
+#[test]
+fn build_request_anthropic_thinking_arithmetic() {
+    // max_tokens = thinking_budget + visible budget (spec invariant).
+    let reply = lm15::vet::process_line(
+        &json!({"op": "build_request", "id": "t", "provider": "anthropic",
+                "api_key": "k", "stream": false,
+                "canonical_request": {"model": "m", "messages": [
+                    {"role": "user", "parts": [{"type": "text", "text": "hi"}]}],
+                    "config": {"max_tokens": 200,
+                               "reasoning": {"effort": "medium", "thinking_budget": 300}}}})
+        .to_string(),
+    );
+    assert_eq!(reply["result"]["body"]["max_tokens"], 500);
+    assert_eq!(reply["result"]["body"]["thinking"]["budget_tokens"], 300);
+}
+
+#[test]
+fn build_request_chat_base_url_and_max_completion_tokens() {
+    let reply = lm15::vet::process_line(
+        &json!({"op": "build_request", "id": "t", "provider": "openai_chat",
+                "api_key": "k", "stream": true,
+                "base_url": "http://localhost:8000/v1",
+                "canonical_request": {"model": "m", "messages": [
+                    {"role": "user", "parts": [{"type": "text", "text": "hi"}]}],
+                    "config": {"max_tokens": 64}}})
+        .to_string(),
+    );
+    let body = &reply["result"]["body"];
+    assert_eq!(reply["result"]["url"], "http://localhost:8000/v1/chat/completions");
+    assert_eq!(reply["result"]["headers"]["authorization"], "Bearer k");
+    assert_eq!(body["max_completion_tokens"], 64);
+    assert_eq!(body["stream_options"]["include_usage"], true);
+}
+
+#[test]
+fn build_request_gemini_stream_params() {
+    let reply = lm15::vet::process_line(
+        &json!({"op": "build_request", "id": "t", "provider": "gemini",
+                "api_key": "k", "stream": true,
+                "canonical_request": {"model": "g", "messages": [
+                    {"role": "user", "parts": [{"type": "text", "text": "hi"}]}],
+                    "config": {"temperature": 1.0}}})
+        .to_string(),
+    );
+    let result = &reply["result"];
+    assert!(result["url"].as_str().unwrap().ends_with("models/g:streamGenerateContent"));
+    assert_eq!(result["params"]["alt"], "sse");
+    // Gemini wire dialect: integral floats in integer form.
+    assert_eq!(result["body"]["generationConfig"]["temperature"], 1);
+}
+
+#[test]
+fn chat_presets_max_tokens_policy() {
+    use lm15::providers::openai_chat::ChatPreset;
+    for (name, field, base) in [
+        ("openai", "max_completion_tokens", "https://api.openai.com/v1"),
+        ("ollama", "max_tokens", "http://localhost:11434/v1"),
+        ("groq", "max_tokens", "https://api.groq.com/openai/v1"),
+        ("openrouter", "max_tokens", "https://openrouter.ai/api/v1"),
+        ("vllm", "max_tokens", "http://localhost:8000/v1"),
+        ("sglang", "max_tokens", "http://localhost:30000/v1"),
+    ] {
+        let preset = ChatPreset::parse(name).unwrap();
+        assert_eq!(preset.max_tokens_field(), field);
+        assert_eq!(preset.default_base_url(), base);
+    }
+    assert!(ChatPreset::parse("nope").is_err());
 }

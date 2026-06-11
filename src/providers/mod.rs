@@ -3,6 +3,7 @@
 //! in later stages.
 
 pub mod anthropic;
+pub mod common;
 pub mod gemini;
 pub mod openai;
 pub mod openai_chat;
@@ -10,6 +11,9 @@ pub mod openai_chat;
 use serde_json::Value;
 
 use crate::errors::Lm15Error;
+use crate::types::Request;
+
+pub use common::BuiltRequest;
 
 /// Stringify a JSON field the way the reference does (`str(x or "")`):
 /// absent/null/empty -> "", strings verbatim, other scalars via display.
@@ -29,6 +33,23 @@ pub(crate) fn fallback_message(status: u16, body: &str) -> String {
         format!("HTTP {status}")
     } else {
         trimmed
+    }
+}
+
+/// Dispatch `build_request` by provider name (vet protocol op).
+pub fn build_request(
+    provider: &str,
+    request: &Request,
+    stream: bool,
+    api_key: &str,
+    base_url: Option<&str>,
+) -> Result<BuiltRequest, String> {
+    match provider {
+        "openai" => openai::build_request(request, stream, api_key, base_url),
+        "openai_chat" => openai_chat::build_request(request, stream, api_key, base_url),
+        "anthropic" => anthropic::build_request(request, stream, api_key, base_url),
+        "gemini" => gemini::build_request(request, stream, api_key, base_url),
+        other => Err(format!("unknown provider: {other}")),
     }
 }
 
