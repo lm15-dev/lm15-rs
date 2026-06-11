@@ -13,6 +13,9 @@ batch, image/audio generation) and live sessions are NOT implemented.
 A network transport is also out of scope here: the crate is the pure
 transformation core plus the vet shim.
 
+Dependencies: serde, serde_json — the de-facto stdlib of Rust JSON;
+nothing else, by policy.
+
 Layout:
 
 - `src/types.rs` — canonical types as serde-tagged enums/structs honoring

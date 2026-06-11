@@ -4,8 +4,6 @@
 //! enum whose variants map bidirectionally to the canonical class names and
 //! ErrorCode literals. Retryable set: rate_limit, timeout, server, transport.
 
-use thiserror::Error;
-
 /// Shared error metadata (every canonical error class carries these).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ErrorMeta {
@@ -17,33 +15,30 @@ pub struct ErrorMeta {
     pub retry_after: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Error)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Lm15Error {
-    #[error("{message}")]
     Transport { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     NotConfigured { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     UnsupportedFeature { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     Auth { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     Billing { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     RateLimit { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     InvalidRequest { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     ContextLength { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     UnsupportedModel { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     Timeout { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     Server { message: String, meta: ErrorMeta },
-    #[error("{message}")]
     Provider { message: String, meta: ErrorMeta },
 }
+
+impl std::fmt::Display for Lm15Error {
+    /// Every variant formats as its bare `message` (was `#[error("{message}")]`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl std::error::Error for Lm15Error {}
 
 impl Lm15Error {
     /// Canonical class name (the vet protocol's `error.type`).
@@ -79,6 +74,24 @@ impl Lm15Error {
             Lm15Error::Timeout { .. } => "timeout",
             Lm15Error::Server { .. } => "server",
             Lm15Error::Provider { .. } => "provider",
+        }
+    }
+
+    /// The human-readable message, regardless of variant.
+    pub fn message(&self) -> &str {
+        match self {
+            Lm15Error::Transport { message, .. }
+            | Lm15Error::NotConfigured { message, .. }
+            | Lm15Error::UnsupportedFeature { message, .. }
+            | Lm15Error::Auth { message, .. }
+            | Lm15Error::Billing { message, .. }
+            | Lm15Error::RateLimit { message, .. }
+            | Lm15Error::InvalidRequest { message, .. }
+            | Lm15Error::ContextLength { message, .. }
+            | Lm15Error::UnsupportedModel { message, .. }
+            | Lm15Error::Timeout { message, .. }
+            | Lm15Error::Server { message, .. }
+            | Lm15Error::Provider { message, .. } => message,
         }
     }
 
