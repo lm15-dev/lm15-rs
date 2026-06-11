@@ -117,7 +117,7 @@ fn unknown_kind_and_discriminator_reject() {
 
 #[test]
 fn unimplemented_ops_report_unimplemented() {
-    for op in ["build_request", "parse_response", "replay_stream", "normalize_error"] {
+    for op in ["build_request", "parse_response", "replay_stream"] {
         let reply =
             lm15::vet::process_line(&json!({"op": op, "id": "t"}).to_string());
         assert_eq!(reply.get("ok"), Some(&Value::Bool(false)));
@@ -143,4 +143,23 @@ fn capabilities_and_surface_dump() {
     let reply = lm15::vet::process_line(&json!({"op": "surface_dump", "id": "t"}).to_string());
     assert!(reply["result"]["types"]["TextPart"]["fields"].is_array());
     assert!(reply["result"]["enums"]["FinishReason"].is_array());
+}
+
+#[test]
+fn normalize_error_op() {
+    // Missing fields are a ValueError, not Unimplemented (stage B).
+    let reply = lm15::vet::process_line(&json!({"op": "normalize_error", "id": "t"}).to_string());
+    assert_eq!(reply.get("ok"), Some(&Value::Bool(false)));
+    assert_eq!(reply["error"]["type"], "ValueError");
+
+    let reply = lm15::vet::process_line(
+        &json!({"op": "normalize_error", "id": "t", "provider": "gemini", "status": 403,
+                "body_text": "{\"error\":{\"status\":\"PERMISSION_DENIED\",\"message\":\"API key not valid\"}}"})
+        .to_string(),
+    );
+    assert_eq!(reply["ok"], true);
+    assert_eq!(reply["result"]["class"], "AuthError");
+    assert_eq!(reply["result"]["code"], "auth");
+    assert_eq!(reply["result"]["provider_code"], "PERMISSION_DENIED");
+    assert_eq!(reply["result"]["message"], "API key not valid");
 }

@@ -82,6 +82,24 @@ impl Lm15Error {
         }
     }
 
+    /// Shared metadata, regardless of variant.
+    pub fn meta(&self) -> &ErrorMeta {
+        match self {
+            Lm15Error::Transport { meta, .. }
+            | Lm15Error::NotConfigured { meta, .. }
+            | Lm15Error::UnsupportedFeature { meta, .. }
+            | Lm15Error::Auth { meta, .. }
+            | Lm15Error::Billing { meta, .. }
+            | Lm15Error::RateLimit { meta, .. }
+            | Lm15Error::InvalidRequest { meta, .. }
+            | Lm15Error::ContextLength { meta, .. }
+            | Lm15Error::UnsupportedModel { meta, .. }
+            | Lm15Error::Timeout { meta, .. }
+            | Lm15Error::Server { meta, .. }
+            | Lm15Error::Provider { meta, .. } => meta,
+        }
+    }
+
     pub fn retryable(&self) -> bool {
         matches!(
             self,
@@ -91,4 +109,50 @@ impl Lm15Error {
                 | Lm15Error::Transport { .. }
         )
     }
+}
+
+/// Error class selector used by the normalizers (mirrors the canonical
+/// class hierarchy leaves that provider mapping can produce).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorClass {
+    Auth,
+    Billing,
+    RateLimit,
+    InvalidRequest,
+    ContextLength,
+    UnsupportedModel,
+    Timeout,
+    Server,
+    Provider,
+}
+
+impl ErrorClass {
+    pub fn build(self, message: String, meta: ErrorMeta) -> Lm15Error {
+        match self {
+            ErrorClass::Auth => Lm15Error::Auth { message, meta },
+            ErrorClass::Billing => Lm15Error::Billing { message, meta },
+            ErrorClass::RateLimit => Lm15Error::RateLimit { message, meta },
+            ErrorClass::InvalidRequest => Lm15Error::InvalidRequest { message, meta },
+            ErrorClass::ContextLength => Lm15Error::ContextLength { message, meta },
+            ErrorClass::UnsupportedModel => Lm15Error::UnsupportedModel { message, meta },
+            ErrorClass::Timeout => Lm15Error::Timeout { message, meta },
+            ErrorClass::Server => Lm15Error::Server { message, meta },
+            ErrorClass::Provider => Lm15Error::Provider { message, meta },
+        }
+    }
+}
+
+/// HTTP status -> typed error fallback (spec/vocabularies.md ErrorCode table;
+/// reference: lm15.errors.map_http_error).
+pub fn map_http_error(status: u16, message: String, meta: ErrorMeta) -> Lm15Error {
+    let class = match status {
+        401 | 403 => ErrorClass::Auth,
+        402 => ErrorClass::Billing,
+        408 | 504 => ErrorClass::Timeout,
+        429 => ErrorClass::RateLimit,
+        400 | 404 | 409 | 413 | 422 => ErrorClass::InvalidRequest,
+        500..=599 => ErrorClass::Server,
+        _ => ErrorClass::Provider,
+    };
+    class.build(message, meta)
 }

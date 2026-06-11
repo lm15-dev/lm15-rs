@@ -28,12 +28,7 @@ pub const OPS: &[&str] = &[
     "validate",
 ];
 
-const UNIMPLEMENTED_OPS: &[&str] = &[
-    "build_request",
-    "parse_response",
-    "replay_stream",
-    "normalize_error",
-];
+const UNIMPLEMENTED_OPS: &[&str] = &["build_request", "parse_response", "replay_stream"];
 
 struct OpError {
     kind: String,
@@ -109,6 +104,29 @@ fn handle(op: &str, msg: &Value) -> Result<Value, OpError> {
             }
         }
         "surface_dump" => Ok(surface_dump()),
+        "normalize_error" => {
+            let provider = msg
+                .get("provider")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing provider"))?;
+            let status = msg
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|s| u16::try_from(s).ok())
+                .ok_or_else(|| OpError::new("ValueError", "missing/invalid status"))?;
+            let body = msg
+                .get("body_text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpError::new("ValueError", "missing body_text"))?;
+            let err = crate::providers::normalize_error(provider, status, body)
+                .map_err(|message| OpError::new("ValueError", message))?;
+            Ok(json!({
+                "class": err.class_name(),
+                "code": err.code(),
+                "provider_code": err.meta().provider_code,
+                "message": err.to_string(),
+            }))
+        }
         op if UNIMPLEMENTED_OPS.contains(&op) => Err(OpError::new(
             "Unimplemented",
             format!("op not implemented yet in the rust port: {op}"),
