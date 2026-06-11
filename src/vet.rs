@@ -149,8 +149,9 @@ fn handle(op: &str, msg: &Value) -> Result<Value, OpError> {
                 .and_then(Value::as_str)
                 .ok_or_else(|| OpError::new("ValueError", "missing api_key"))?;
             let base_url = msg.get("base_url").and_then(Value::as_str);
-            let built = crate::providers::build_request(provider, &request, stream, api_key, base_url)
-                .map_err(|message| OpError::new("ValueError", message))?;
+            let built =
+                crate::providers::build_request(provider, &request, stream, api_key, base_url)
+                    .map_err(|message| OpError::new("ValueError", message))?;
             Ok(built.to_value())
         }
         "parse_response" => {

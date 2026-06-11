@@ -238,7 +238,9 @@ mod parse_tests {
             vec![json!({"path": "output[0]", "type": "mystery_item"})]
         );
         // MAP-2: still a single empty text part.
-        assert!(matches!(&parsed.response.message.parts[0], Part::Text { text, .. } if text.is_empty()));
+        assert!(
+            matches!(&parsed.response.message.parts[0], Part::Text { text, .. } if text.is_empty())
+        );
     }
 
     #[test]
@@ -261,10 +263,14 @@ mod parse_tests {
         let r = &parsed.response;
         assert!(parsed.unmapped.is_empty());
         assert_eq!(r.message.parts.len(), 2); // MAP-1 drops server_tool_use
-        assert!(matches!(&r.message.parts[0], Part::Thinking { text, continuation, .. }
-            if text == "hmm" && continuation[0].kind == "thinking_signature"));
-        assert!(matches!(&r.message.parts[1], Part::ToolCall { id, name, .. }
-            if id == "tu_1" && name == "get_weather"));
+        assert!(
+            matches!(&r.message.parts[0], Part::Thinking { text, continuation, .. }
+            if text == "hmm" && continuation[0].kind == "thinking_signature")
+        );
+        assert!(
+            matches!(&r.message.parts[1], Part::ToolCall { id, name, .. }
+            if id == "tu_1" && name == "get_weather")
+        );
         assert_eq!(r.finish_reason, "tool_call");
         assert_eq!(r.usage.total_tokens, Some(10));
     }
@@ -289,8 +295,10 @@ mod parse_tests {
         let r = &parsed.response;
         assert!(parsed.unmapped.is_empty());
         assert_eq!(r.message.parts.len(), 1); // MAP-1 drops executableCode
-        assert!(matches!(&r.message.parts[0], Part::ToolCall { id, name, .. }
-            if id == "fc_0" && name == "f"));
+        assert!(
+            matches!(&r.message.parts[0], Part::ToolCall { id, name, .. }
+            if id == "fc_0" && name == "f")
+        );
         assert_eq!(r.finish_reason, "tool_call");
         assert_eq!(r.model, "gemini-2.0-flash"); // gemini keeps the request model
         assert_eq!(r.id.as_deref(), Some("rid"));
@@ -301,7 +309,9 @@ mod parse_tests {
             "gemini-2.0-flash",
             json!({"candidates": [{"finishReason": "MAX_TOKENS"}]}),
         );
-        assert!(matches!(&truncated.response.message.parts[0], Part::Text { text, .. } if text.is_empty()));
+        assert!(
+            matches!(&truncated.response.message.parts[0], Part::Text { text, .. } if text.is_empty())
+        );
         assert_eq!(truncated.response.finish_reason, "length");
     }
 
@@ -311,7 +321,9 @@ mod parse_tests {
             "gemini",
             &req("gemini-2.0-flash"),
             200,
-            json!({"promptFeedback": {"blockReason": "SAFETY"}}).to_string().as_bytes(),
+            json!({"promptFeedback": {"blockReason": "SAFETY"}})
+                .to_string()
+                .as_bytes(),
         )
         .unwrap_err();
         match err {
@@ -352,8 +364,10 @@ mod parse_tests {
             }),
         );
         assert!(parsed.unmapped.is_empty());
-        assert!(matches!(&parsed.response.message.parts[0], Part::ToolCall { id, name, input, .. }
-            if id == "call_1" && name == "f" && input.get("x") == Some(&json!(1))));
+        assert!(
+            matches!(&parsed.response.message.parts[0], Part::ToolCall { id, name, input, .. }
+            if id == "call_1" && name == "f" && input.get("x") == Some(&json!(1)))
+        );
         assert_eq!(parsed.response.finish_reason, "tool_call");
     }
 }

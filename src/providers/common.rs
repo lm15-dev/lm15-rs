@@ -272,7 +272,12 @@ pub fn anthropic_source(part: &Part) -> Result<Value, String> {
             file_id,
             ..
         } => (media_type, data, url, file_id),
-        other => return Err(format!("{} part has no usable source", part_type_name(other))),
+        other => {
+            return Err(format!(
+                "{} part has no usable source",
+                part_type_name(other)
+            ))
+        }
     };
     if let Some(url) = url {
         return Ok(json!({"type": "url", "url": url}));
@@ -389,8 +394,7 @@ pub fn str_if_truthy(value: Option<&Value>) -> Option<String> {
 
 /// First truthy value among `keys` of `obj`, stringified.
 pub fn first_truthy_str(obj: &JsonObject, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|k| str_if_truthy(obj.get(*k)))
+    keys.iter().find_map(|k| str_if_truthy(obj.get(*k)))
 }
 
 /// Reference `_str_or_none`: None for absent/None/`""`, else `str(value)`.
@@ -406,9 +410,7 @@ pub fn str_or_none(value: Option<&Value>) -> Option<String> {
 /// unparseable values are None.
 pub fn int_or_none(value: Option<&Value>) -> Option<i64> {
     match value {
-        Some(Value::Number(n)) => n
-            .as_i64()
-            .or_else(|| n.as_f64().map(|f| f.trunc() as i64)),
+        Some(Value::Number(n)) => n.as_i64().or_else(|| n.as_f64().map(|f| f.trunc() as i64)),
         Some(Value::String(s)) => s.trim().parse::<i64>().ok(),
         _ => None,
     }

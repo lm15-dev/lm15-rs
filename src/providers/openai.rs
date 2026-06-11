@@ -7,8 +7,11 @@ use crate::errors::{map_http_error, ErrorClass, ErrorMeta, Lm15Error};
 use super::{fallback_message, json_str};
 
 /// Codes that always mean "unsupported model" (reference: OpenAILM._model_error_codes).
-pub(crate) const MODEL_ERROR_CODES: &[&str] =
-    &["model_not_found", "model_not_available", "unsupported_model"];
+pub(crate) const MODEL_ERROR_CODES: &[&str] = &[
+    "model_not_found",
+    "model_not_available",
+    "unsupported_model",
+];
 
 /// `model` + a not-found/unsupported marker in the joined message+codes.
 pub(crate) fn is_model_error(message: &str, codes: &[&str]) -> bool {
@@ -349,10 +352,7 @@ pub fn build_request(
         url: format!("{}/responses", trim_base(base)),
         params: Vec::new(),
         headers: vec![
-            (
-                "authorization".to_string(),
-                format!("Bearer {api_key}"),
-            ),
+            ("authorization".to_string(), format!("Bearer {api_key}")),
             ("content-type".to_string(), "application/json".to_string()),
         ],
         body: Value::Object(payload(request, stream)),
@@ -432,10 +432,20 @@ pub(crate) fn response_error(provider: &str, code: &str, message: &str) -> Lm15E
     let class = match code {
         "server_error" => ErrorClass::Server,
         "rate_limit_exceeded" => ErrorClass::RateLimit,
-        "invalid_prompt" | "invalid_image" | "invalid_image_format" | "invalid_base64_image"
-        | "invalid_image_url" | "image_too_large" | "image_too_small" | "image_parse_error"
-        | "image_content_policy_violation" | "invalid_image_mode" | "image_file_too_large"
-        | "unsupported_image_media_type" | "empty_image_file" | "failed_to_download_image"
+        "invalid_prompt"
+        | "invalid_image"
+        | "invalid_image_format"
+        | "invalid_base64_image"
+        | "invalid_image_url"
+        | "image_too_large"
+        | "image_too_small"
+        | "image_parse_error"
+        | "image_content_policy_violation"
+        | "invalid_image_mode"
+        | "image_file_too_large"
+        | "unsupported_image_media_type"
+        | "empty_image_file"
+        | "failed_to_download_image"
         | "image_file_not_found" => ErrorClass::InvalidRequest,
         "vector_store_timeout" => ErrorClass::Timeout,
         "model_not_found" | "model_not_available" | "unsupported_model" => {
@@ -460,7 +470,10 @@ pub(crate) fn response_error(provider: &str, code: &str, message: &str) -> Lm15E
     )
 }
 
-pub fn parse_response(request: &Request, data: &Map<String, JValue>) -> Result<ParsedResponse, ParseFailure> {
+pub fn parse_response(
+    request: &Request,
+    data: &Map<String, JValue>,
+) -> Result<ParsedResponse, ParseFailure> {
     if let Some(err) = dict_of(data, "error") {
         let code = str_or_empty(err.get("code"));
         let message = str_or_empty(err.get("message"));
@@ -478,7 +491,11 @@ pub fn parse_response(request: &Request, data: &Map<String, JValue>) -> Result<P
     let mut unmapped: Vec<JValue> = Vec::new();
     for (item_index, item) in list_of(data, "output").iter().enumerate() {
         let Some(item) = item.as_object() else {
-            record_unmapped(&mut unmapped, format!("output[{item_index}]"), py_type_name(item));
+            record_unmapped(
+                &mut unmapped,
+                format!("output[{item_index}]"),
+                py_type_name(item),
+            );
             continue;
         };
         let item_type = item.get("type").and_then(JValue::as_str).unwrap_or("");
@@ -588,9 +605,9 @@ pub fn parse_response(request: &Request, data: &Map<String, JValue>) -> Result<P
                     Some(JValue::Array(entries)) => entries
                         .iter()
                         .map(|x| match x {
-                            JValue::Object(o) => super::common::py_str(
-                                o.get("text").unwrap_or(&JValue::Null),
-                            ),
+                            JValue::Object(o) => {
+                                super::common::py_str(o.get("text").unwrap_or(&JValue::Null))
+                            }
                             other => super::common::py_str(other),
                         })
                         .collect::<Vec<_>>()
@@ -641,7 +658,10 @@ pub fn parse_response(request: &Request, data: &Map<String, JValue>) -> Result<P
     };
 
     let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall { .. }));
-    let id = data.get("id").filter(|v| truthy(v)).map(super::common::py_str);
+    let id = data
+        .get("id")
+        .filter(|v| truthy(v))
+        .map(super::common::py_str);
     let continuation = id
         .as_ref()
         .map(|id| {

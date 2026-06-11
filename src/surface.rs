@@ -20,30 +20,80 @@ pub fn surface_dump() -> Value {
 
     // Parts
     add("TextPart", &["type", "text", "continuation"]);
-    add("ThinkingPart", &["type", "text", "redacted", "continuation"]);
+    add(
+        "ThinkingPart",
+        &["type", "text", "redacted", "continuation"],
+    );
     add("RefusalPart", &["type", "text", "continuation"]);
-    add("CitationPart", &["type", "url", "title", "text", "continuation"]);
+    add(
+        "CitationPart",
+        &["type", "url", "title", "text", "continuation"],
+    );
     add(
         "ImagePart",
-        &["type", "media_type", "data", "url", "file_id", "path", "detail", "continuation"],
+        &[
+            "type",
+            "media_type",
+            "data",
+            "url",
+            "file_id",
+            "path",
+            "detail",
+            "continuation",
+        ],
     );
     add(
         "AudioPart",
-        &["type", "media_type", "data", "url", "file_id", "path", "continuation"],
+        &[
+            "type",
+            "media_type",
+            "data",
+            "url",
+            "file_id",
+            "path",
+            "continuation",
+        ],
     );
     add(
         "VideoPart",
-        &["type", "media_type", "data", "url", "file_id", "path", "continuation"],
+        &[
+            "type",
+            "media_type",
+            "data",
+            "url",
+            "file_id",
+            "path",
+            "continuation",
+        ],
     );
     add(
         "DocumentPart",
-        &["type", "media_type", "data", "url", "file_id", "path", "continuation"],
+        &[
+            "type",
+            "media_type",
+            "data",
+            "url",
+            "file_id",
+            "path",
+            "continuation",
+        ],
     );
     add(
         "BinaryPart",
-        &["type", "media_type", "data", "url", "file_id", "path", "continuation"],
+        &[
+            "type",
+            "media_type",
+            "data",
+            "url",
+            "file_id",
+            "path",
+            "continuation",
+        ],
     );
-    add("ToolCallPart", &["type", "id", "name", "input", "continuation"]);
+    add(
+        "ToolCallPart",
+        &["type", "id", "name", "input", "continuation"],
+    );
     add(
         "ToolResultPart",
         &["type", "id", "content", "name", "is_error", "continuation"],
@@ -54,7 +104,10 @@ pub fn surface_dump() -> Value {
     add("ContinuationState", &["provider", "kind", "data"]);
 
     // Tools
-    add("FunctionTool", &["type", "name", "description", "parameters"]);
+    add(
+        "FunctionTool",
+        &["type", "name", "description", "parameters"],
+    );
     add("BuiltinTool", &["type", "name", "config"]);
 
     // Configuration
@@ -63,7 +116,10 @@ pub fn surface_dump() -> Value {
         "Reasoning",
         &["effort", "thinking_budget", "total_budget", "summary"],
     );
-    add("CacheConfig", &["mode", "retention", "key", "prefix_until_index"]);
+    add(
+        "CacheConfig",
+        &["mode", "retention", "key", "prefix_until_index"],
+    );
     add(
         "Config",
         &[
@@ -91,8 +147,14 @@ pub fn surface_dump() -> Value {
         "ImageDelta",
         &["type", "data", "url", "file_id", "part_index", "media_type"],
     );
-    add("ToolCallDelta", &["type", "input", "part_index", "id", "name"]);
-    add("CitationDelta", &["type", "text", "url", "title", "part_index"]);
+    add(
+        "ToolCallDelta",
+        &["type", "input", "part_index", "id", "name"],
+    );
+    add(
+        "CitationDelta",
+        &["type", "text", "url", "title", "part_index"],
+    );
     add(
         "ContinuationDelta",
         &["type", "provider", "kind", "data", "part_index"],
@@ -109,7 +171,10 @@ pub fn surface_dump() -> Value {
     add("ErrorDetail", &["code", "message", "provider_code"]);
 
     // Request / Response
-    add("Request", &["model", "messages", "system", "tools", "config"]);
+    add(
+        "Request",
+        &["model", "messages", "system", "tools", "config"],
+    );
     add(
         "Usage",
         &[
@@ -125,7 +190,14 @@ pub fn surface_dump() -> Value {
     );
     add(
         "Response",
-        &["id", "model", "message", "finish_reason", "usage", "provider_data"],
+        &[
+            "id",
+            "model",
+            "message",
+            "finish_reason",
+            "usage",
+            "provider_data",
+        ],
     );
 
     // ModelInfo family
@@ -142,7 +214,12 @@ pub fn surface_dump() -> Value {
     );
     add(
         "TrainingPricing",
-        &["training_tokens_per_million", "gpu_second", "currency", "dimensions"],
+        &[
+            "training_tokens_per_million",
+            "gpu_second",
+            "currency",
+            "dimensions",
+        ],
     );
     add(
         "InferenceModelInfo",
@@ -167,7 +244,10 @@ pub fn surface_dump() -> Value {
             "extensions",
         ],
     );
-    add("ModelOrigin", &["type", "id", "base_model", "provider_data"]);
+    add(
+        "ModelOrigin",
+        &["type", "id", "base_model", "provider_data"],
+    );
     add(
         "ModelInfo",
         &[

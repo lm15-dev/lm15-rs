@@ -184,6 +184,123 @@ pub struct Message {
     pub continuation: Vec<ContinuationState>,
 }
 
+impl Message {
+    /// Create a user message from text or pre-built parts.
+    pub fn user(content: impl Into<MessageContent>) -> Message {
+        Message {
+            role: "user".to_string(),
+            parts: content.into().0,
+            continuation: Vec::new(),
+        }
+    }
+
+    /// Create an assistant message from text or pre-built parts.
+    pub fn assistant(content: impl Into<MessageContent>) -> Message {
+        Message {
+            role: "assistant".to_string(),
+            parts: content.into().0,
+            continuation: Vec::new(),
+        }
+    }
+
+    /// Create a developer message (high-authority application instructions).
+    pub fn developer(content: impl Into<MessageContent>) -> Message {
+        Message {
+            role: "developer".to_string(),
+            parts: content.into().0,
+            continuation: Vec::new(),
+        }
+    }
+
+    /// Create a tool message from `(call_id, output_text)` results
+    /// (reference: `Message.tool({call_id: result})`).
+    pub fn tool<I, S, T>(results: I) -> Message
+    where
+        I: IntoIterator<Item = (S, T)>,
+        S: Into<String>,
+        T: Into<String>,
+    {
+        let parts = results
+            .into_iter()
+            .map(|(id, output)| Part::ToolResult {
+                id: id.into(),
+                name: None,
+                content: vec![Part::Text {
+                    text: output.into(),
+                    continuation: Vec::new(),
+                }],
+                is_error: false,
+                continuation: Vec::new(),
+            })
+            .collect();
+        Message {
+            role: "tool".to_string(),
+            parts,
+            continuation: Vec::new(),
+        }
+    }
+
+    /// Create a tool message from pre-built ToolResult parts.
+    pub fn tool_results(parts: Vec<Part>) -> Message {
+        Message {
+            role: "tool".to_string(),
+            parts,
+            continuation: Vec::new(),
+        }
+    }
+
+    /// Text only when the message contains text parts and nothing else.
+    pub fn text(&self) -> Option<String> {
+        if self.parts.is_empty() || !self.parts.iter().all(|p| matches!(p, Part::Text { .. })) {
+            return None;
+        }
+        Some(
+            self.parts
+                .iter()
+                .filter_map(|p| match p {
+                    Part::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+}
+
+/// Conversion target for `Message::user(...)` and friends: a `&str`/`String`
+/// becomes a single text part; a `Vec<Part>`/`Part` passes through.
+pub struct MessageContent(pub Vec<Part>);
+
+impl From<&str> for MessageContent {
+    fn from(text: &str) -> Self {
+        MessageContent(vec![Part::Text {
+            text: text.to_string(),
+            continuation: Vec::new(),
+        }])
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(text: String) -> Self {
+        MessageContent(vec![Part::Text {
+            text,
+            continuation: Vec::new(),
+        }])
+    }
+}
+
+impl From<Part> for MessageContent {
+    fn from(part: Part) -> Self {
+        MessageContent(vec![part])
+    }
+}
+
+impl From<Vec<Part>> for MessageContent {
+    fn from(parts: Vec<Part>) -> Self {
+        MessageContent(parts)
+    }
+}
+
 // ─── Tools ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -646,6 +763,60 @@ pub struct Response {
     /// WITHOUT provider_data).
     #[serde(default, skip_serializing)]
     pub provider_data: Option<JsonObject>,
+}
+
+/// Borrowed view of one `Part::ToolCall` (the `Response::tool_calls()`
+/// accessor's item type).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToolCallView<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub input: &'a JsonObject,
+}
+
+impl Response {
+    /// Concatenated assistant text, when the response has text. Citation and
+    /// thinking parts are metadata around the visible answer and do not make
+    /// the text unavailable (reference: `Response.text`).
+    pub fn text(&self) -> Option<String> {
+        if let Some(text) = self.message.text() {
+            return Some(text);
+        }
+        if self.message.parts.iter().all(|p| {
+            matches!(
+                p,
+                Part::Text { .. } | Part::Citation { .. } | Part::Thinking { .. }
+            )
+        }) {
+            let texts: Vec<&str> = self
+                .message
+                .parts
+                .iter()
+                .filter_map(|p| match p {
+                    Part::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if !texts.is_empty() {
+                return Some(texts.join("\n"));
+            }
+        }
+        None
+    }
+
+    /// The response's tool-call parts (reference: `Response.tool_calls`).
+    pub fn tool_calls(&self) -> Vec<ToolCallView<'_>> {
+        self.message
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::ToolCall {
+                    id, name, input, ..
+                } => Some(ToolCallView { id, name, input }),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 // ─── ModelInfo ───────────────────────────────────────────────────────

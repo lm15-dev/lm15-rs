@@ -106,8 +106,8 @@ use serde_json::{json, Map};
 use crate::types::{JsonObject, Part, Request, Tool};
 
 use super::common::{
-    anthropic_source, apply_extensions, continuation_data, parts_to_text, system_present, system_text, trim_base,
-    BuiltRequest,
+    anthropic_source, apply_extensions, continuation_data, parts_to_text, system_present,
+    system_text, trim_base, BuiltRequest,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
@@ -175,7 +175,10 @@ fn reasoning_thinking_budget(request: &Request) -> Option<u64> {
 
 /// Anthropic max_tokens includes thinking tokens (spec arithmetic):
 /// thinking budget + visible budget, unless an explicit total_budget wins.
-fn max_tokens_for_anthropic(request: &Request, thinking_budget: Option<u64>) -> Result<u64, String> {
+fn max_tokens_for_anthropic(
+    request: &Request,
+    thinking_budget: Option<u64>,
+) -> Result<u64, String> {
     let Some(thinking_budget) = thinking_budget else {
         return Ok(request.config.max_tokens.unwrap_or(DEFAULT_VISIBLE_TOKENS));
     };
@@ -493,7 +496,12 @@ fn citation_from_anthropic(citation: &Map<String, JValue>) -> Option<Part> {
     })
 }
 
-fn one_continuation(provider: &str, kind: &str, key: &str, value: JValue) -> Vec<ContinuationState> {
+fn one_continuation(
+    provider: &str,
+    kind: &str,
+    key: &str,
+    value: JValue,
+) -> Vec<ContinuationState> {
     let mut data = Map::new();
     data.insert(key.to_string(), value);
     vec![ContinuationState {
@@ -579,12 +587,9 @@ pub fn parse_response(
             "redacted_thinking" => {
                 let continuation = match block.get("data") {
                     None | Some(JValue::Null) => Vec::new(),
-                    Some(payload) => one_continuation(
-                        "anthropic",
-                        "redacted_thinking",
-                        "data",
-                        payload.clone(),
-                    ),
+                    Some(payload) => {
+                        one_continuation("anthropic", "redacted_thinking", "data", payload.clone())
+                    }
                 };
                 parts.push(Part::Thinking {
                     text: "[redacted]".to_string(),
@@ -816,9 +821,7 @@ pub fn parse_stream_events(request: &Request, data: &str) -> Result<Vec<StreamEv
                     output_tokens: Some(output_tokens),
                     total_tokens: Some(input_tokens + output_tokens),
                     cache_read_tokens: count_opt(usage_payload.get("cache_read_input_tokens")),
-                    cache_write_tokens: count_opt(
-                        usage_payload.get("cache_creation_input_tokens"),
-                    ),
+                    cache_write_tokens: count_opt(usage_payload.get("cache_creation_input_tokens")),
                     ..Usage::default()
                 })
             };

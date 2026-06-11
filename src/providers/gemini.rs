@@ -99,8 +99,8 @@ use serde_json::{json, Map};
 use crate::types::{JsonObject, Message, Part, Request, Tool};
 
 use super::common::{
-    apply_extensions, continuation_data, parts_to_text, system_present,
-    system_text, trim_base, BuiltRequest,
+    apply_extensions, continuation_data, parts_to_text, system_present, system_text, trim_base,
+    BuiltRequest,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -692,7 +692,11 @@ fn parse_candidate_parts(
             let mut keys: Vec<&str> = part.keys().map(String::as_str).collect();
             keys.sort_unstable();
             let joined = keys.join("+");
-            let typ = if joined.is_empty() { "<empty>" } else { &joined };
+            let typ = if joined.is_empty() {
+                "<empty>"
+            } else {
+                &joined
+            };
             record_unmapped(unmapped, format!("{path_prefix}[{part_index}]"), typ);
         }
     }
@@ -1013,10 +1017,13 @@ pub fn parse_stream_events(_request: &Request, data: &str) -> Result<Vec<StreamE
                         name: str_if_truthy(fc.get("name")),
                     },
                 });
-                if let Some(sig) = part
-                    .get("thoughtSignature")
-                    .filter(|v| truthy(v))
-                    .or_else(|| fc.get("thoughtSignature").filter(|v| !matches!(v, JValue::Null)))
+                if let Some(sig) =
+                    part.get("thoughtSignature")
+                        .filter(|v| truthy(v))
+                        .or_else(|| {
+                            fc.get("thoughtSignature")
+                                .filter(|v| !matches!(v, JValue::Null))
+                        })
                 {
                     events.push(thought_signature_delta(sig, idx));
                 }

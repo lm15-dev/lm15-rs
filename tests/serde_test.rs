@@ -47,8 +47,14 @@ fn empty_text_part_is_emitted() {
 #[test]
 fn function_tool_parameters_always_emitted() {
     // INV-033: explicit {} round-trips verbatim; absent restores the default.
-    let out = roundtrip("tool", &json!({"type": "function", "name": "noop", "parameters": {}}));
-    assert_eq!(out, json!({"type": "function", "name": "noop", "parameters": {}}));
+    let out = roundtrip(
+        "tool",
+        &json!({"type": "function", "name": "noop", "parameters": {}}),
+    );
+    assert_eq!(
+        out,
+        json!({"type": "function", "name": "noop", "parameters": {}})
+    );
     let out = roundtrip("tool", &json!({"name": "noop"}));
     assert_eq!(
         out,
@@ -117,8 +123,7 @@ fn unknown_kind_and_discriminator_reject() {
 
 #[test]
 fn replay_stream_missing_fields_rejected() {
-    let reply =
-        lm15::vet::process_line(&json!({"op": "replay_stream", "id": "t"}).to_string());
+    let reply = lm15::vet::process_line(&json!({"op": "replay_stream", "id": "t"}).to_string());
     assert_eq!(reply.get("ok"), Some(&Value::Bool(false)));
     assert_eq!(reply["error"]["type"], "ValueError");
 }
@@ -207,7 +212,10 @@ fn build_request_chat_base_url_and_max_completion_tokens() {
         .to_string(),
     );
     let body = &reply["result"]["body"];
-    assert_eq!(reply["result"]["url"], "http://localhost:8000/v1/chat/completions");
+    assert_eq!(
+        reply["result"]["url"],
+        "http://localhost:8000/v1/chat/completions"
+    );
     assert_eq!(reply["result"]["headers"]["authorization"], "Bearer k");
     assert_eq!(body["max_completion_tokens"], 64);
     assert_eq!(body["stream_options"]["include_usage"], true);
@@ -224,7 +232,10 @@ fn build_request_gemini_stream_params() {
         .to_string(),
     );
     let result = &reply["result"];
-    assert!(result["url"].as_str().unwrap().ends_with("models/g:streamGenerateContent"));
+    assert!(result["url"]
+        .as_str()
+        .unwrap()
+        .ends_with("models/g:streamGenerateContent"));
     assert_eq!(result["params"]["alt"], "sse");
     // Gemini wire dialect: integral floats in integer form.
     assert_eq!(result["body"]["generationConfig"]["temperature"], 1);
@@ -234,7 +245,11 @@ fn build_request_gemini_stream_params() {
 fn chat_presets_max_tokens_policy() {
     use lm15::providers::openai_chat::ChatPreset;
     for (name, field, base) in [
-        ("openai", "max_completion_tokens", "https://api.openai.com/v1"),
+        (
+            "openai",
+            "max_completion_tokens",
+            "https://api.openai.com/v1",
+        ),
         ("ollama", "max_tokens", "http://localhost:11434/v1"),
         ("groq", "max_tokens", "https://api.groq.com/openai/v1"),
         ("openrouter", "max_tokens", "https://openrouter.ai/api/v1"),
@@ -247,7 +262,6 @@ fn chat_presets_max_tokens_policy() {
     }
     assert!(ChatPreset::parse("nope").is_err());
 }
-
 
 #[test]
 fn replay_stream_coalesces_post_finish_usage() {

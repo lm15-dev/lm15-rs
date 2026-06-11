@@ -315,7 +315,9 @@ pub fn materialize_response(events: &[StreamEvent], request: &Request) -> Respon
                     if data.is_none() && url.is_none() && file_id.is_none() {
                         continue;
                     }
-                    let media_type = media_type.clone().unwrap_or_else(|| "image/png".to_string());
+                    let media_type = media_type
+                        .clone()
+                        .unwrap_or_else(|| "image/png".to_string());
                     // Reference precedence: data, then url, then file_id.
                     let (data, url, file_id) = if data.is_some() {
                         (data.clone(), None, None)
@@ -340,11 +342,11 @@ pub fn materialize_response(events: &[StreamEvent], request: &Request) -> Respon
                     title,
                     part_index,
                 } => {
-                    slots
-                        .entry(*part_index)
-                        .or_default()
-                        .citations
-                        .push((text.clone(), url.clone(), title.clone()));
+                    slots.entry(*part_index).or_default().citations.push((
+                        text.clone(),
+                        url.clone(),
+                        title.clone(),
+                    ));
                 }
                 Delta::ToolCall {
                     input,
@@ -622,7 +624,10 @@ mod tests {
             input_tokens: Some(1),
             ..Usage::default()
         };
-        let out = coalesce_stream(vec![end(Some("stop"), Some(usage.clone())), end(None, None)]);
+        let out = coalesce_stream(vec![
+            end(Some("stop"), Some(usage.clone())),
+            end(None, None),
+        ]);
         assert_eq!(out, vec![end(Some("stop"), Some(usage))]);
     }
 

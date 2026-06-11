@@ -455,11 +455,9 @@ pub fn parse_response(
         } else {
             message
         };
-        return Err(ParseFailure::Error(Box::new(super::openai::response_error(
-            "openai_chat",
-            &code,
-            &message,
-        ))));
+        return Err(ParseFailure::Error(Box::new(
+            super::openai::response_error("openai_chat", &code, &message),
+        )));
     }
 
     let mut parts: Vec<Part> = Vec::new();
@@ -693,9 +691,7 @@ pub fn parse_stream_events(
     let usage_data = dict_of(payload, "usage");
     if !finish_raw.is_empty() {
         events.push(StreamEvent::End {
-            finish_reason: Some(
-                map_finish_reason(&finish_raw).unwrap_or("stop").to_string(),
-            ),
+            finish_reason: Some(map_finish_reason(&finish_raw).unwrap_or("stop").to_string()),
             usage: usage_data.map(usage_from_chat),
             provider_data: None,
         });
