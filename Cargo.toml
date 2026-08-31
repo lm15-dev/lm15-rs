@@ -1,0 +1,12 @@
+[package]
+name = "lm15"
+version = "0.3.0"
+edition = "2021"
+description = "lm15 canonical model, Rust port — rebuilt module-by-module from the lm15-contract spec."
+license = "MIT"
+repository = "https://github.com/lm15-dev/lm15-rs"
+keywords = ["llm", "openai", "anthropic", "gemini", "ai"]
+categories = ["api-bindings"]
+
+[dependencies]
+serde_json = "1"
