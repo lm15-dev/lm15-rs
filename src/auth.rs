@@ -101,6 +101,7 @@ const PROVIDERS: &[ProviderSpec] = &[
     ProviderSpec { name: "gemini", env_keys: &["GEMINI_API_KEY", "GOOGLE_API_KEY"], default_key: None, oauth_file: None },
     ProviderSpec { name: "groq", env_keys: &["GROQ_API_KEY"], default_key: None, oauth_file: None },
     ProviderSpec { name: "openrouter", env_keys: &["OPENROUTER_API_KEY"], default_key: None, oauth_file: None },
+    ProviderSpec { name: "deepseek", env_keys: &["DEEPSEEK_API_KEY"], default_key: None, oauth_file: None },
     ProviderSpec { name: "ollama", env_keys: &[], default_key: Some("ollama"), oauth_file: None },
     ProviderSpec { name: "vllm", env_keys: &[], default_key: Some("EMPTY"), oauth_file: None },
     ProviderSpec { name: "sglang", env_keys: &[], default_key: Some("EMPTY"), oauth_file: None },
