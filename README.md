@@ -384,18 +384,15 @@ reference on 2026-09-07 (lm15-python b2709c8). No fixture pins them.
 
 ## Divergences from the reference implementation
 
-Each is a port.md rule 4 case (no silent drops, no guessed tool identity)
-where the reference's control flow was not followed. None is pinned by a
-fixture; each has a unit test in the dialect's `response.rs`.
+Each is a port.md rule 4 case (no silent drops) where the reference's
+control flow was not followed. None is pinned by a fixture; each has a
+unit test in the dialect's `response.rs`. (A nameless tool call on the
+complete path was a divergence here on 2026-09-07 and is now the
+contract: MAP-9's complete-path paragraph, the four
+`<dialect>.tool_call_unnamed_complete` cases,
+`changes/2026-09-07-complete-tool-call-no-guess.md`; the reference was
+fixed the same day.)
 
-- **A nameless tool call on the complete path RAISES `ProviderError`**:
-  a Responses `function_call` without `name`, a chat `tool_calls[i]`
-  without `function.name`, an Anthropic `tool_use` without `name`, a
-  Gemini `functionCall` without `name`. The reference substitutes the
-  literal `"tool"` (`openai.py:1050`, `openai_chat.py:687`,
-  `anthropic.py:796`, `gemini.py:900`) — the guess MAP-9 forbids on the
-  stream path, made on the complete path. An agent loop dispatching on
-  `"tool"` would run nothing or the wrong thing with no error.
 - **A malformed usage counter RAISES `ProviderError`**: a string, a
   bool, a fraction or a negative where a token count belongs. The
   reference raises a native `TypeError`/`ValueError` from the `Usage`
