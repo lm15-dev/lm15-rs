@@ -9,4 +9,9 @@ keywords = ["llm", "openai", "anthropic", "gemini", "ai"]
 categories = ["api-bindings"]
 
 [dependencies]
+serde = "1"
 serde_json = "1"
+
+[[bin]]
+name = "lm15-vet"
+path = "src/bin/lm15-vet.rs"
