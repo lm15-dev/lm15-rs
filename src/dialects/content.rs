@@ -136,7 +136,10 @@ mod tests {
     #[test]
     fn media_never_renders_as_text() {
         let text = Part::Text(TextPart::new("a"));
-        assert_eq!(parts_to_text(&[text.clone()], "p", "x").unwrap(), "a");
+        assert_eq!(
+            parts_to_text(std::slice::from_ref(&text), "p", "x").unwrap(),
+            "a"
+        );
         let err = parts_to_text(&[text, image()], "p", "a tool row").unwrap_err();
         assert_eq!(err.class_name(), "UnsupportedFeatureError");
         assert!(err.message().contains("image part cannot reach a tool row"));

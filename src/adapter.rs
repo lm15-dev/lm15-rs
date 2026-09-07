@@ -5,8 +5,12 @@
 //! an access policy (spec/auth.md AUTH-10: subscription "adapters" are
 //! constructors that bind a policy, never a subclass).
 //!
-//! Module 4 is the request side: [`ProviderLM::build_request`]. `complete`
-//! and `stream` (transport) are module 5; `LMRouter` is module 5.
+//! Module 4 is the request side: [`ProviderLM::build_request`]. Module 5
+//! is the response side: [`ProviderLM::parse_response`] for a complete
+//! body, [`ProviderLM::stream_decoder`] / [`ProviderLM::replay_stream`] for
+//! an SSE body (MAP-1..4, MAP-9). `complete` and `stream` over a transport,
+//! and `LMRouter`, are not yet built: the codec is the contract, the
+//! transport is per-language idiom (harness/PROTOCOL.md § Concurrency).
 
 use std::fmt;
 
@@ -19,8 +23,10 @@ use crate::compat::{
 use crate::dialects::dialect_for;
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::{lookup, DialectId, ProviderDefinition};
-use crate::types::Request;
-use crate::wire::{emit, BuildContext, Clock, SystemClock, TransportRequest};
+use crate::sse::{SseEvent, SseParser};
+use crate::stream::{materialize_response, Coalescer};
+use crate::types::{Request, Response, StreamEvent};
+use crate::wire::{emit, BuildContext, Clock, Dialect, SystemClock, TransportRequest};
 
 type BoxedCredentials = Box<dyn CredentialProvider + Send + Sync>;
 type BoxedClock = Box<dyn Clock + Send + Sync>;
@@ -96,14 +102,7 @@ impl ProviderLM {
             meta.provider = Some(self.provider.clone());
             Lm15Error::InvalidRequestError(meta)
         })?;
-        let cx = BuildContext {
-            provider: &self.provider,
-            policy: self.policy,
-            settings: &self.settings,
-            compat: &self.compat,
-            base_url: &self.base_url,
-            model: self.wire_model(&request.model),
-        };
+        let cx = self.context(request);
         emit(
             dialect_for(self.dialect),
             request,
@@ -112,6 +111,119 @@ impl ProviderLM {
             self.credentials.as_ref(),
             self.clock.as_ref(),
         )
+    }
+
+    fn context<'a>(&'a self, request: &'a Request) -> BuildContext<'a> {
+        BuildContext {
+            provider: &self.provider,
+            policy: self.policy,
+            settings: &self.settings,
+            compat: &self.compat,
+            base_url: &self.base_url,
+            model: self.wire_model(&request.model),
+        }
+    }
+
+    /// The canonical `Response` of a complete 2xx body (module 5; MAP-1,
+    /// MAP-2). A status of 400 or more is the provider's error, normalized
+    /// (`normalize_error`); an in-band error envelope on a 2xx body is the
+    /// typed error too. `Response.provider_data` is the wire body, with
+    /// `_lm15_unmapped` attached when content could not be mapped.
+    pub fn parse_response(
+        &self,
+        request: &Request,
+        status: u16,
+        body: &[u8],
+    ) -> Result<Response, Lm15Error> {
+        if status >= 400 {
+            let text = String::from_utf8_lossy(body);
+            return Err(
+                crate::errors::normalize_error(&self.provider, status, &text)
+                    .map_err(|err| Lm15Error::ConfigurationError(ErrorMeta::new(err.message)))?,
+            );
+        }
+        let cx = self.context(request);
+        dialect_for(self.dialect).parse_response(request, &cx, body)
+    }
+
+    /// A decoder for one streamed response: feed the SSE bytes as they
+    /// arrive and take the canonical events (post-coalesce: one start,
+    /// one final end — MAP-3, MAP-4).
+    pub fn stream_decoder<'a>(&'a self, request: &'a Request) -> StreamDecoder<'a> {
+        StreamDecoder {
+            dialect: dialect_for(self.dialect),
+            request,
+            cx: self.context(request),
+            sse: SseParser::new(),
+            coalescer: Some(Coalescer::new(Some(request.model.clone()))),
+        }
+    }
+
+    /// The canonical event trace of a whole SSE body (the vet protocol's
+    /// `replay_stream` trace).
+    pub fn replay_stream(
+        &self,
+        request: &Request,
+        body: &[u8],
+    ) -> Result<Vec<StreamEvent>, Lm15Error> {
+        let mut decoder = self.stream_decoder(request);
+        let mut events = decoder.feed(body)?;
+        events.extend(decoder.finish()?);
+        Ok(events)
+    }
+
+    /// The materialized `Response` of a whole SSE body: the trace through
+    /// the MAP-9 assembler.
+    pub fn parse_stream(&self, request: &Request, body: &[u8]) -> Result<Response, Lm15Error> {
+        let events = self.replay_stream(request, body)?;
+        materialize_response(events.iter(), request)
+    }
+}
+
+/// The streaming codec of one response, incremental: SSE bytes in,
+/// coalesced canonical events out. A transport feeds it chunk by chunk;
+/// `finish` at end of body yields the merged end event.
+pub struct StreamDecoder<'a> {
+    dialect: &'static dyn Dialect,
+    request: &'a Request,
+    cx: BuildContext<'a>,
+    sse: SseParser,
+    coalescer: Option<Coalescer>,
+}
+
+impl StreamDecoder<'_> {
+    /// Feed a chunk of the body; the canonical events it completed.
+    pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, Lm15Error> {
+        let frames = self.sse.feed(chunk)?;
+        self.frames(&frames)
+    }
+
+    /// End of body: the last unterminated frame, then the merged end event.
+    pub fn finish(&mut self) -> Result<Vec<StreamEvent>, Lm15Error> {
+        let mut out = Vec::new();
+        if let Some(frame) = self.sse.finish()? {
+            out.extend(self.frames(&[frame])?);
+        }
+        if let Some(coalescer) = self.coalescer.take() {
+            out.extend(coalescer.finish());
+        }
+        Ok(out)
+    }
+
+    fn frames(&mut self, frames: &[SseEvent]) -> Result<Vec<StreamEvent>, Lm15Error> {
+        let coalescer = self.coalescer.as_mut().ok_or_else(|| {
+            Lm15Error::ConfigurationError(ErrorMeta::new("stream already finished"))
+        })?;
+        let mut raw = Vec::new();
+        for frame in frames {
+            self.dialect
+                .parse_stream_event(self.request, &self.cx, frame, &mut raw)?;
+        }
+        let mut out = Vec::with_capacity(raw.len());
+        for event in raw {
+            out.extend(coalescer.push(event));
+        }
+        Ok(out)
     }
 }
 

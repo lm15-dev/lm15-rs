@@ -17,12 +17,14 @@
 
 mod config;
 mod contents;
+pub mod response;
 
 use serde_json::{Map, Value};
 
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
-use crate::types::{BuiltinTool, Request, Tool};
+use crate::sse::SseEvent;
+use crate::types::{BuiltinTool, Request, Response, StreamEvent, Tool};
 use crate::wire::{BuildContext, Dialect, WireRequest};
 
 use self::config::{cache_plan, generation_config, tool_config};
@@ -265,6 +267,25 @@ impl Dialect for Gemini {
 
     fn api_key_header(&self) -> &'static str {
         "x-goog-api-key"
+    }
+
+    fn parse_response(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Response, Lm15Error> {
+        response::parse_response(cx.provider, request, body)
+    }
+
+    fn parse_stream_event(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        event: &SseEvent,
+        out: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error> {
+        response::parse_stream_event(cx.provider, request, event, out)
     }
 }
 

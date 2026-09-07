@@ -11,7 +11,8 @@ use lm15::auth::{parse_rfc3339, Credential};
 use lm15::cloud::sigv4::{self, AwsKeys, SigningRequest};
 use lm15::errors::{normalize_error, Lm15Error};
 use lm15::serde::{roundtrip, validate};
-use lm15::types::{Request, ValidationError};
+use lm15::stream::materialize_response;
+use lm15::types::{Request, Response, ValidationError};
 use lm15::wire::{FixedClock, TransportRequest};
 use lm15::{Canonical, HostSettings};
 
@@ -24,6 +25,8 @@ const OPS: &[&str] = &[
     "capabilities",
     "explain_auth",
     "normalize_error",
+    "parse_response",
+    "replay_stream",
     "serde_roundtrip",
     "sigv4_sign",
     "validate",
@@ -32,6 +35,9 @@ const OPS: &[&str] = &[
 enum Failure {
     Validation(ValidationError),
     Lm15(Box<Lm15Error>),
+    /// A typed error plus extra reply fields (`replay_stream`: the event
+    /// trace that parsed before assembly refused, MAP-9).
+    Lm15Extra(Box<Lm15Error>, Map<String, Value>),
 }
 
 impl From<ValidationError> for Failure {
@@ -214,6 +220,75 @@ fn op_build_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     Ok(transport_request_json(&transport))
 }
 
+/// A parse-side adapter: the harness gives no credential for these ops,
+/// so a placeholder stands in (never sent; parsing reads no credential).
+fn parse_adapter(msg: &Map<String, Value>) -> Result<lm15::ProviderLM, Failure> {
+    let provider = field_str(msg, "provider")?;
+    let base_url = msg.get("base_url").and_then(Value::as_str);
+    let clock = clock_of(msg)?;
+    Ok(lm15::registry::adapter_for(
+        &provider,
+        "vet-parse-only",
+        base_url,
+        settings_of(msg),
+        clock.map(|c| Box::new(c) as Box<dyn lm15::wire::Clock + Send + Sync>),
+    )?)
+}
+
+fn body_of(msg: &Map<String, Value>) -> Result<Vec<u8>, Failure> {
+    let b64 = field_str(msg, "body_b64")?;
+    lm15::types::base64_decode(&b64).map_err(Failure::from)
+}
+
+/// PROTOCOL.md: a Response WITHOUT provider_data, plus the `_lm15_unmapped`
+/// canary surfaced as the top-level `unmapped` array.
+fn response_result(response: &Response) -> Map<String, Value> {
+    let mut result = Map::new();
+    result.insert("canonical_response".into(), response.to_json());
+    if let Some(unmapped) = response
+        .provider_data
+        .as_ref()
+        .and_then(|pd| pd.get("_lm15_unmapped"))
+    {
+        result.insert("unmapped".into(), unmapped.clone());
+    }
+    result
+}
+
+fn op_parse_response(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = parse_adapter(msg)?;
+    let request = Request::from_json(field(msg, "canonical_request")?)?;
+    let status = field(msg, "status")?
+        .as_u64()
+        .and_then(|s| u16::try_from(s).ok())
+        .ok_or_else(|| ValidationError::type_error("status must be an int"))?;
+    let body = body_of(msg)?;
+    let response = lm.parse_response(&request, status, &body)?;
+    Ok(Value::Object(response_result(&response)))
+}
+
+fn op_replay_stream(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = parse_adapter(msg)?;
+    let request = Request::from_json(field(msg, "canonical_request")?)?;
+    let body = body_of(msg)?;
+    let events = lm.replay_stream(&request, &body)?;
+    let event_json: Vec<Value> = events.iter().map(Canonical::to_json).collect();
+    match materialize_response(events.iter(), &request) {
+        Ok(response) => {
+            let mut result = response_result(&response);
+            result.insert("events".into(), Value::Array(event_json));
+            Ok(Value::Object(result))
+        }
+        Err(err) if err.partial().is_some() => {
+            // The trace parsed; assembly refused (MAP-9): report both.
+            let mut extra = Map::new();
+            extra.insert("events".into(), Value::Array(event_json));
+            Err(Failure::Lm15Extra(Box::new(err), extra))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 fn op_sigv4_sign(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let request = field(msg, "request")?
         .as_object()
@@ -273,6 +348,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "normalize_error" => op_normalize_error(msg),
         "explain_auth" => op_explain_auth(msg),
         "build_request" => op_build_request(msg),
+        "parse_response" => op_parse_response(msg),
+        "replay_stream" => op_replay_stream(msg),
         "sigv4_sign" => op_sigv4_sign(msg),
         // Module 3b (cloud chains: token exchange, RS256) is not implemented.
         "token_exchange_build" | "token_exchange_parse" => Err(Lm15Error::unsupported_feature(
@@ -280,11 +357,27 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         )
         .into()),
         other => Err(Lm15Error::unsupported_feature(format!(
-            "op {other:?} is not implemented by the Rust shim (modules 1-4: {})",
+            "op {other:?} is not implemented by the Rust shim (modules 1-5: {})",
             OPS.join(", ")
         ))
         .into()),
     }
+}
+
+fn lm15_error_json(err: &Lm15Error, extra: Map<String, Value>) -> Value {
+    let mut error = json!({
+        "type": err.class_name(),
+        "code": err.code().as_str(),
+        "message": err.message(),
+    });
+    if let Some(partial) = err.partial() {
+        error["partial_response"] =
+            Value::Object(response_result(partial))["canonical_response"].clone();
+    }
+    for (key, value) in extra {
+        error[key] = value;
+    }
+    error
 }
 
 fn error_reply(id: Value, failure: Failure) -> Value {
@@ -293,17 +386,8 @@ fn error_reply(id: Value, failure: Failure) -> Value {
             "type": err.type_name(),
             "message": err.message,
         }),
-        Failure::Lm15(err) => {
-            let mut error = json!({
-                "type": err.class_name(),
-                "code": err.code().as_str(),
-                "message": err.message(),
-            });
-            if let Some(partial) = err.partial() {
-                error["partial_response"] = lm15::Canonical::to_json(partial);
-            }
-            error
-        }
+        Failure::Lm15(err) => lm15_error_json(&err, Map::new()),
+        Failure::Lm15Extra(err, extra) => lm15_error_json(&err, extra),
     };
     json!({ "id": id, "ok": false, "error": error })
 }

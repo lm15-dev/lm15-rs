@@ -26,7 +26,8 @@ use crate::cloud::sigv4::{self, AwsKeys, SigningRequest};
 use crate::compat::Compat;
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
-use crate::types::Request;
+use crate::sse::SseEvent;
+use crate::types::{Request, Response, StreamEvent};
 
 /// A request ready for a transport. `url` carries no query string; the
 /// params are decoded pairs (harness/PROTOCOL.md § Query parameter
@@ -97,7 +98,9 @@ impl WireRequest {
     }
 }
 
-/// Everything a dialect reads besides the `Request` itself.
+/// Everything a dialect reads besides the `Request` itself, on both
+/// sides of the wire: the build (module 4) and the parse (module 5) see
+/// the same binding.
 #[derive(Debug, Clone)]
 pub struct BuildContext<'a> {
     /// The canonical provider string of the bound entry.
@@ -134,6 +137,28 @@ pub trait Dialect: Sync {
     fn api_key_header(&self) -> &'static str {
         "x-api-key"
     }
+
+    /// A complete (non-streaming) 2xx body as the canonical `Response`
+    /// (MAP-1, MAP-2; module 5). An in-band error envelope is returned as
+    /// the typed error. Content the dialect cannot map is recorded under
+    /// `provider_data["_lm15_unmapped"]` (harness/PROTOCOL.md).
+    fn parse_response(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Response, Lm15Error>;
+
+    /// One SSE frame as zero or more PRE-coalesce canonical events (the
+    /// adapter is stateless per frame: a provider terminal frame may yield
+    /// its own end event; `crate::stream::Coalescer` merges them, MAP-3/4).
+    fn parse_stream_event(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        event: &SseEvent,
+        out: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error>;
 }
 
 /// The time source every time-dependent byte reads (SigV4 date, credential
@@ -383,6 +408,25 @@ mod tests {
             wire.model = Some(cx.model.to_string());
             Ok(wire)
         }
+
+        fn parse_response(
+            &self,
+            _: &Request,
+            _: &BuildContext<'_>,
+            _: &[u8],
+        ) -> Result<Response, Lm15Error> {
+            unimplemented!("request-side fake")
+        }
+
+        fn parse_stream_event(
+            &self,
+            _: &Request,
+            _: &BuildContext<'_>,
+            _: &SseEvent,
+            _: &mut Vec<StreamEvent>,
+        ) -> Result<(), Lm15Error> {
+            unimplemented!("request-side fake")
+        }
     }
 
     struct GoogHeader;
@@ -403,6 +447,25 @@ mod tests {
 
         fn api_key_header(&self) -> &'static str {
             "x-goog-api-key"
+        }
+
+        fn parse_response(
+            &self,
+            _: &Request,
+            _: &BuildContext<'_>,
+            _: &[u8],
+        ) -> Result<Response, Lm15Error> {
+            unimplemented!("request-side fake")
+        }
+
+        fn parse_stream_event(
+            &self,
+            _: &Request,
+            _: &BuildContext<'_>,
+            _: &SseEvent,
+            _: &mut Vec<StreamEvent>,
+        ) -> Result<(), Lm15Error> {
+            unimplemented!("request-side fake")
         }
     }
 
@@ -534,6 +597,25 @@ mod tests {
                 wire.headers
                     .push(("Content-Type".into(), "application/json".into()));
                 Ok(wire)
+            }
+
+            fn parse_response(
+                &self,
+                _: &Request,
+                _: &BuildContext<'_>,
+                _: &[u8],
+            ) -> Result<Response, Lm15Error> {
+                unimplemented!("request-side fake")
+            }
+
+            fn parse_stream_event(
+                &self,
+                _: &Request,
+                _: &BuildContext<'_>,
+                _: &SseEvent,
+                _: &mut Vec<StreamEvent>,
+            ) -> Result<(), Lm15Error> {
+                unimplemented!("request-side fake")
             }
         }
         let settings = settings_from([("region", "us-east-1")]);

@@ -12,6 +12,7 @@
 
 mod body;
 mod parts;
+pub mod response;
 mod tables;
 
 pub use body::RESERVED_EXTENSION_KEYS;
@@ -31,7 +32,8 @@ use crate::auth::AccessPolicy;
 use crate::compat::{AnthropicCompat, ResolvedAnthropicCompat};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
-use crate::types::{Request, Tool};
+use crate::sse::SseEvent;
+use crate::types::{Request, Response, StreamEvent, Tool};
 use crate::wire::{BuildContext, Dialect, WireRequest};
 
 /// The dialect value; stateless (everything per binding is in the
@@ -63,6 +65,25 @@ impl Dialect for Anthropic {
         wire.endpoint = Some(ENDPOINT);
         wire.model = Some(cx.model.to_string());
         Ok(wire)
+    }
+
+    fn parse_response(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Response, Lm15Error> {
+        response::parse_response(cx.provider, request, body)
+    }
+
+    fn parse_stream_event(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        event: &SseEvent,
+        out: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error> {
+        response::parse_stream_event(cx.provider, request, event, out)
     }
 }
 

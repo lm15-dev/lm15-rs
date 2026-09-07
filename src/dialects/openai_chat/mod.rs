@@ -17,6 +17,7 @@
 mod cache;
 mod messages;
 mod payload;
+pub mod response;
 mod text;
 
 use serde_json::Value;
@@ -25,7 +26,8 @@ use self::text::unsupported;
 use crate::compat::{OpenAIChatCompat, ResolvedOpenAIChatCompat};
 use crate::errors::Lm15Error;
 use crate::registry::DialectId;
-use crate::types::{Request, ToolChoiceMode};
+use crate::sse::SseEvent;
+use crate::types::{Request, Response, StreamEvent, ToolChoiceMode};
 use crate::wire::{apply_static_headers, BuildContext, Dialect, WireRequest};
 
 /// The dialect value.
@@ -60,6 +62,25 @@ impl Dialect for OpenAIChat {
         wire.endpoint = Some("chat/completions");
         wire.model = Some(cx.model.to_string());
         Ok(wire)
+    }
+
+    fn parse_response(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Response, Lm15Error> {
+        response::parse_response(cx.provider, request, body)
+    }
+
+    fn parse_stream_event(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        event: &SseEvent,
+        out: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error> {
+        response::parse_stream_event(cx.provider, request, event, out)
     }
 }
 

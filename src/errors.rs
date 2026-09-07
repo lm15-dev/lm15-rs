@@ -581,7 +581,7 @@ const MODEL_ERROR_MARKERS: &[&str] = &[
     "unknown",
 ];
 
-fn is_model_error(text: &str) -> bool {
+pub(crate) fn is_model_error(text: &str) -> bool {
     let lowered = text.to_lowercase();
     lowered.contains("model") && MODEL_ERROR_MARKERS.iter().any(|m| lowered.contains(m))
 }
@@ -705,7 +705,7 @@ fn xai_refold(body: &str) -> String {
 
 // Anthropic Messages envelope: `{"error": {"type", "message"}, "request_id"}`.
 
-const ANTHROPIC_ERROR_TYPES: &[(&str, ErrorClass)] = &[
+pub(crate) const ANTHROPIC_ERROR_TYPES: &[(&str, ErrorClass)] = &[
     ("authentication_error", ErrorClass::AuthError),
     ("permission_error", ErrorClass::AuthError),
     ("billing_error", ErrorClass::BillingError),
@@ -721,7 +721,7 @@ const ANTHROPIC_ERROR_TYPES: &[(&str, ErrorClass)] = &[
     ("timeout_error", ErrorClass::TimeoutError),
 ];
 
-fn anthropic_is_context_length(msg: &str) -> bool {
+pub(crate) fn anthropic_is_context_length(msg: &str) -> bool {
     let l = msg.to_lowercase();
     l.contains("prompt is too long")
         || l.contains("too many tokens")
@@ -792,7 +792,7 @@ fn normalize_anthropic(ctx: &Context, status: u16, body: &str) -> Lm15Error {
 
 // Gemini envelope: `{"error": {"status", "message"}}`.
 
-const GEMINI_ERROR_STATUSES: &[(&str, ErrorClass)] = &[
+pub(crate) const GEMINI_ERROR_STATUSES: &[(&str, ErrorClass)] = &[
     ("INVALID_ARGUMENT", ErrorClass::InvalidRequestError),
     ("FAILED_PRECONDITION", ErrorClass::BillingError),
     ("PERMISSION_DENIED", ErrorClass::AuthError),
@@ -804,7 +804,7 @@ const GEMINI_ERROR_STATUSES: &[(&str, ErrorClass)] = &[
     ("DEADLINE_EXCEEDED", ErrorClass::TimeoutError),
 ];
 
-fn gemini_is_context_length(msg: &str) -> bool {
+pub(crate) fn gemini_is_context_length(msg: &str) -> bool {
     let l = msg.to_lowercase();
     (l.contains("token") && (l.contains("limit") || l.contains("exceed")))
         || l.contains("too long")

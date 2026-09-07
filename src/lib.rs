@@ -12,12 +12,17 @@
 //!    are not implemented) — [`auth`]. [`Credential`] is the one AUTH-2
 //!    value type, exported here and as `auth::Credential`.
 //!
-//! 4. dialects, request side — the skeleton: [`wire`] (the emit path),
-//!    the full AUTH-10 policy table ([`auth`]), [`cloud`] (host settings,
-//!    URL rendering, rewrites, SigV4), [`compat`] (preset tables),
-//!    [`adapter`] (`ProviderLM` and the named constructors),
-//!    [`registry::adapter_for`]. The four [`dialects`] are stubs until
-//!    their workers land.
+//! 4. dialects, request side: [`wire`] (the emit path), the full AUTH-10
+//!    policy table ([`auth`]), [`cloud`] (host settings, URL rendering,
+//!    rewrites, SigV4), [`compat`] (preset tables), [`adapter`]
+//!    (`ProviderLM` and the named constructors), [`registry::adapter_for`],
+//!    the four [`dialects`].
+//!
+//! 5. dialects, response side and stream assembly (MAP-1..4, MAP-9):
+//!    `parse_response` / `parse_stream_event` on each dialect, [`sse`]
+//!    (the SSE parser), [`stream`] (the MAP-3/4 coalescer, the MAP-9
+//!    accumulator, `materialize_response`), `ProviderLM::parse_response`,
+//!    `ProviderLM::stream_decoder` / `replay_stream`.
 
 // `Lm15Error` is the family's one error enum (api-family § Errors); its
 // `ErrorMeta` payload is 136 bytes, over clippy's 128-byte `Result` limit.
@@ -33,6 +38,8 @@ pub mod dialects;
 pub mod errors;
 pub mod registry;
 pub mod serde;
+pub mod sse;
+pub mod stream;
 pub mod types;
 pub mod wire;
 

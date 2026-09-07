@@ -34,7 +34,7 @@ pub use endpoints::{
     FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, SpeechGenerationRequest,
     SpeechGenerationResponse, VideoGenerationRequest, VideoJobInfo,
 };
-pub(crate) use json::{base64_decode, base64_encode};
+pub use json::{base64_decode, base64_encode};
 pub use json::{
     base64_payload, is_base64_shaped, normalize_rfc3339, parse_rfc3339_lenient, JsonObject,
     ValidationError, ValidationKind,

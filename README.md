@@ -15,7 +15,8 @@ grade the port against any other commit.
 | 3a core auth | spec/auth.md AUTH-1 (`key`, `oauth`, `oauth-unless-explicit`), AUTH-2 credential values + D1 scheme selection, AUTH-5, AUTH-7 doctor, AUTH-8 read side, AUTH-10 policy table | done — `--direction auth --auth-scope core` 26 pass / 0 fail / 0 skip; `tests/auth_resolution_contract.rs` replays the same `auth/resolution.json` from the contract checkout with the same core/cloud split |
 | 3b cloud chains | AUTH-1 `aws-chain`/`azure-chain`/`gcp-chain`, AUTH-11 rung kinds, SigV4, RS256 | SigV4 done (module 4 needs it): `--direction token` 34 pass / 9 fail — the 34 `sigv4.*` vectors pass, the 9 `token.*` vectors (`token_exchange_build` / `token_exchange_parse`: GCP service account, Azure certificate/secret/MSI, GCP metadata, AWS credential_process/IMDS) answer `UnsupportedFeatureError` naming module 3b. Cloud-chain providers are in the policy table as data; `explain_auth` answers `AuthError::NotImplemented` (class `NotConfiguredError`) for them. The 11 cloud auth cases are asserted to answer that error and counted, not skipped |
 | 4 — dialects, request side | AUTH-10 policy table, hosts, settings, host rewrites; MAP-5..MAP-8 refusals; **MAP-10 tool-result content** (`src/dialects/content.rs`, the `tool_result_media` knob on the three compat tables); compat presets; the four dialects (`src/dialects/{anthropic,openai_responses,openai_chat,gemini}`) | done — `--direction request` 361 pass / 0 fail / 1 skip (`openai.computer_use`, no canonical_request) at the pin, including the 64 MAP-10 cases (native and raise). The per-dialect sections below state each dialect's deviations |
-| 5–9 — response side/streams, models, files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
+| 5 — dialects, response side + stream assembly | MAP-1..MAP-4, MAP-9; `parse_response` / `replay_stream` for the four dialects; the SSE parser; the MAP-3/4 coalescer and the MAP-9 assembler (`src/stream.rs`) | done — `--direction response` 298 pass / 0 fail / 1 skip (`openai.computer_use`, no golden), `--direction stream` 40 pass / 0 fail / 0 skip, including the pinned `StreamAssemblyError` refusal (`openai_chat.tool_call_unnamed`). The "Module 5" section below states the deviations |
+| 6–9 — models, files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
 
 Gates for modules 1–4, from the contract checkout:
 
@@ -27,6 +28,8 @@ python3 harness/check.py --shim rust --direction error
 python3 harness/check.py --shim rust --direction auth --auth-scope core
 python3 harness/check.py --shim rust --direction token     # 34 pass / 9 fail (module 3b), stated above
 python3 harness/check.py --shim rust --direction request
+python3 harness/check.py --shim rust --direction response
+python3 harness/check.py --shim rust --direction stream
 ```
 
 `cargo test` runs the INV-* unit tests, the serde-rule edge tests, the
@@ -34,14 +37,18 @@ shim framing tests, `tests/contract_corpus.rs` (replays
 `serde/canonical.json` and `errors/cases/*.json`),
 `tests/auth_resolution_contract.rs` (replays `auth/resolution.json`),
 `tests/sigv4_vectors.rs` (replays the 34 `auth/sigv4-vectors.json` cases
-through the signer) and `tests/support_matrix_contract.rs` (the policy
-table against `spec/support-matrix.json`, both directions). All read the
+through the signer), `tests/support_matrix_contract.rs` (the policy
+table against `spec/support-matrix.json`, both directions) and
+`tests/contract_responses.rs` (every pinned complete body and SSE stream
+with a golden, through `parse_response` / `replay_stream` and the
+assembler, under the harness's comparison rules). All read the
 sibling `../lm15-contract` checkout (or `LM15_CONTRACT_DIR`) and do
 nothing when it is absent. The corpus is never copied into this
 repository.
 
 The shim answers `capabilities`, `serde_roundtrip`, `validate`,
-`normalize_error`, `explain_auth`, `build_request` and `sigv4_sign`.
+`normalize_error`, `explain_auth`, `build_request`, `parse_response`,
+`replay_stream` and `sigv4_sign`.
 `token_exchange_build` / `token_exchange_parse` answer
 `UnsupportedFeatureError` naming module 3b. `surface_dump` (PROTOCOL.md) is not
 implemented: it must come from reflection, and Rust has no runtime
@@ -82,13 +89,27 @@ fn handle(err: Lm15Error) {
 }
 ```
 
-A provider adapter (module 4; the wire request only until module 5):
+A provider adapter (modules 4 and 5: the wire request, and the wire
+response back; the HTTP transport between the two is not yet built):
 
 ```rust
 use lm15::{AnthropicLM, HostSettings, OpenAIChatLM, Request};
 
 let lm = AnthropicLM::builder().api_key("sk-...").build()?;
 let wire = lm.build_request(&request, false)?;   // TransportRequest: method, url, params, headers, body
+
+// ... send `wire` with any HTTP client, then:
+let response = lm.parse_response(&request, status, &body_bytes)?;   // a 4xx/5xx is the typed error
+
+// A streamed body, incrementally (one start, one final end — MAP-3/4):
+let mut decoder = lm.stream_decoder(&request);
+for chunk in sse_chunks {
+    for event in decoder.feed(chunk)? { /* StreamEvent::Delta / Start / Error */ }
+}
+let tail = decoder.finish()?;                    // the merged end event
+// or all at once:
+let events = lm.replay_stream(&request, &sse_body)?;
+let response = lm15::stream::materialize_response(events.iter(), &request)?;  // MAP-9 assembly
 
 // Any registry provider, the way the router binds it (dialect + policy + compat):
 let settings = HostSettings::from([("region".to_string(), "us-east-1".to_string())]);
@@ -245,8 +266,17 @@ reference on 2026-09-07 (lm15-python b2709c8). No fixture pins them.
   `finish_request`) and `sigv4`.
 - `src/compat/` — `AnthropicCompat`, `OpenAIResponsesCompat`,
   `OpenAIChatCompat`, their `Resolved*` forms and the preset tables.
-- `src/adapter.rs` — `ProviderLM`, `LmBuilder`, the named constructors.
-- `src/dialects/` — the four codecs (W1–W4); stubs until they land.
+- `src/adapter.rs` — `ProviderLM`, `LmBuilder`, the named constructors,
+  `StreamDecoder` (module 5: `parse_response`, `stream_decoder`,
+  `replay_stream`, `parse_stream`).
+- `src/dialects/` — the four codecs, request side (`mod.rs`, …) and
+  response side (`response.rs` in each); `wire_json.rs` is the shared
+  provider-JSON reading (the reference's truthiness idioms, the
+  `_lm15_unmapped` recorder, `openai_token_logprobs`, `parse_json_object`).
+- `src/sse.rs` — the SSE parser (`SseParser`, incremental; `parse_sse`).
+- `src/stream.rs` — module 5's shared engine: `Coalescer` (MAP-3/4),
+  `StreamAccumulator` (the MAP-9 assembly algorithm), `materialize_response`,
+  `response_to_events`.
 
 ## Module 4 (request side) — the skeleton
 
@@ -300,11 +330,89 @@ reference on 2026-09-07 (lm15-python b2709c8). No fixture pins them.
 - Module 3b (cloud credential chains, token exchange, RS256), as above;
   SigV4 alone is in.
 - Module 4 dialects W1–W4 (this branch is the W0 skeleton).
-- `complete` / `stream` / `LMRouter` (module 5).
+- `complete` / `stream` over an HTTP transport, and `LMRouter`: the codec
+  is the contract (module 5, done); the transport is per-language idiom
+  (harness/PROTOCOL.md § Concurrency) and is the next module of this port.
+  `StreamDecoder` is the seam it plugs into.
 - AUTH-3/4 write side (locked double-checked refresh, atomic 0600 writes):
   this port reads credentials only.
 - AUTH-9 `login(provider)`: not shipped. The xAI login hint therefore names
   the AUTH-9 door, not a command this port runs.
+
+
+# Module 5 — response side and stream assembly
+
+## What it is
+
+- `Dialect::parse_response` and `Dialect::parse_stream_event` on each
+  of the four codecs (`src/dialects/*/response.rs`), copied from the
+  reference's `parse_response` / `parse_stream_events` with the tables as
+  data: the provider-executed item sets (MAP-1), the finish-reason maps,
+  the in-band error code tables, the Gemini candidate finish errors.
+- The adapter is stateless per frame and may emit one end event per
+  provider terminal frame; `stream::Coalescer` merges them into the one
+  final end (MAP-3) and synthesizes the one leading start (MAP-4); D9's
+  `provider_data` rank rule is `EndProviderData`.
+- `stream::StreamAccumulator` is the MAP-9 assembly algorithm verbatim
+  (slots, the fixed kind order, the `tool_call_<index>` correlator, the
+  refusal with `partial`); `materialize_response` is the one-shot form.
+- `Response.provider_data` is the wire body; `_lm15_unmapped` is attached
+  when content could not be mapped, and the shim surfaces it as the
+  protocol's `unmapped` canary.
+
+## Stated deviations
+
+- **`serde_json` `float_roundtrip`** (a feature, no new dependency): the
+  default parser is not correctly rounded and moved a pinned logprob
+  (`openai_chat.logprobs`: `-1.9361264946837764e-07`) by one ULP.
+  Telemetry is provider-verbatim (spec/types.md § Usage), so parsing is
+  exact; the cost is a slower float parse nobody will measure.
+- **Tool-call input in the event trace is UTF-8.** The Gemini and
+  Anthropic dialects serialize a start frame's `args` / non-empty `input`
+  into `ToolCallDelta.input`; the reference's `json.dumps` escapes
+  non-ASCII as `\uXXXX`, this port does not (the request-side deviation,
+  restated for the trace). Both parse to the same object; no golden pins
+  a non-ASCII input.
+- **A malformed provider body is a `ProviderError`** (not JSON, not an
+  object, a stream frame that is not JSON). The reference lets the native
+  `JSONDecodeError` / `AttributeError` escape untyped. A provider that
+  answers garbage is a provider failure; the class says so.
+- **A reasoning summary entry without `text`** contributes an empty
+  line; the reference's `str(x.get("text"))` contributes the literal
+  `"None"`. A Python artefact not worth porting; no summary entry lacks
+  `text`.
+
+## Divergences from the reference implementation
+
+Each is a port.md rule 4 case (no silent drops, no guessed tool identity)
+where the reference's control flow was not followed. None is pinned by a
+fixture; each has a unit test in the dialect's `response.rs`.
+
+- **A nameless tool call on the complete path RAISES `ProviderError`**:
+  a Responses `function_call` without `name`, a chat `tool_calls[i]`
+  without `function.name`, an Anthropic `tool_use` without `name`, a
+  Gemini `functionCall` without `name`. The reference substitutes the
+  literal `"tool"` (`openai.py:1050`, `openai_chat.py:687`,
+  `anthropic.py:796`, `gemini.py:900`) — the guess MAP-9 forbids on the
+  stream path, made on the complete path. An agent loop dispatching on
+  `"tool"` would run nothing or the wrong thing with no error.
+- **A malformed usage counter RAISES `ProviderError`**: a string, a
+  bool, a fraction or a negative where a token count belongs. The
+  reference raises a native `TypeError`/`ValueError` from the `Usage`
+  constructor (typed here), and an earlier draft of this port read it as
+  "not reported" — a silent drop of a bill-reconciliation number, caught
+  by probing outside the corpus (port.md § Reviewing, step 5).
+- **`ProviderLM::parse_response` normalizes a status of 400 or more**
+  into the typed error before any body parsing. The reference's
+  `parse_response` ignores the status (its `complete()` checks it first),
+  so its vet shim parses a 429 body as a Response and answers an empty
+  `stop` message; this port's shim answers the typed error. No case pins
+  a non-200 status on this op.
+
+## Not implemented
+
+- `complete` / `stream` over a transport (the codec is done; see
+  "Not implemented" above).
 
 
 # Dialect: Anthropic (module 4)

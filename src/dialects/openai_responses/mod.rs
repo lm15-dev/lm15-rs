@@ -18,13 +18,15 @@
 mod cache;
 mod input;
 mod payload;
+pub mod response;
 mod tools;
 
 use serde_json::Value;
 
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
-use crate::types::Request;
+use crate::sse::SseEvent;
+use crate::types::{Request, Response, StreamEvent};
 use crate::wire::{apply_static_headers, BuildContext, Dialect, WireRequest};
 
 pub use cache::model_has_cache_options;
@@ -62,6 +64,25 @@ impl Dialect for OpenAIResponses {
         wire.endpoint = Some("responses");
         wire.model = Some(cx.model.to_string());
         Ok(wire)
+    }
+
+    fn parse_response(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Response, Lm15Error> {
+        response::parse_response(cx.provider, request, body)
+    }
+
+    fn parse_stream_event(
+        &self,
+        request: &Request,
+        cx: &BuildContext<'_>,
+        event: &SseEvent,
+        out: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error> {
+        response::parse_stream_event(cx.provider, request, event, out)
     }
 }
 

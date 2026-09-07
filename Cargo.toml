@@ -1,6 +1,6 @@
 [package]
 name = "lm15"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "lm15 canonical model, Rust port — rebuilt module-by-module from the lm15-contract spec."
 license = "MIT"
@@ -12,7 +12,10 @@ categories = ["api-bindings"]
 serde = "1"
 # preserve_order: a SigV4 signature covers the body bytes, and the fixtures
 # pin the reference's key order through that hash (README, stated deviations).
-serde_json = { version = "1", features = ["preserve_order"] }
+# float_roundtrip: the default float parser is not correctly rounded and
+# moved a provider logprob (-1.9361264946837764e-07) by one ULP; telemetry
+# is provider-verbatim (spec/types.md § Usage), so parsing must be exact.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 # SigV4 (spec/auth.md AUTH-11): RustCrypto SHA-256 and HMAC.
 sha2 = "0.10"
 hmac = "0.12"
