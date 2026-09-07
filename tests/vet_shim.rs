@@ -158,9 +158,10 @@ fn sigv4_sign_reproduces_the_suite_bytes() {
 }
 
 /// `build_request` on a cloud door: `credential`, `now` and `settings` are
-/// honoured and the reply is the not-implemented refusal, never a crash.
+/// honoured — the chat dialect (W3) builds the body and the door signs it
+/// with the injected clock; a missing setting is a refusal, never a crash.
 #[test]
-fn build_request_binds_cloud_door_inputs_before_the_stub_refuses() {
+fn build_request_binds_cloud_door_inputs() {
     let replies = run_shim(&[
         json!({"op": "build_request", "id": "1", "provider": "bedrock-chat", "api_key": "test-key-123",
                "credential": {"kind": "aws", "access_key_id": "AKIDEXAMPLE", "secret_access_key": "s"},
@@ -176,11 +177,19 @@ fn build_request_binds_cloud_door_inputs_before_the_stub_refuses() {
         json!({"op": "capabilities", "id": "4"}),
     ]);
     assert_eq!(replies.len(), 4);
-    assert_eq!(replies[0]["error"]["type"], "UnsupportedFeatureError");
-    assert!(replies[0]["error"]["message"]
+    assert_eq!(replies[0]["ok"], true);
+    let built = &replies[0]["result"];
+    assert_eq!(
+        built["url"],
+        "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions"
+    );
+    assert_eq!(built["headers"]["x-amz-date"], "20260903T164736Z");
+    assert!(built["headers"]["authorization"]
         .as_str()
         .unwrap()
-        .contains("openai-chat"));
+        .starts_with("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260903/us-east-1/bedrock/"));
+    assert_eq!(built["body"]["stream"], true);
+    assert_eq!(built["body"]["stream_options"]["include_usage"], true);
     assert_eq!(replies[1]["error"]["type"], "NotConfiguredError");
     assert_eq!(replies[1]["error"]["code"], "not_configured");
     assert_eq!(replies[2]["error"]["type"], "ValueError");
