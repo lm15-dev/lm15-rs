@@ -9,7 +9,7 @@ use crate::registry::DialectId;
 use crate::types::Request;
 use crate::wire::{BuildContext, Dialect, WireRequest};
 
-// W1: `pub mod anthropic;`
+pub mod anthropic;
 // W2: `pub mod openai_responses;`
 // W3: `pub mod openai_chat;`
 // W4: `pub mod gemini;`
@@ -52,7 +52,7 @@ static GEMINI_STUB: Stub = Stub(DialectId::Gemini);
 /// The codec for a dialect id.
 pub fn dialect_for(id: DialectId) -> &'static dyn Dialect {
     match id {
-        DialectId::Anthropic => &ANTHROPIC_STUB, // W1 wiring point: `&anthropic::ANTHROPIC`
+        DialectId::Anthropic => &anthropic::ANTHROPIC,
         DialectId::OpenaiResponses => &OPENAI_RESPONSES_STUB, // W2 wiring point: `&openai_responses::OPENAI_RESPONSES`
         DialectId::OpenaiChat => &OPENAI_CHAT_STUB, // W3 wiring point: `&openai_chat::OPENAI_CHAT`
         DialectId::Gemini => &GEMINI_STUB,          // W4 wiring point: `&gemini::GEMINI`
