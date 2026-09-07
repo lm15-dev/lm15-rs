@@ -474,9 +474,11 @@ mod tests {
         );
         assert_eq!(lm.wire_model("anthropic:"), "anthropic:");
         let request = Request::new("claude-x", vec![Message::user("hi").unwrap()]).unwrap();
-        // W0: the stub dialect refuses honestly.
-        let err = lm.build_request(&request, false).unwrap_err();
-        assert_eq!(err.class_name(), "UnsupportedFeatureError");
-        assert!(err.message().contains("not yet implemented"), "{err}");
+        // The dialect builds; the credential header comes from emit (D1).
+        let built = lm.build_request(&request, false).unwrap();
+        assert_eq!(built.method, "POST");
+        assert!(built.url.ends_with("/messages"), "{}", built.url);
+        assert_eq!(built.header("x-api-key"), Some("k"));
+        assert_eq!(built.body.as_ref().unwrap()["model"], "claude-x");
     }
 }

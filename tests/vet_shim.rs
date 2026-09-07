@@ -87,15 +87,15 @@ fn one_reply_per_request_with_the_same_id() {
         json!({"class": "RateLimitError", "code": "rate_limit", "provider_code": "rate_limit_exceeded", "message": "slow down"})
     );
 
-    // W0: the dialect stub refuses with the class and code on the reply.
+    // build_request goes through the registry, the dialect and emit.
     assert_eq!(replies[6]["id"], "build_request#7");
-    assert_eq!(replies[6]["ok"], false);
-    assert_eq!(replies[6]["error"]["type"], "UnsupportedFeatureError");
-    assert_eq!(replies[6]["error"]["code"], "unsupported_feature");
-    assert!(replies[6]["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("module 4 dialect openai-responses not yet implemented"));
+    assert_eq!(replies[6]["ok"], true, "{}", replies[6]);
+    assert_eq!(replies[6]["result"]["method"], "POST");
+    assert_eq!(
+        replies[6]["result"]["url"],
+        "https://api.openai.com/v1/responses"
+    );
+    assert_eq!(replies[6]["result"]["headers"]["authorization"], "Bearer k");
 
     // Module 3b ops answer the refusal that names the module.
     assert_eq!(replies[7]["ok"], false);

@@ -14,7 +14,7 @@ grade the port against any other commit.
 | 2 — errors | spec/vocabularies.md ErrorCode + class hierarchy; `normalize_error` for every provider in `errors/cases/` | done — `--direction error` 84 pass / 0 fail / 0 skip |
 | 3a core auth | spec/auth.md AUTH-1 (`key`, `oauth`, `oauth-unless-explicit`), AUTH-2 credential values + D1 scheme selection, AUTH-5, AUTH-7 doctor, AUTH-8 read side, AUTH-10 policy table | done — `--direction auth --auth-scope core` 26 pass / 0 fail / 0 skip; `tests/auth_resolution_contract.rs` replays the same `auth/resolution.json` from the contract checkout with the same core/cloud split |
 | 3b cloud chains | AUTH-1 `aws-chain`/`azure-chain`/`gcp-chain`, AUTH-11 rung kinds, SigV4, RS256 | SigV4 done (module 4 needs it): `--direction token` 34 pass / 9 fail — the 34 `sigv4.*` vectors pass, the 9 `token.*` vectors (`token_exchange_build` / `token_exchange_parse`: GCP service account, Azure certificate/secret/MSI, GCP metadata, AWS credential_process/IMDS) answer `UnsupportedFeatureError` naming module 3b. Cloud-chain providers are in the policy table as data; `explain_auth` answers `AuthError::NotImplemented` (class `NotConfiguredError`) for them. The 11 cloud auth cases are asserted to answer that error and counted, not skipped |
-| 4 — dialects, request side | spec/auth.md AUTH-10 (policy table, hosts, settings, host rewrites), MAP-5..MAP-8 refusals, compat presets, `--direction request` | skeleton (W0) done: `wire::emit`, the full `AccessPolicy` table, `cloud::hosts`, `cloud::sigv4`, `compat` presets, `ProviderLM` + named constructors, `registry::adapter_for`, shim `build_request`. The four dialects are stubs that answer `UnsupportedFeatureError` "module 4 dialect `<name>` not yet implemented": `--direction request` = 280 fail (all that refusal or the pinned-class mismatch on `deepseek-anthropic.model_claude_substituted`), 17 pass (the pinned `UnsupportedFeatureError` raises match the stub's class and code — vacuous until the dialects land), 1 skip (`openai.computer_use`, no canonical_request), zero shim crashes |
+| 4 — dialects, request side | AUTH-10 policy table, hosts, settings, host rewrites; MAP-5..MAP-8 refusals; compat presets; the four dialects (`src/dialects/{anthropic,openai_responses,openai_chat,gemini}`) | done — `--direction request` 297 pass / 0 fail / 1 skip (`openai.computer_use`, no canonical_request) at the pin: anthropic-family 70, Responses-family 81, Chat-family 112, gemini 34. The per-dialect sections below state each dialect's deviations |
 | 5–9 — response side/streams, models, files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
 
 Gates for modules 1–4, from the contract checkout:
@@ -295,3 +295,512 @@ reference on 2026-09-07 (lm15-python b2709c8). No fixture pins them.
   this port reads credentials only.
 - AUTH-9 `login(provider)`: not shipped. The xAI login hint therefore names
   the AUTH-9 door, not a command this port runs.
+
+
+# Dialect: Anthropic (module 4)
+
+## Stated deviations
+
+- **Body key order is the reference's insertion order** (port.md
+  rule 1 + the `preserve_order` deviation above): `model`, `messages`,
+  `stream`, `max_tokens`, `system`, `temperature`, `top_p`, `top_k`,
+  `stop_sequences`, `tools`, `tool_choice`, `thinking`, `output_config`,
+  `service_tier`, `metadata`, then `extensions` verbatim (an existing key
+  is replaced in place), then the policy `system_prefix` placed first in
+  `system`. A SigV4 door (`aws-anthropic`, `bedrock-anthropic`) signs
+  these bytes; the public-API fixtures compare structurally.
+- **`ImagePart.detail` is not sent** (port.md rule 4): the Messages API
+  has no resolution hint; the image is processed as-is. The reference
+  and its Gemini adapter drop it the same way; it is a hint with no cost
+  the caller can observe, not an instruction, so it is stated here
+  rather than refused. The parent may reverse this.
+- **A `ThinkingPart` with empty text and no `anthropic:*` state renders
+  no block** (hidden thinking of another dialect, MAP-7 rule 11): the
+  reference sends `{"type": "text", "text": ""}`, which the API refuses
+  (empty text block). Nothing this wire can carry is dropped.
+- **`ToolResultPart.name` is not sent**: the wire keys a result by
+  `tool_use_id` alone. Same as the reference.
+- **`AnthropicCompat.extensions` is carried as data and not read**: the
+  reference (`lm15/providers/anthropic.py`) never reads it either; a
+  server-level default body merge has no defined semantics yet.
+- **The reserved `extensions` key `prompt_caching` never reaches the
+  wire** (`lm15/providers/anthropic.py:735`; the reference's
+  `docs/cookbooks/18-provider-passthrough.md` § Reserved keys): the
+  pre-`CacheConfig` spelling, kept reserved so a request written for the
+  reference does not 400 here. Every other key passes through verbatim
+  (INV-049).
+
+## Divergences from the reference implementation
+
+- **Parts with no content block raise** (`lm15/providers/anthropic.py:448`
+  renders audio, video and binary parts as `{"type": "text", "text": ""}`;
+  `:457` does the same inside tool results; `:620` and `:462-464` join system
+  parts and developer messages through `parts_to_text`, dropping media):
+  this port raises `UnsupportedFeatureError` for audio/video/binary in
+  messages, tool results and `system`, and for any non-text part in
+  `system` (port.md rule 4). A developer message keeps its media blocks
+  after the `[developer]\n…` text block; `system` parts become one text
+  block each (the mark rides the last one) instead of a `\n`-joined string.
+- **Inline media data is sent as its base64 payload**
+  (`lm15/providers/common.py:233` sends `part.data` verbatim): a data-URI
+  prefix or whitespace that INV-012 tolerates on input is stripped
+  (`base64_payload`) so the wire gets what the API accepts.
+- **`cache.resource` raises on every door of the wire** (MAP-6 rule 7;
+  `lm15/providers/anthropic.py:536-548` raises only when marks are active,
+  so a `cache_control="none"` server such as DeepSeek silently ignores a
+  stored-cache id). No server on this wire has the resource tier.
+- **`cache.retention="long"` raises on a `cache_control="none"` server**
+  (MAP-6 rule 5 names the `ttl: "1h"` mechanism; `:525` gates `long_cache`
+  silently). `cache.key` follows the reference: a refusal where marks are
+  the mechanism, nothing on a server that caches implicitly (the
+  chat-dialect rule for `prompt_cache_key` on "none" presets).
+- **`anthropic-beta` values are joined without duplicates**
+  (`lm15/providers/anthropic.py:392-404` appends; a policy that already
+  lists `code-execution-2025-05-22` would repeat it). First occurrence
+  wins, policy betas first, then the dialect's own.
+- **A media `path` that cannot be read is `InvalidRequestError`**
+  (`invalid_request`): the reference lets `OSError` escape. The request
+  names something this process cannot read; no `Lm15Error` class fits
+  better than the caller-bug class.
+
+## Layout (append to the `src/dialects/` line)
+
+- `src/dialects/anthropic/` — W1: `mod.rs` (the `Dialect` impl, headers,
+  the `anthropic-beta` join, the refusal constructors), `body.rs` (the
+  body in the reference's key order: caching marks, the reasoning plan
+  per `thinking_format`, tool choice, `output_config`, extensions, the
+  system prefix), `parts.rs` (messages and parts → content blocks,
+  thinking replay per MAP-7 rules 8 and 11), `tables.rs` (the data copied
+  from the reference with citations: builtin tool types, the adaptive
+  model-class markers, the effort → budget table, the visible-token
+  default, the API version and beta strings).
+
+## Module 4 — the Anthropic dialect (new subsection)
+
+- `max_tokens` is required on the wire: `Config.max_tokens` or 1024
+  (`_DEFAULT_ANTHROPIC_VISIBLE_TOKENS`, pinned by `anthropic.reasoning_off`).
+  On the manual thinking class the wire value is `budget_tokens` +
+  that visible share (MAP-7 rule 6; `anthropic.reasoning_budget`: 1000 +
+  2048 = 3048); on the adaptive class `Config.max_tokens` is the total.
+- Reasoning (MAP-7) by `AnthropicCompat.thinking_format`: `anthropic` —
+  the model-class table (`anthropic_adaptive_class`, a substring table
+  that rots; `extensions.thinking` overrides): adaptive class →
+  `thinking: {type: adaptive}` + `output_config.effort` (`minimal` and
+  `thinking_budget` raise), manual class → `thinking: {type: enabled,
+  budget_tokens}` from `thinking_budget` or the grading table; `off`
+  sends nothing (absence is the native off). `deepseek` — `off` MUST be
+  sent as `{type: disabled}`, on is `{type: enabled}` + `output_config.effort`.
+  `adaptive` — every model adaptive, `off` sent as `disabled` so the
+  server refuses loudly. `effort` — `output_config.effort` alone, `off` as
+  `disabled`. `reasoning_efforts` is a client-side allowlist for servers
+  that swallow unknown words; `summary` `concise`/`detailed` raise,
+  `auto` is satisfied silently.
+- Caching (MAP-6): `config.cache` absent → nothing. Present, not `off`,
+  `cache_control="anthropic"` → the system block is marked (`auto` and
+  `prefix="stable"`), plus the last block of message N for
+  `prefix_until_index=N` (clamped) or of the last message for
+  `prefix="history"`; `retention="long"` adds `ttl: "1h"`. `mode="off"`
+  places nothing (no write switch exists).
+- Tool choice (MAP-8): `none`; one name + `required` → `{type: tool,
+  name}` (server tools too); an allowlist naming every declared tool →
+  `any`/`auto`; a proper subset raises; `parallel=false` →
+  `disable_parallel_tool_use: true` (raises under
+  `parallel_tool_calls="reject"`, where the server ignores it).
+- Structured output (MAP-8): `json_schema` → `output_config.format
+  {type: json_schema, schema}`; `name` and `strict` have no slot;
+  `json_object` raises; `structured_output="reject"` raises.
+- Thinking replay (MAP-7 rules 8, 11): `anthropic:redacted_thinking` →
+  `redacted_thinking` with the blob; `anthropic:thinking_signature` with
+  a non-empty signature → a signed `thinking` block; otherwise text
+  (decision G), or an unsigned `thinking` block under
+  `thinking_replay="unsigned"`.
+- Headers: `anthropic-version: 2023-06-01`, the policy's static headers,
+  one `anthropic-beta` joining the policy's betas with the dialect's
+  (`code-execution-2025-05-22` when a `code_execution` builtin is
+  offered). `content-type` and the credential are `emit`'s. The
+  `claude-code` binding: `system_prefix` first in `system` as a text
+  block, then the caller's system (string or blocks, marks kept).
+- Refusals, all `UnsupportedFeatureError` unless named: `model_prefixes`
+  mismatch (`UnsupportedModelError`), `store`, `logprobs`, `cache.key`
+  (marks active), `cache.resource`, `retention="long"` on a "none" server,
+  `sampling_params="reject"` with any of temperature/top_p/top_k,
+  audio/video/binary parts, non-text `system` parts, an unreadable media
+  `path` (`InvalidRequestError`).
+
+
+# Dialect: OpenAI Responses (module 4)
+
+## Stated deviations (add after the `preserve_order` row)
+
+- **Body key order is the reference's insertion order, not the
+  fixture's** (`lm15/providers/openai.py:810-971` `_payload`): `model`,
+  `input`, `stream`, `instructions`, the max-tokens field, `temperature`,
+  `top_p`, `top_logprobs`, `include`, `tools`, `tool_choice`,
+  `parallel_tool_calls`, `text`, `reasoning`, the `prompt_cache_*`
+  fields, `provider`, `service_tier`, `safety_identifier`, `store`, then
+  the `extensions` keys (an existing key keeps its slot, as
+  `dict.update`). The Responses fixtures were captured by several
+  reference versions and disagree among themselves (`openai.temperature`
+  has `stream` last; `azure.basic_text` has it third); the harness
+  compares bodies structurally, so no Responses case pins an order. The
+  order matters only where a signature hashes the bytes (no Responses door
+  signs today) — the dialect keeps one order so a future SigV4 door signs
+  the same bytes as the reference.
+- **`function_call.arguments` is compact UTF-8** (`serde_json`
+  `to_string`). The reference's `json.dumps(..., separators=(",", ":"))`
+  keeps the default `ensure_ascii=True`, so a non-ASCII argument goes out
+  as `\uXXXX` there and raw here. Both parse to the same JSON object; no
+  fixture carries a non-ASCII argument. Escaping to match Python byte for
+  byte would be a Python artefact copied into a Rust wire.
+- **A path-addressed media part in a prompt message is read at build time
+  and inlined as a data URI** (the Anthropic dialect's precedent,
+  `lm15/providers/common.py:234`). The reference's Responses path sends
+  `{"type": "input_text", "text": ""}` for it (`common.py:162-220` falls
+  through), a silent drop. An unreadable path is `InvalidRequestError`.
+- **Assistant media parts refuse** (`UnsupportedFeatureError`). The wire's
+  assistant message takes `output_text` and `refusal` only; the reference
+  drops an assistant image/audio/video/document/binary part silently
+  (`openai.py:710-731`). Port.md rule 4: a raise, never omission.
+- **`reasoning_format="none"` refuses a `config.reasoning`**, on and off
+  (`UnsupportedFeatureError`). The reference sends nothing for both
+  (`openai.py:871-932` has no `none` branch): an explicit `off` that
+  changes no byte is the silent paid no-op MAP-5 forbids, and a level with
+  no native field is what MAP-7.2 says to raise. No preset in the
+  Responses table needs this format on a real Responses server.
+- **The two legacy `extensions` spellings `cache` and `prompt_caching`
+  refuse** (`UnsupportedFeatureError` pointing at `config.cache`). The
+  reference filters them out of the passthrough and sends nothing
+  (`openai.py:950-958`). The compat spellings (`compat`,
+  `openai_compat`, `openai_responses_compat`) are consumed as the
+  request-level compat override (`lm15/profiles.py:146-181`) and never
+  sent, as in the reference.
+- **Assistant `CitationPart`s are not replayed** (both here and in the
+  reference). A citation annotates the text already replayed as
+  `output_text`; the wire's `annotations` field is output-side. Stated
+  because rule 4 would otherwise call this an omission.
+
+## Module 4 — the Responses dialect (new subsection)
+
+- `src/dialects/openai_responses/`: `mod.rs` (the `Dialect`, the
+  refusal constructors, `CODEX_BACKEND`), `payload.rs` (the body in the
+  reference's order; `resolve_compat`), `input.rs` (messages → items:
+  `input_text`/`input_image`/`input_audio`/`input_file`/`input_video`,
+  `output_text`/`refusal`, `function_call`/`function_call_output`,
+  reasoning-item replay), `tools.rs` (`_OPENAI_BUILTIN_MAP` as data,
+  `tools`, the kind-aware `tool_choice`), `cache.rs` (the `gpt-5.6+`
+  detector, breakpoint placement, MAP-6 fields).
+- What `emit` does for the dialect: the credential header (`Bearer` on
+  `openai`/`meta`/`moonshotai-responses`/`openai-codex`, `api-key` on
+  `azure`), the base URL, the Azure host rewrite, `content-type`. The
+  dialect sets `Content-Type` first and the policy's static headers after
+  (`openai.py:541-549`); `endpoint = "responses"`; `model` for hosts
+  that place it in the path.
+- Reasoning (MAP-5/7): the word verbatim; `off` → `{"effort": "none"}`;
+  `summary` verbatim on `responses_reasoning`, `concise`/`detailed`
+  refuse elsewhere; `thinking_budget` refuses. Replay: an
+  `openai:reasoning_item` state becomes `{"type": "reasoning", id?,
+  encrypted_content?, "summary": [...]}` before the message it preceded
+  (`summary` present even when empty); stateless thinking text replays as
+  `output_text`; empty stateless thinking sends nothing.
+- Caching (MAP-6), under `cache_control="openai"`: `mode="off"` →
+  `prompt_cache_options: {mode: explicit}` on `gpt-5.6+` and nothing
+  below; `key` → `prompt_cache_key`; `retention="long"` →
+  `prompt_cache_retention: "24h"` on every class; `prefix="stable"` moves
+  the system prompt into the first developer item with
+  `prompt_cache_breakpoint`; `prefix_until_index` marks the last text
+  block of that message (clamped) and refuses on an assistant/tool message
+  or a message not ending in text; a placed mark on `gpt-5.6+` also sends
+  `prompt_cache_options`; `prefix="history"` sends nothing; `resource`
+  refuses. `openai_implicit` (Meta, Moonshot): key and retention only.
+  `none`/`anthropic`: nothing.
+- Tool choice (MAP-8): `none`/`auto`/`required` as strings; a single
+  allowed name with `required` is the forced form (`{"type": "function",
+  "name"}` or the hosted-tool `{"type": <wire type>}`); every other
+  allowlist is `{"type": "allowed_tools", "mode", "tools"}`. `parallel`
+  → `parallel_tool_calls`. Structured output: `text.format` with `name`
+  defaulting to `"response"` and `strict` verbatim when present.
+- Builtin tools: `builtin_tools="openai"` maps `web_search` →
+  `web_search_preview`, `code_execution` → `code_interpreter`,
+  `file_search`, `computer_use` → `computer_use_preview`; `"verbatim"`
+  sends the canonical name; a name outside the table goes out verbatim
+  (the server refuses loudly). `config` keys ride verbatim after `type`.
+- Promoted knobs: `service_tier`, `user_id` → `safety_identifier`,
+  `store` (false included), `logprobs` → `top_logprobs` +
+  `include: ["message.output_text.logprobs"]`. INV-049 passthrough:
+  every other `extensions` key verbatim (`previous_response_id`,
+  `conversation`, `background`, `truncation`, `metadata`, `include`,
+  `max_tool_calls`, `stream_options`, `context_management`, `user`).
+- The `chatgpt-codex` backend (AUTH-10 branch 1): `instructions`
+  defaults to the policy's prefix, `store: false`, `stream: true`, the
+  max-tokens field removed; the policy's `OpenAI-Beta` and `originator`
+  headers. `client_version` is consumed by `/models` only
+  (`openai.py:1610-1613`), module 6. Gap: the `chatgpt-account-id` header
+  needs the credential's account id (`openai.py:544-545`), which
+  `BuildContext` does not carry — see "Not implemented".
+- Function tools send `"description": null` when the canonical tool has
+  none, as the reference does (`openai.py:849-856`); the schema accepts
+  it and the bytes match.
+- A tool result whose content renders to no text is sent as the
+  reference's type list (`[{"type": "image"}]`, `json.dumps` spacing) —
+  the wire's `function_call_output.output` is text only. Stated: media in
+  tool results reaches the model as a type name, not as media.
+- Compat override from the request: `extensions.openai_responses_compat`
+  (or `openai_compat`, or `compat.openai_responses` / `compat.openai`)
+  merges over the bound compat (`OpenAIResponsesCompat::merge`,
+  `from_json`, `from_extensions`); an unknown knob value is a
+  `ConfigurationError` (the reference's dataclass accepts any string).
+  The profile layers of `lm15/profiles.py` are not carried.
+
+## Not implemented (add to the section)
+
+- The `chatgpt-account-id` header on the `openai-codex` policy: the
+  reference extracts the account id from the OAuth token at construction
+  (`openai.py:466-473`) and sends it on every request. The Rust `emit`
+  invokes the credential after the dialect built and `BuildContext`
+  carries no account id, so the header is not sent. Minimal skeleton
+  change: `emit` adds the header when `policy.backend == "chatgpt-codex"`
+  from `auth::stores` account-id extraction on the `BearerToken`.
+
+
+# Dialect: OpenAI Chat Completions (module 4)
+
+## Layout
+
+- `src/dialects/openai_chat/` — the Chat Completions codec: `mod.rs`
+  (the `Dialect` impl, headers, the xAI refusal table), `payload.rs` (the
+  body in the reference's key order), `messages.rs` (the `messages`
+  array), `cache.rs` (MAP-6 and the gpt-5.6+ class detector), `text.rs`
+  (lossy text rendering, data URIs, the refusal constructor).
+
+## Module 4 — the Chat Completions dialect
+
+- **Body key order is the fixture's.** Bodies are `serde_json::Map`s
+  filled in the reference's insertion order (`lm15/providers/openai_chat.py:377-560`):
+  `model, messages, stream, stream_options, <max_tokens_field>,
+  temperature, top_p, stop, logprobs, top_logprobs, tools, tool_choice,
+  parallel_tool_calls, response_format, reasoning_format, <thinking
+  fields>, prompt_cache_key, prompt_cache_retention, prompt_cache_options,
+  provider, service_tier, <user_field>, store, extensions…`. This depends
+  on `serde_json`'s `preserve_order` feature: the Bedrock doors sign the
+  body bytes (SigV4), so the order is part of what those fixtures pin.
+- **One compat, consulted at named points.** The binding's
+  `OpenAIChatCompat` (the empty partial for a binding without one) is
+  resolved per request after `for_model` applies the door's per-model
+  overrides (Bedrock: `openai.gpt-oss` refuses forced tool choice and
+  `json_schema`; `google.gemma` refuses forced tool choice on
+  bedrock-runtime only). Every knob value is exercised by one unit test in
+  `src/dialects/openai_chat/tests.rs`.
+- **Reasoning (MAP-5, MAP-7).** `effort` goes out in the server's shape
+  (`reasoning_effort`; OpenRouter `reasoning: {effort}`; the `deepseek`
+  shape `thinking: {type: enabled}` + `reasoning_effort`; Moonshot's
+  `kimi` shape sends the word alone and `thinking: {type: disabled}` for
+  off; Qwen `enable_thinking`; `qwen_chat_template`). `off` sends the
+  native disable. `thinking_budget` and `summary: concise|detailed` refuse
+  (`UnsupportedFeatureError`); `summary: auto` becomes Groq's
+  `reasoning_format: parsed` and is accepted silently elsewhere (MAP-7.7).
+  `reasoning_efforts` allowlists refuse a word the server would swallow
+  (Moonshot `medium`). A `thinking_format: none` server (ollama) refuses
+  any `config.reasoning`: the wire has no dial, and an omitted dial is
+  the silent paid no-op MAP-5 forbids.
+- **Tool choice and structured output (MAP-8).** `auto`/`required`/`none`
+  verbatim; one allowed name with `required` forces the function; any
+  other allowlist is the nested `allowed_tools` form; builtin names in an
+  allowlist refuse. `forced_tool_choice: reject` (Z.AI, gpt-oss on
+  Bedrock, Gemma on bedrock-runtime) refuses every form but plain `auto`.
+  `response_format` is `{type: json_object}` or `{type: json_schema,
+  json_schema: {name (default "response"), schema, strict?}}`;
+  `json_schema: reject` (Z.AI, gpt-oss on Bedrock) refuses the schema form.
+- **xAI's refusal table** lives in the dialect and is keyed on the bound
+  policy (`policy.provider == "xai"`), copied from
+  `lm15/providers/xai.py:77-125`: reasoning off, `logprobs`, allowlist
+  subsets other than one forced name, and a forced tool next to
+  `response_format` all refuse before the wire. A second binding of the
+  `xai` compat preset (say, a proxy) does not inherit the table: the
+  table is a provider fact, the preset is a wire shape.
+- **Caching (MAP-6)** follows `cache_control`: `openai` sends
+  `prompt_cache_key`, `prompt_cache_retention: 24h`, the
+  `prompt_cache_breakpoint` mark on the system block (`prefix: stable`)
+  or on the last text block of message `prefix_until_index`, and
+  `prompt_cache_options: {mode: explicit}` on the gpt-5.6+ class (with a
+  mark, or alone for `mode: off`); `openai_implicit` (Meta, Moonshot)
+  forwards only the key and retention; `none` sends nothing;
+  `resource` refuses on both OpenAI controls. The gpt-5.6+ detector
+  (`gpt-<major>.<minor>` ≥ 5.6) is a stated, rotting table.
+- **Messages.** `system` and `developer` rows use the compat's
+  `instruction_role`; user content is a bare string for one text part
+  and an array of `text`/`image_url` blocks otherwise (URLs verbatim,
+  inline data as a data URI, `detail` when set); assistant rows carry
+  text, refusal text and — per `thinking_replay` — thinking text in
+  `content` (`null` when empty), `reasoning_content` on the native replay
+  (always present under `assistant_reasoning_content: include_empty`,
+  DeepSeek's tool-loop requirement), and `tool_calls` with compact JSON
+  `arguments`; tool rows carry `tool_call_id`, the result's text, and
+  `name` under `tool_result_name: include`.
+
+## Stated deviations
+
+- **`assistant_after_tool_result: insert`** has no reference behaviour:
+  the knob exists in `lm15/compat.py` but `lm15/providers/openai_chat.py`
+  never reads it, and no preset sets it. This port inserts
+  `{"role": "assistant", "content": ""}` after a run of tool rows when
+  the next message is a user or developer turn (never at the end of the
+  transcript). Unpinned; stated so the parent can strike it.
+- **Assistant citations are dropped on replay.** A `CitationPart` in an
+  assistant turn annotates text the wire already carries; the chat wire
+  has no assistant citation slot. Refusing would break the flagship tool
+  loop (`messages + response.message`) for every provider whose answer
+  carried citations, so the annotation is dropped, stated here (port.md
+  rule 4). The reference does the same (`openai_chat.py:258-270`).
+- **A tool result with no text** is rendered as the reference's
+  placeholder `[{"type": "image"}]` (the part types, Python's default
+  JSON spacing) rather than refused: a refusal would break the loop for a
+  tool that returned media. Stated, not absorbed.
+- **`extensions` reserved names** (`prompt_caching`, `cache`, `compat`,
+  `openai_compat`, `openai_chat_compat`) are not forwarded, as in the
+  reference (`openai_chat.py:551-557`); they are lm15's former
+  configuration names, not provider syntax.
+- **Tool-call `arguments` are UTF-8** (`serde_json` compact). The
+  reference's `json.dumps(separators=(",", ":"))` escapes non-ASCII as
+  `\uXXXX` inside the string. The two differ only for non-ASCII tool
+  inputs; no fixture pins one. UTF-8 is the model's own text.
+
+## Divergences from the reference implementation
+
+- `config.top_k` **refuses** on this dialect (`UnsupportedFeatureError`);
+  the reference omits it silently (`openai_chat.py:387-395` reads
+  `temperature`, `top_p`, `stop` only). port.md rule 4: a canonical field
+  with no wire slot is a raise or an `extensions` door; `top_k` through
+  `extensions` reaches vLLM/SGLang/ollama.
+- `config.reasoning` on a `thinking_format: none` server **refuses**;
+  the reference sends nothing for both on and off
+  (`openai_chat.py:497-543`, no `none` branch). MAP-5.
+- User `audio`/`video`/`document`/`binary` parts **refuse**; the
+  reference renders them through `parts_to_text`, which yields `""`, and
+  drops the empty block (`openai_chat.py:89-116`). Assistant media parts
+  refuse; the reference ignores them (`:258-270`).
+- An image addressed by `file_id` or `path` refuses with the pinned
+  class; the reference raises an untyped `ValueError`
+  (`common.py:73-76` `media_data_uri`).
+- A `FunctionTool` without a description omits the key; the reference
+  emits `"description": null` (`openai_chat.py:402-406`). No fixture has
+  a description-less tool.
+- `OpenAIChatCompat.extensions` is forwarded into the body before the
+  request's `extensions`; the reference never reads it on the chat
+  dialect (a dead field there).
+
+
+# Dialect: Gemini (module 4)
+
+## Stated deviations (playbooks/port.md rule 8)
+
+- **Body key order is the fixtures' order, not the reference's, where
+  the two differ** (`src/dialects/gemini/mod.rs` `payload`): `contents`,
+  `cachedContent`, `systemInstruction`, `generationConfig`, `toolConfig`,
+  `tools`, `store`, `serviceTier`, then `extensions`. The reference
+  inserts `tools` before `toolConfig` (`lm15/providers/gemini.py:759-763`);
+  the migrated fixtures (`cases/gemini/tool_config_*.json`) record
+  `toolConfig` first. No Gemini door signs its body, so the order is a
+  family convention here, pinned by nothing; `serde_json` `preserve_order`
+  keeps whichever order the builder inserts.
+- **Integral floats take the integer form** (`generationConfig.temperature`,
+  `topP`): a canonical `1.0` goes out as `1`
+  (`lm15/providers/gemini.py:208-219`, live capture
+  `cases/gemini/temperature.json`). A wire-dialect fact; the canonical
+  field stays a float and the harness's `1 != 1.0` rule is what pins it.
+- **`ImagePart.detail` has no Gemini slot and is not sent** — the same
+  silent drop the reference and the Anthropic dialect make for a
+  presentation hint; stated here instead of raised because every
+  non-OpenAI wire drops it and a raise would make the hint unusable
+  outside OpenAI.
+- **A `path` media part is read at build time** and inlined as
+  `inlineData` (the reference does the same,
+  `lm15/providers/gemini.py:579`). An unreadable path is an
+  `InvalidRequestError` (the reference lets the `OSError` escape untyped).
+
+## Divergences from the reference implementation
+
+Each is a place where playbooks/port.md rule 4 (no silent drops) or a
+wire fact overrode the reference's control flow. None is pinned by a
+fixture; each has a unit test in `tests/dialect_gemini_rules.rs`.
+
+- `ToolResultPart.is_error = true` RAISES `UnsupportedFeatureError`
+  (`functionResponse` has no error flag; the reference drops the flag,
+  `lm15/providers/gemini.py:589-594`).
+- Media parts in a text-only slot RAISE `UnsupportedFeatureError`:
+  `systemInstruction` (text-only on the wire), a developer turn (rendered
+  as one prefixed text part), a `functionResponse` (`{"result": <text>}`).
+  The reference's `parts_to_text` (`lm15/providers/common.py:53-66`)
+  drops them.
+- A `functionResponse.name` with no `ToolResultPart.name` is looked up
+  from the `ToolCallPart` with the same id earlier in the transcript
+  (`Message::tool(&call.id, result)` carries no name); only when no such
+  call exists does the reference's placeholder `"tool"` go out
+  (`lm15/providers/gemini.py:591`).
+- `functionDeclarations[].description` is omitted when absent; the
+  reference sends `"description": null` (`lm15/providers/gemini.py:749`).
+- `extensions.prompt_caching` is not filtered (`lm15/providers/gemini.py:792`
+  drops it as a legacy key); it passes through like every other key and
+  the server's 400 is the contract.
+- `extensions.output` with a value other than `"image"`/`"audio"` RAISES
+  `InvalidRequestError` (the reference ignores it,
+  `lm15/providers/gemini.py:765-769`).
+- `CacheConfig.resource` naming a full resource path
+  (`projects/…/cachedContents/…`, the Vertex form) is kept verbatim; the
+  reference prefixes `cachedContents/` a second time
+  (`lm15/providers/gemini.py:1537-1538`).
+- The MAP-8 tool-choice refusals (`parallel=false`, builtin forcing) fire
+  even when a `cachedContent` reference makes `toolConfig` unsendable;
+  the reference skips the whole tool-config path next to a cache
+  (`lm15/providers/gemini.py:761`).
+- The model class (`gemini_level_class`) is read from the wire model
+  (`BuildContext.model`, the `provider:` prefix removed); the reference
+  reads `request.model` (`lm15/providers/gemini.py:708`), which the
+  router has already stripped on its path.
+
+## Layout
+
+- `src/dialects/gemini/mod.rs` — the `Dialect` impl, the model path,
+  `tools`, the body assembly, `GEMINI_BUILTIN_TOOLS`, `gemini_level_class`.
+- `src/dialects/gemini/config.rs` — `generationConfig` (`thinkingConfig`
+  per MAP-7, `EFFORT_THINKING_BUDGETS` from `lm15/providers/common.py:386-393`,
+  the `responseSchema`/`responseJsonSchema` rule), `toolConfig` (MAP-8),
+  the MAP-6 cache plan.
+- `src/dialects/gemini/contents.rs` — messages and parts, thought-signature
+  replay (MAP-7.8), the text-only slots.
+
+## Module 4 — the Gemini dialect (mapping summary)
+
+- Reasoning (MAP-7): absent → nothing; `off` → `thinkingBudget: 0` on the
+  2.5 class, RAISE on the 3.x class; `thinking_budget` → `thinkingBudget`
+  on both classes; else `thinkingLevel` verbatim on 3.x (`xhigh`/`max`
+  RAISE) or the grading table on 2.5; `summary: auto` →
+  `includeThoughts: true`, `concise`/`detailed` RAISE. The class is a
+  model-name table (`gemini-3*`); the server 400s when it rots.
+- Tool choice (MAP-8): `auto`/`required`/`none` → `AUTO`/`ANY`/`NONE`;
+  `allowed` → `allowedFunctionNames` with `ANY` or `VALIDATED` (auto);
+  builtin names in `allowed` RAISE; `parallel=false` RAISES.
+- Structured output (INV-050): `responseMimeType: application/json`,
+  plus `responseJsonSchema` when the schema contains
+  `additionalProperties` anywhere, else `responseSchema`; `strict`
+  satisfied, `name` dropped (a label).
+- Caching (MAP-6): `off`, `auto`, `prefix`, `prefix_until_index` alone,
+  `retention: short` → nothing; `key` and `retention: long` RAISE;
+  `resource` → `cachedContent` and only the messages after
+  `prefix_until_index`, with no `systemInstruction`/`tools`/`toolConfig`
+  (MAP-6.7); a resource with no suffix message RAISES `InvalidRequestError`.
+- `user_id` RAISES; `store` and `service_tier` map verbatim; `logprobs`
+  → `responseLogprobs` (+ `logprobs` when `> 0`); `extensions` land at the
+  top level verbatim (`safetySettings`, `labels`, …), replacing a built
+  key of the same name; `extensions.output` → `responseModalities`.
+- Hosts: `gemini` (`x-goog-api-key`), `vertex` (bearer; model in the
+  path under `…/publishers/google/models/{model}`), `vertex-express`
+  (`?key=`). The dialect sets `WireRequest.model` and
+  `endpoint = "generateContent"`; `emit` and the host do the rest.
+
+## Skeleton change made outside the two wiring lines
+
+`src/dialects/mod.rs`: the `static GEMINI_STUB` line was removed. Once
+the wiring point names `gemini::GEMINI`, the stub static is dead code and
+`cargo clippy -- -D warnings` (a gate) fails on it. The other three
+dialect workers will hit the same line for their stub; when all four
+land, `struct Stub` itself goes.

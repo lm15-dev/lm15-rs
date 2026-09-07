@@ -42,12 +42,6 @@ pub struct Anthropic;
 /// The one instance the dialect table points at.
 pub static ANTHROPIC: Anthropic = Anthropic;
 
-// The W0 stub this dialect replaces is still declared in `dialects/mod.rs`
-// (a worker touches only its two wiring lines there). This reference keeps
-// `-D warnings` green until the parent deletes `ANTHROPIC_STUB` on merge;
-// delete both together.
-const _: &super::Stub = &super::ANTHROPIC_STUB;
-
 /// The endpoint name a host path override is keyed by (AUTH-10).
 pub const ENDPOINT: &str = "messages";
 
