@@ -28,7 +28,7 @@ use std::fmt;
 
 use serde_json::Value;
 
-use crate::registry::{lookup, Dialect};
+use crate::registry::{lookup, DialectId};
 use crate::types::{Response, ValidationError};
 
 /// The closed ErrorCode vocabulary.
@@ -475,18 +475,18 @@ pub fn normalize_error(
         provider: definition.id,
     };
     Ok(match definition.dialect {
-        Dialect::OpenaiResponses => {
+        DialectId::OpenaiResponses => {
             normalize_openai_shape(&ctx, status, body_text, definition.id == "openai-codex")
         }
-        Dialect::OpenaiChat => {
+        DialectId::OpenaiChat => {
             if definition.id == "xai" {
                 normalize_openai_shape(&ctx, status, &xai_refold(body_text), false)
             } else {
                 normalize_openai_shape(&ctx, status, body_text, false)
             }
         }
-        Dialect::Anthropic => normalize_anthropic(&ctx, status, body_text),
-        Dialect::Gemini => normalize_gemini(&ctx, status, body_text),
+        DialectId::Anthropic => normalize_anthropic(&ctx, status, body_text),
+        DialectId::Gemini => normalize_gemini(&ctx, status, body_text),
     })
 }
 

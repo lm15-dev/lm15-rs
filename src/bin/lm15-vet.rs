@@ -7,19 +7,25 @@ use std::io::{self, BufRead, Write};
 
 use serde_json::{json, Map, Value};
 
+use lm15::auth::{parse_rfc3339, Credential};
+use lm15::cloud::sigv4::{self, AwsKeys, SigningRequest};
 use lm15::errors::{normalize_error, Lm15Error};
 use lm15::serde::{roundtrip, validate};
-use lm15::types::ValidationError;
+use lm15::types::{Request, ValidationError};
+use lm15::wire::{FixedClock, TransportRequest};
+use lm15::{Canonical, HostSettings};
 
 const LANGUAGE: &str = "rust";
 const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Ops this shim answers (`capabilities.ops`).
 const OPS: &[&str] = &[
+    "build_request",
     "capabilities",
     "explain_auth",
     "normalize_error",
     "serde_roundtrip",
+    "sigv4_sign",
     "validate",
 ];
 
@@ -128,6 +134,137 @@ fn op_explain_auth(msg: &Map<String, Value>) -> Result<Value, Failure> {
     Ok(json!({ "configured": report.configured, "steps": steps, "report_text": report_text }))
 }
 
+/// PROTOCOL.md: `credential` (an AUTH-2 value) wins over the `api_key`
+/// shorthand. The shim never reads environment keys.
+fn credential_of(msg: &Map<String, Value>) -> Result<Credential, Failure> {
+    if let Some(value @ Value::Object(_)) = msg.get("credential") {
+        return Ok(Credential::from_json(value)?);
+    }
+    let api_key = field_str(msg, "api_key")?;
+    Ok(Credential::api_key(api_key).map_err(Lm15Error::from)?)
+}
+
+/// `now` (RFC 3339, UTC) as Unix seconds: the clock for every
+/// time-dependent byte. Absent means the wall clock.
+fn clock_of(msg: &Map<String, Value>) -> Result<Option<FixedClock>, Failure> {
+    match msg.get("now") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => parse_rfc3339(text)
+            .map(|unix| Some(FixedClock(unix)))
+            .ok_or_else(|| ValidationError::value(format!("now is not RFC 3339: {text:?}")).into()),
+        Some(other) => {
+            Err(ValidationError::type_error(format!("now must be a string, got {other}")).into())
+        }
+    }
+}
+
+fn settings_of(msg: &Map<String, Value>) -> Option<HostSettings> {
+    let settings = msg.get("settings")?.as_object()?;
+    Some(
+        settings
+            .iter()
+            .map(|(k, v)| {
+                let value = match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (k.clone(), value)
+            })
+            .collect(),
+    )
+}
+
+/// The protocol's `build_request` shape: `url` without its query, decoded
+/// `params`, lowercase header names, the JSON body or `null`.
+fn transport_request_json(request: &TransportRequest) -> Value {
+    let params: Map<String, Value> = request
+        .params
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    let headers: Map<String, Value> = request
+        .headers
+        .iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), Value::String(v.clone())))
+        .collect();
+    json!({
+        "method": request.method,
+        "url": request.url,
+        "params": params,
+        "headers": headers,
+        "body": request.body.clone().unwrap_or(Value::Null),
+    })
+}
+
+fn op_build_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let provider = field_str(msg, "provider")?;
+    let credential = credential_of(msg)?;
+    let base_url = msg.get("base_url").and_then(Value::as_str);
+    let clock = clock_of(msg)?;
+    let lm = lm15::registry::adapter_for(
+        &provider,
+        credential,
+        base_url,
+        settings_of(msg),
+        clock.map(|c| Box::new(c) as Box<dyn lm15::wire::Clock + Send + Sync>),
+    )?;
+    let request = Request::from_json(field(msg, "canonical_request")?)?;
+    let stream = msg.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let transport = lm.build_request(&request, stream)?;
+    Ok(transport_request_json(&transport))
+}
+
+fn op_sigv4_sign(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let request = field(msg, "request")?
+        .as_object()
+        .ok_or_else(|| ValidationError::type_error("request must be an object"))?;
+    let method = field_str(request, "method")?;
+    let url = field_str(request, "url")?;
+    // A list value is the same name repeated on the wire, in that order.
+    let mut headers: Vec<(String, String)> = Vec::new();
+    if let Some(map) = request.get("headers").and_then(Value::as_object) {
+        for (name, value) in map {
+            match value {
+                Value::Array(values) => {
+                    for v in values {
+                        headers.push((name.clone(), v.as_str().unwrap_or_default().to_string()));
+                    }
+                }
+                Value::String(s) => headers.push((name.clone(), s.clone())),
+                other => headers.push((name.clone(), other.to_string())),
+            }
+        }
+    }
+    let body = request
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let credential = Credential::from_json(field(msg, "credential")?)?;
+    let keys = AwsKeys::from_credential(&credential)?;
+    let region = field_str(msg, "region")?;
+    let service = field_str(msg, "service")?;
+    let now = clock_of(msg)?.ok_or_else(|| ValidationError::type_error("missing field: now"))?;
+    let signing = SigningRequest {
+        method: &method,
+        url: &url,
+        headers: &headers,
+        payload: body.as_bytes(),
+    };
+    let signature = sigv4::sign(&signing, &keys, &region, &service, now.0);
+    let headers: Map<String, Value> = signature
+        .headers
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    Ok(json!({
+        "canonical_request": signature.canonical_request,
+        "string_to_sign": signature.string_to_sign,
+        "authorization": signature.authorization,
+        "headers": headers,
+    }))
+}
+
 fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
     match op {
         "capabilities" => Ok(op_capabilities()),
@@ -135,8 +272,16 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "validate" => op_validate(msg),
         "normalize_error" => op_normalize_error(msg),
         "explain_auth" => op_explain_auth(msg),
+        "build_request" => op_build_request(msg),
+        "sigv4_sign" => op_sigv4_sign(msg),
+        // Module 3b (cloud chains: token exchange, RS256) is not implemented.
+        "token_exchange_build" | "token_exchange_parse" => Err(Lm15Error::unsupported_feature(
+            format!("op {op:?} needs module 3b (cloud credential chains), which this port does not implement"),
+        )
+        .into()),
         other => Err(Lm15Error::unsupported_feature(format!(
-            "op {other:?} is not implemented by the Rust shim (modules 1-3a: capabilities, serde_roundtrip, validate, normalize_error, explain_auth)"
+            "op {other:?} is not implemented by the Rust shim (modules 1-4: {})",
+            OPS.join(", ")
         ))
         .into()),
     }

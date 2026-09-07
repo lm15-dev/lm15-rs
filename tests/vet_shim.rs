@@ -36,9 +36,11 @@ fn one_reply_per_request_with_the_same_id() {
         json!({"op": "serde_roundtrip", "id": "serde_roundtrip#5", "kind": "sticker", "value": {}}),
         json!({"op": "normalize_error", "id": "normalize_error#6", "provider": "openai", "status": 429,
                "body_text": "{\"error\":{\"message\":\"slow down\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\"}}"}),
-        json!({"op": "build_request", "id": "build_request#7", "provider": "openai"}),
+        json!({"op": "build_request", "id": "build_request#7", "provider": "openai", "api_key": "k", "stream": false,
+               "canonical_request": {"model": "gpt-5", "messages": [{"role": "user", "parts": [{"type": "text", "text": "hi"}]}]}}),
+        json!({"op": "token_exchange_parse", "id": "token#8", "provider": "aws-imds", "rung": "http-metadata", "status": 200, "body": {}, "now": "2026-09-03T00:00:00Z"}),
     ]);
-    assert_eq!(replies.len(), 7);
+    assert_eq!(replies.len(), 8);
 
     assert_eq!(replies[0]["id"], "capabilities#1");
     assert_eq!(replies[0]["ok"], true);
@@ -49,6 +51,8 @@ fn one_reply_per_request_with_the_same_id() {
         "serde_roundtrip",
         "validate",
         "normalize_error",
+        "build_request",
+        "sigv4_sign",
     ] {
         assert!(ops.iter().any(|o| o == op), "{op}");
     }
@@ -83,10 +87,104 @@ fn one_reply_per_request_with_the_same_id() {
         json!({"class": "RateLimitError", "code": "rate_limit", "provider_code": "rate_limit_exceeded", "message": "slow down"})
     );
 
+    // W0: the dialect stub refuses with the class and code on the reply.
     assert_eq!(replies[6]["id"], "build_request#7");
     assert_eq!(replies[6]["ok"], false);
     assert_eq!(replies[6]["error"]["type"], "UnsupportedFeatureError");
     assert_eq!(replies[6]["error"]["code"], "unsupported_feature");
+    assert!(replies[6]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("module 4 dialect openai-responses not yet implemented"));
+
+    // Module 3b ops answer the refusal that names the module.
+    assert_eq!(replies[7]["ok"], false);
+    assert_eq!(replies[7]["error"]["type"], "UnsupportedFeatureError");
+    assert!(replies[7]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("module 3b"));
+}
+
+/// `sigv4_sign` (PROTOCOL.md): list-valued headers repeat the name, a
+/// pinned `host`/`x-amz-date` is re-derived, the session token comes from
+/// the credential. `get-header-key-duplicate` and
+/// `get-vanilla-with-session-token` of the AWS suite.
+#[test]
+fn sigv4_sign_reproduces_the_suite_bytes() {
+    let credential = |token: Option<&str>| {
+        let mut c = json!({"kind": "aws", "access_key_id": "AKIDEXAMPLE",
+                           "secret_access_key": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"});
+        if let Some(t) = token {
+            c["session_token"] = json!(t);
+        }
+        c
+    };
+    let replies = run_shim(&[
+        json!({"op": "sigv4_sign", "id": "1",
+               "request": {"method": "GET", "url": "https://example.amazonaws.com/",
+                           "headers": {"Host": "example.amazonaws.com", "My-Header1": ["value2", "value2", "value1"], "X-Amz-Date": "20150830T123600Z"},
+                           "body": ""},
+               "credential": credential(None), "region": "us-east-1", "service": "service", "now": "2015-08-30T12:36:00Z"}),
+        json!({"op": "sigv4_sign", "id": "2",
+               "request": {"method": "GET", "url": "https://example.amazonaws.com/",
+                           "headers": {"Host": "example.amazonaws.com", "X-Amz-Date": "20150830T123600Z"}, "body": ""},
+               "credential": credential(Some("6e86291e8372ff2a2260956d9b8aae1d763fbf315fa00fa31553b73ebf194267")),
+               "region": "us-east-1", "service": "service", "now": "2015-08-30T12:36:00Z"}),
+        json!({"op": "sigv4_sign", "id": "3",
+               "request": {"method": "GET", "url": "https://example.amazonaws.com/", "headers": {}, "body": ""},
+               "credential": {"kind": "api_key", "value": "k"},
+               "region": "us-east-1", "service": "service", "now": "2015-08-30T12:36:00Z"}),
+    ]);
+    assert_eq!(replies[0]["ok"], true);
+    assert_eq!(
+        replies[0]["result"]["canonical_request"],
+        "GET\n/\n\nhost:example.amazonaws.com\nmy-header1:value2,value2,value1\nx-amz-date:20150830T123600Z\n\nhost;my-header1;x-amz-date\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        replies[0]["result"]["authorization"],
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;my-header1;x-amz-date, Signature=c9d5ea9f3f72853aea855b47ea873832890dbdd183b4468f858259531a5138ea"
+    );
+    assert_eq!(
+        replies[1]["result"]["authorization"],
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token, Signature=07ec1639c89043aa0e3e2de82b96708f198cceab042d4a97044c66dd9f74e7f8"
+    );
+    assert_eq!(
+        replies[1]["result"]["headers"]["x-amz-security-token"],
+        "6e86291e8372ff2a2260956d9b8aae1d763fbf315fa00fa31553b73ebf194267"
+    );
+    assert_eq!(replies[2]["ok"], false);
+    assert_eq!(replies[2]["error"]["type"], "NotConfiguredError");
+}
+
+/// `build_request` on a cloud door: `credential`, `now` and `settings` are
+/// honoured and the reply is the not-implemented refusal, never a crash.
+#[test]
+fn build_request_binds_cloud_door_inputs_before_the_stub_refuses() {
+    let replies = run_shim(&[
+        json!({"op": "build_request", "id": "1", "provider": "bedrock-chat", "api_key": "test-key-123",
+               "credential": {"kind": "aws", "access_key_id": "AKIDEXAMPLE", "secret_access_key": "s"},
+               "now": "2026-09-03T16:47:36Z", "settings": {"region": "us-east-1"},
+               "base_url": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1", "stream": true,
+               "canonical_request": {"model": "openai.gpt-oss-20b-1:0", "messages": [{"role": "user", "parts": [{"type": "text", "text": "hi"}]}]}}),
+        // A required setting missing: NotConfiguredError, not a crash.
+        json!({"op": "build_request", "id": "2", "provider": "bedrock-chat", "api_key": "k", "stream": false,
+               "canonical_request": {"model": "m", "messages": [{"role": "user", "parts": [{"type": "text", "text": "hi"}]}]}}),
+        // An invalid canonical request is a ValueError (module 1 validation).
+        json!({"op": "build_request", "id": "3", "provider": "openai", "api_key": "k", "stream": false,
+               "canonical_request": {"model": "", "messages": []}}),
+        json!({"op": "capabilities", "id": "4"}),
+    ]);
+    assert_eq!(replies.len(), 4);
+    assert_eq!(replies[0]["error"]["type"], "UnsupportedFeatureError");
+    assert!(replies[0]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("openai-chat"));
+    assert_eq!(replies[1]["error"]["type"], "NotConfiguredError");
+    assert_eq!(replies[1]["error"]["code"], "not_configured");
+    assert_eq!(replies[2]["error"]["type"], "ValueError");
+    assert_eq!(replies[3]["ok"], true);
 }
 
 #[test]

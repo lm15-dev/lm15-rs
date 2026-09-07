@@ -101,6 +101,22 @@ pub fn format_rfc3339(unix: i64) -> String {
     )
 }
 
+/// Unix seconds as the SigV4 pair (`YYYYMMDDTHHMMSSZ`, `YYYYMMDD`)
+/// (`lm15/cloud/sigv4.py:334-335`).
+pub(crate) fn format_amz_date(unix: i64) -> (String, String) {
+    let days = unix.div_euclid(86_400);
+    let rest = unix.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let date = format!("{year:04}{month:02}{day:02}");
+    let stamp = format!(
+        "{date}T{:02}{:02}{:02}Z",
+        rest / 3600,
+        (rest % 3600) / 60,
+        rest % 60
+    );
+    (stamp, date)
+}
+
 // Howard Hinnant's proleptic-Gregorian day arithmetic.
 pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let y = if month <= 2 { year - 1 } else { year };
@@ -142,6 +158,11 @@ mod tests {
         }
         assert_eq!(parse_rfc3339("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(parse_rfc3339("2000-03-01T00:00:00Z"), Some(951_868_800));
+        let unix = parse_rfc3339("2015-08-30T12:36:00Z").unwrap();
+        assert_eq!(
+            format_amz_date(unix),
+            ("20150830T123600Z".to_string(), "20150830".to_string())
+        );
     }
 
     #[test]

@@ -3,7 +3,9 @@
 //!
 //! - AUTH-2 credential values ([`Credential`]) and providers
 //!   ([`CredentialProvider`]), with the D1 scheme selection ([`select_scheme`]);
-//! - AUTH-10 access policies as data ([`AccessPolicy`], [`access_policy`]);
+//! - AUTH-10 access policies as data ([`AccessPolicy`], [`access_policy`]),
+//!   every column of the reference table since module 4 ([`HostSpec`],
+//!   [`EndpointSupport`], headers, backend, base URL);
 //! - AUTH-1 resolution for the `key`, `oauth` and `oauth-unless-explicit`
 //!   policies, explained rung by rung by [`explain_auth`] (AUTH-7);
 //! - AUTH-8 read side of the borrowed CLI files and the lm15-owned store.
@@ -32,8 +34,16 @@ pub use credential::{
 pub use doctor::{explain_auth, ExplainOptions, Report, Step, StepState};
 pub use error::AuthError;
 pub use policy::{
-    access_policy, canonical_provider, known_providers, AccessPolicy, CredentialPolicy,
-    ACCESS_POLICIES,
+    access_policy, canonical_provider, known_providers, AccessPolicy, AnthropicVersionIn,
+    CredentialPolicy, EndpointSupport, HostSetting, HostSpec, ModelPlacement, StreamFraming,
+    ACCESS_POLICIES, ANTHROPIC_API, AWS_ANTHROPIC, AZURE, AZURE_ANTHROPIC, AZURE_CHAT,
+    BEDROCK_ANTHROPIC, BEDROCK_CHAT, BEDROCK_MANTLE_CHAT, CLAUDE_CODE, DEEPSEEK,
+    DEEPSEEK_ANTHROPIC, DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT, DEFAULT_CLAUDE_CODE_VERSION,
+    DEFAULT_CODEX_BASE_URL, DEFAULT_CODEX_CLIENT_VERSION, DEFAULT_CODEX_INSTRUCTIONS,
+    DEFAULT_CODEX_ORIGINATOR, DEFAULT_XAI_BASE_URL, GEMINI_API, GROQ, META, META_ANTHROPIC,
+    META_CHAT, MOONSHOTAI, MOONSHOTAI_ANTHROPIC, MOONSHOTAI_RESPONSES, OLLAMA, OPENAI_API,
+    OPENAI_CHAT_API, OPENAI_CODEX, OPENROUTER, SGLANG, VERTEX, VERTEX_ANTHROPIC, VERTEX_EXPRESS,
+    VLLM, XAI, ZAI,
 };
 pub use stores::{
     read_claude_code_credential, read_codex_cli_credential, read_xai_credential, Expiry,
