@@ -1,7 +1,7 @@
 //! OpenAI Responses compat (`lm15/compat.py:48-297`, `:1047-1118`). Data
 //! only: the Responses dialect (module 4 W2) consults the resolved value.
 
-use super::{IncludeOmit, JsonObject, Knob, OpenAICacheControl};
+use super::{IncludeOmit, JsonObject, Knob, OpenAICacheControl, ToolResultMedia};
 
 /// `lm15/compat.py:50` `OpenAIResponsesDeveloperRole`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -171,6 +171,8 @@ pub struct OpenAIResponsesCompat {
     pub commentary_phase: Option<Knob<OpenAIResponsesCommentaryPhase>>,
     pub edit_image_field: Option<Knob<OpenAIResponsesEditImageField>>,
     pub builtin_tools: Option<Knob<OpenAIResponsesBuiltinTools>>,
+    /// MAP-10: media inside `function_call_output` (`lm15/compat.py` `tool_result_media`).
+    pub tool_result_media: Option<Knob<ToolResultMedia>>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
 }
@@ -186,6 +188,7 @@ impl OpenAIResponsesCompat {
         commentary_phase: None,
         edit_image_field: None,
         builtin_tools: None,
+        tool_result_media: None,
         routing: None,
         extensions: None,
     };
@@ -211,6 +214,7 @@ impl OpenAIResponsesCompat {
             commentary_phase: over.commentary_phase.or(self.commentary_phase),
             edit_image_field: over.edit_image_field.or(self.edit_image_field),
             builtin_tools: over.builtin_tools.or(self.builtin_tools),
+            tool_result_media: over.tool_result_media.or(self.tool_result_media),
             routing: over.routing.clone().or_else(|| self.routing.clone()),
             extensions: match (&self.extensions, &over.extensions) {
                 (None, b) => b.clone(),
@@ -312,6 +316,7 @@ impl OpenAIResponsesCompat {
                 OpenAIResponsesEditImageField::parse,
             )?,
             builtin_tools: knob(object, "builtin_tools", OpenAIResponsesBuiltinTools::parse)?,
+            tool_result_media: knob(object, "tool_result_media", ToolResultMedia::parse)?,
             routing: object_field(object, "routing")?,
             extensions: object_field(object, "extensions")?,
         })
@@ -344,6 +349,9 @@ impl OpenAIResponsesCompat {
                 OpenAIResponsesEditImageField::Array,
             ),
             builtin_tools: Knob::resolve(self.builtin_tools, OpenAIResponsesBuiltinTools::OpenAI),
+            // The documented wire takes input_image/input_file in the output
+            // array (openai gpt-5.4 exact, 2026-09-07).
+            tool_result_media: Knob::resolve(self.tool_result_media, ToolResultMedia::Native),
             routing: self.routing.clone(),
             extensions: self.extensions.clone(),
         }
@@ -362,6 +370,7 @@ pub struct ResolvedOpenAIResponsesCompat {
     pub commentary_phase: OpenAIResponsesCommentaryPhase,
     pub edit_image_field: OpenAIResponsesEditImageField,
     pub builtin_tools: OpenAIResponsesBuiltinTools,
+    pub tool_result_media: ToolResultMedia,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
 }
@@ -397,6 +406,23 @@ const fn preset(
 /// The single-server knobs over a common preset (a const item cannot use
 /// struct-update syntax over a value with a destructor).
 const fn with(
+    compat: OpenAIResponsesCompat,
+    commentary_phase: Option<OpenAIResponsesCommentaryPhase>,
+    edit_image_field: Option<OpenAIResponsesEditImageField>,
+    builtin_tools: Option<OpenAIResponsesBuiltinTools>,
+) -> OpenAIResponsesCompat {
+    media(compat_with(compat, commentary_phase, edit_image_field, builtin_tools), None)
+}
+
+/// MAP-10 verdict on a preset (`None` keeps the dialect default, native).
+const fn media(mut compat: OpenAIResponsesCompat, verdict: Option<ToolResultMedia>) -> OpenAIResponsesCompat {
+    if let Some(verdict) = verdict {
+        compat.tool_result_media = Some(Set(verdict));
+    }
+    compat
+}
+
+const fn compat_with(
     mut compat: OpenAIResponsesCompat,
     commentary_phase: Option<OpenAIResponsesCommentaryPhase>,
     edit_image_field: Option<OpenAIResponsesEditImageField>,
@@ -427,46 +453,67 @@ pub const OPENAI_RESPONSES_PRESETS: &[(&str, OpenAIResponsesCompat)] = &[
     ),
     (
         "openrouter",
-        preset(
+        media(
+            preset(
             Developer,
             MaxTokens,
             Fmt::Openrouter,
             OpenAICacheControl::OpenAI,
         ),
+            Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
+        )
     ),
     (
         "ollama",
-        preset(System, MaxTokens, Fmt::None, OpenAICacheControl::None),
+        media(
+            preset(System, MaxTokens, Fmt::None, OpenAICacheControl::None),
+            Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
+        )
     ),
     (
         "vllm",
-        preset(
+        media(
+            preset(
             System,
             MaxTokens,
             Fmt::ReasoningEffort,
             OpenAICacheControl::None,
         ),
+            Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
+        )
     ),
     (
         "sglang",
-        preset(
+        media(
+            preset(
             System,
             MaxTokens,
             Fmt::ReasoningEffort,
             OpenAICacheControl::None,
         ),
+            Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
+        )
     ),
     (
         "qwen",
-        preset(System, MaxTokens, Fmt::Qwen, OpenAICacheControl::None),
+        media(
+            preset(System, MaxTokens, Fmt::Qwen, OpenAICacheControl::None),
+            Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
+        )
     ),
     (
         "deepseek",
-        preset(System, MaxTokens, Fmt::Deepseek, OpenAICacheControl::None),
+        media(
+            preset(System, MaxTokens, Fmt::Deepseek, OpenAICacheControl::None),
+            Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
+        )
     ),
     (
         "zai",
-        preset(System, MaxTokens, Fmt::Zai, OpenAICacheControl::None),
+        media(
+            preset(System, MaxTokens, Fmt::Zai, OpenAICacheControl::None),
+            Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
+        )
     ),
     // Meta Model API (`lm15/compat.py:232-242`).
     (
@@ -486,7 +533,8 @@ pub const OPENAI_RESPONSES_PRESETS: &[(&str, OpenAIResponsesCompat)] = &[
     // Moonshot AI over the Responses wire (`lm15/compat.py:251-259`).
     (
         "moonshotai",
-        with(
+        media(
+            with(
             preset(
                 Developer,
                 MaxOutputTokens,
@@ -497,6 +545,8 @@ pub const OPENAI_RESPONSES_PRESETS: &[(&str, OpenAIResponsesCompat)] = &[
             None,
             Some(OpenAIResponsesBuiltinTools::Verbatim),
         ),
+            Some(ToolResultMedia::Images), // MAP-10: images received (kimi-k3); input_file is 400
+        )
     ),
 ];
 

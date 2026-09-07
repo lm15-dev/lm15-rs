@@ -29,6 +29,7 @@ use crate::types::{
 };
 use crate::wire::BuildContext;
 
+use crate::dialects::content;
 use super::{invalid, unsupported};
 
 /// The `data.value` of a `gemini:thought_signature` state, when present.
@@ -153,12 +154,16 @@ fn function_call(part: &ToolCallPart, signature: Option<String>) -> Value {
     Value::Object(out)
 }
 
-/// The function name a result answers: the part's own `name`, else the
-/// name of the tool call with the same id earlier in the transcript, else
-/// the reference's placeholder `"tool"` (`lm15/providers/gemini.py:591`).
-fn function_response_name(part: &ToolResultPart, request: &Request) -> String {
+/// The function name a result answers (MAP-10 rule 6): the part's own
+/// `name`, else the name of the tool call with the same id earlier in the
+/// transcript, else a raise — never `"tool"`.
+fn function_response_name(
+    part: &ToolResultPart,
+    request: &Request,
+    cx: &BuildContext<'_>,
+) -> Result<String, Lm15Error> {
     if let Some(name) = &part.name {
-        return name.clone();
+        return Ok(name.clone());
     }
     request
         .messages
@@ -169,35 +174,76 @@ fn function_response_name(part: &ToolResultPart, request: &Request) -> String {
             Part::ToolCall(call) if call.id == part.id => Some(call.name.clone()),
             _ => None,
         })
-        .unwrap_or_else(|| "tool".to_string())
+        .ok_or_else(|| {
+            unsupported(
+                cx,
+                format!(
+                    "tool_result {:?} needs a function name on the Gemini wire and no preceding assistant tool_call \
+                     with that id is in the transcript; set ToolResultPart.name (MAP-10 rule 6)",
+                    part.id
+                ),
+            )
+        })
 }
 
+/// `functionResponse` (MAP-10 on this wire; `lm15/providers/gemini.py`
+/// `_function_response`): text in `response.result` (`response.error` when
+/// is_error; `{}` when the media is the whole result), media nested under
+/// `parts[]` as inlineData/fileData in the caller's order. Every model
+/// takes the shape; Gemini 2.5 answers HTTP 400 itself.
 fn function_response(
     part: &ToolResultPart,
     request: &Request,
     cx: &BuildContext<'_>,
 ) -> Result<Value, Lm15Error> {
-    if part.is_error {
-        return Err(unsupported(
-            cx,
-            format!(
-                "tool_result {:?} carries is_error=true — functionResponse has no error flag; put the failure in the result text (Anthropic carries it)",
-                part.id
-            ),
-        ));
+    let (media, text): (Vec<&Part>, Vec<Part>) = {
+        let mut media = Vec::new();
+        let mut text = Vec::new();
+        for p in &part.content {
+            if content::is_media(p) {
+                media.push(p);
+            } else {
+                text.push(p.clone());
+            }
+        }
+        (media, text)
+    };
+    for p in &media {
+        if !matches!(p, Part::Image(_) | Part::Document(_)) {
+            return Err(unsupported(
+                cx,
+                format!(
+                    "a {} part in tool_result {:?} cannot reach a functionResponse — multimodal function responses \
+                     take images (png/jpeg/webp) and documents (pdf, text/plain) only (MAP-10)",
+                    p.type_name(),
+                    part.id
+                ),
+            ));
+        }
     }
-    let text = text_only(&part.content, "a functionResponse", cx)?;
+    let name = function_response_name(part, request, cx)?;
+    let text = content::parts_to_text(&text, cx.provider, "functionResponse.response")?;
     let mut response = Map::new();
-    response.insert("result".into(), Value::String(text));
+    if part.is_error {
+        response.insert("error".into(), Value::String(text));
+    } else if !media.is_empty() && text.is_empty() && part.content.iter().all(content::is_media) {
+        // the media IS the result; no fabricated text (live 2026-09-07: accepted)
+    } else {
+        response.insert("result".into(), Value::String(text));
+    }
     let mut fr = Map::new();
     if !part.id.is_empty() {
         fr.insert("id".into(), Value::String(part.id.clone()));
     }
-    fr.insert(
-        "name".into(),
-        Value::String(function_response_name(part, request)),
-    );
+    fr.insert("name".into(), Value::String(name));
     fr.insert("response".into(), Value::Object(response));
+    if !media.is_empty() {
+        let mut parts = Vec::with_capacity(media.len());
+        for p in media {
+            parts.push(self::part(p, request, cx)?);
+        }
+        fr.insert("parts".into(), Value::Array(parts));
+    }
     let mut out = Map::new();
     out.insert("functionResponse".into(), Value::Object(fr));
     Ok(Value::Object(out))

@@ -56,6 +56,46 @@ impl<T: Copy> Knob<T> {
     }
 }
 
+/// MAP-10 (`lm15/compat.py` `ToolResultMedia`): what a ToolResultPart's media
+/// parts may become on the wire. `Native` = images and documents as native
+/// blocks inside the result item; `Images` = images only (documents raise);
+/// `Reject` = every media part raises before the wire. Measured per preset:
+/// lm15-contract/research/tool-result-content/30-model.md.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolResultMedia {
+    Native,
+    Images,
+    Reject,
+}
+
+impl ToolResultMedia {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ToolResultMedia::Native => "native",
+            ToolResultMedia::Images => "images",
+            ToolResultMedia::Reject => "reject",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "native" => Some(ToolResultMedia::Native),
+            "images" => Some(ToolResultMedia::Images),
+            "reject" => Some(ToolResultMedia::Reject),
+            _ => None,
+        }
+    }
+
+    /// Whether a part kind (`Part::type_name`) may ride inside a result item.
+    pub fn admits(self, kind: &str) -> bool {
+        match self {
+            ToolResultMedia::Native => matches!(kind, "image" | "document"),
+            ToolResultMedia::Images => kind == "image",
+            ToolResultMedia::Reject => false,
+        }
+    }
+}
+
 /// The two-value knobs shared by the OpenAI dialects (`lm15/compat.py:68-69`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IncludeOmit {

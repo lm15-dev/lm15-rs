@@ -2,7 +2,7 @@
 //! the chat dialect (module 4 W3) consults the resolved value, after
 //! `for_model` applied the door's per-model overrides.
 
-use super::{IncludeOmit, JsonObject, Knob, OpenAICacheControl, ReasoningEfforts, SendReject};
+use super::{IncludeOmit, JsonObject, Knob, OpenAICacheControl, ReasoningEfforts, SendReject, ToolResultMedia};
 use crate::types::ReasoningEffort;
 
 /// `lm15/compat.py:309` `OpenAIChatInstructionRole`.
@@ -125,6 +125,8 @@ pub struct OpenAIChatCompat {
     pub assistant_reasoning_content: Option<Knob<OpenAIChatAssistantReasoningContent>>,
     pub strict_tools: Option<Knob<IncludeOmit>>,
     pub builtin_tools: Option<Knob<OpenAIChatBuiltinTools>>,
+    /// MAP-10: media inside a tool row (`lm15/compat.py` `tool_result_media`).
+    pub tool_result_media: Option<Knob<ToolResultMedia>>,
     pub cache_control: Option<Knob<OpenAICacheControl>>,
     pub user_field: Option<Knob<OpenAIChatUserField>>,
     pub forced_tool_choice: Option<Knob<OpenAIChatForcedToolChoice>>,
@@ -151,6 +153,7 @@ pub struct ChatModelOverride {
     pub forced_tool_choice: Option<Knob<OpenAIChatForcedToolChoice>>,
     pub json_schema: Option<Knob<OpenAIChatJsonSchema>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
+    pub tool_result_media: Option<Knob<ToolResultMedia>>,
 }
 
 impl ChatModelOverride {
@@ -167,6 +170,7 @@ impl ChatModelOverride {
         forced_tool_choice: None,
         json_schema: None,
         reasoning_efforts: None,
+        tool_result_media: None,
     };
 }
 
@@ -182,6 +186,7 @@ impl OpenAIChatCompat {
         assistant_reasoning_content: None,
         strict_tools: None,
         builtin_tools: None,
+        tool_result_media: None,
         cache_control: None,
         user_field: None,
         forced_tool_choice: None,
@@ -224,7 +229,8 @@ impl OpenAIChatCompat {
                 user_field,
                 forced_tool_choice,
                 json_schema,
-                reasoning_efforts
+                reasoning_efforts,
+                tool_result_media
             );
         }
         out
@@ -260,6 +266,9 @@ impl OpenAIChatCompat {
             ),
             strict_tools: Knob::resolve(self.strict_tools, IncludeOmit::Omit),
             builtin_tools: Knob::resolve(self.builtin_tools, OpenAIChatBuiltinTools::Reject),
+            // The base Chat wire's tool row takes text only (OpenAI's own schema;
+            // a 200 with the image not received on gpt-5.4, 2026-09-07).
+            tool_result_media: Knob::resolve(self.tool_result_media, ToolResultMedia::Reject),
             cache_control: Knob::resolve(self.cache_control, OpenAICacheControl::OpenAI),
             user_field: Knob::resolve(self.user_field, OpenAIChatUserField::User),
             forced_tool_choice: Knob::resolve(self.forced_tool_choice, SendReject::Send),
@@ -284,6 +293,7 @@ pub struct ResolvedOpenAIChatCompat {
     pub assistant_reasoning_content: OpenAIChatAssistantReasoningContent,
     pub strict_tools: IncludeOmit,
     pub builtin_tools: OpenAIChatBuiltinTools,
+    pub tool_result_media: ToolResultMedia,
     pub cache_control: OpenAICacheControl,
     pub user_field: OpenAIChatUserField,
     pub forced_tool_choice: OpenAIChatForcedToolChoice,
@@ -351,6 +361,9 @@ const fn with(
     if knobs.reasoning_efforts.is_some() {
         compat.reasoning_efforts = knobs.reasoning_efforts;
     }
+    if knobs.tool_result_media.is_some() {
+        compat.tool_result_media = knobs.tool_result_media;
+    }
     if let Some(tools) = builtin_tools {
         compat.builtin_tools = Some(Set(tools));
     }
@@ -398,7 +411,15 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
     // xAI, pinned live 2026-09-01 against grok-4.6 (`:544-552`).
     (
         "xai",
-        preset(MaxTokens, Think::Deepseek, OpenAICacheControl::None),
+        with(
+            preset(MaxTokens, Think::Deepseek, OpenAICacheControl::None),
+            ChatModelOverride {
+                tool_result_media: Some(Set(ToolResultMedia::Images)), // MAP-10: image tool results received live 2026-09-07
+                ..ChatModelOverride::NONE
+            },
+            None,
+            &[],
+        )
     ),
     (
         "vllm",
@@ -482,6 +503,8 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
         with(
             preset(MaxTokens, Think::Deepseek, OpenAICacheControl::None),
             ChatModelOverride {
+                tool_result_media: Some(Set(ToolResultMedia::Images)), // MAP-10: image tool results received live 2026-09-07
+
                 thinking_replay: Some(Set(OpenAIChatThinkingReplay::Native)),
                 user_field: Some(Set(OpenAIChatUserField::UserId)),
                 forced_tool_choice: Some(Set(SendReject::Reject)),
@@ -520,6 +543,8 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
                 OpenAICacheControl::OpenAIImplicit,
             ),
             ChatModelOverride {
+                tool_result_media: Some(Set(ToolResultMedia::Images)), // MAP-10: image tool results received live 2026-09-07
+
                 thinking_replay: Some(Set(OpenAIChatThinkingReplay::Native)),
                 user_field: Some(Set(OpenAIChatUserField::SafetyIdentifier)),
                 reasoning_efforts: Some(&[

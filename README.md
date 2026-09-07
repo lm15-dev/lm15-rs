@@ -14,7 +14,7 @@ grade the port against any other commit.
 | 2 — errors | spec/vocabularies.md ErrorCode + class hierarchy; `normalize_error` for every provider in `errors/cases/` | done — `--direction error` 84 pass / 0 fail / 0 skip |
 | 3a core auth | spec/auth.md AUTH-1 (`key`, `oauth`, `oauth-unless-explicit`), AUTH-2 credential values + D1 scheme selection, AUTH-5, AUTH-7 doctor, AUTH-8 read side, AUTH-10 policy table | done — `--direction auth --auth-scope core` 26 pass / 0 fail / 0 skip; `tests/auth_resolution_contract.rs` replays the same `auth/resolution.json` from the contract checkout with the same core/cloud split |
 | 3b cloud chains | AUTH-1 `aws-chain`/`azure-chain`/`gcp-chain`, AUTH-11 rung kinds, SigV4, RS256 | SigV4 done (module 4 needs it): `--direction token` 34 pass / 9 fail — the 34 `sigv4.*` vectors pass, the 9 `token.*` vectors (`token_exchange_build` / `token_exchange_parse`: GCP service account, Azure certificate/secret/MSI, GCP metadata, AWS credential_process/IMDS) answer `UnsupportedFeatureError` naming module 3b. Cloud-chain providers are in the policy table as data; `explain_auth` answers `AuthError::NotImplemented` (class `NotConfiguredError`) for them. The 11 cloud auth cases are asserted to answer that error and counted, not skipped |
-| 4 — dialects, request side | AUTH-10 policy table, hosts, settings, host rewrites; MAP-5..MAP-8 refusals; compat presets; the four dialects (`src/dialects/{anthropic,openai_responses,openai_chat,gemini}`) | done — `--direction request` 297 pass / 0 fail / 1 skip (`openai.computer_use`, no canonical_request) at the pin: anthropic-family 70, Responses-family 81, Chat-family 112, gemini 34. The per-dialect sections below state each dialect's deviations |
+| 4 — dialects, request side | AUTH-10 policy table, hosts, settings, host rewrites; MAP-5..MAP-8 refusals; **MAP-10 tool-result content** (`src/dialects/content.rs`, the `tool_result_media` knob on the three compat tables); compat presets; the four dialects (`src/dialects/{anthropic,openai_responses,openai_chat,gemini}`) | done — `--direction request` 361 pass / 0 fail / 1 skip (`openai.computer_use`, no canonical_request) at the pin, including the 64 MAP-10 cases (native and raise). The per-dialect sections below state each dialect's deviations |
 | 5–9 — response side/streams, models, files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
 
 Gates for modules 1–4, from the contract checkout:
@@ -102,6 +102,16 @@ reference; the provider string is resolved through `lm15::registry`.
 ## Stated deviations
 
 Each row names the rule it deviates from (playbooks/port.md rule 8).
+
+- **Gemini `$ref` interleave** (MAP-10 stated deviation, same as the
+  reference): a tool result's text goes in `functionResponse.response`
+  and its media in `functionResponse.parts`, in the caller's order; the
+  documented `{"$ref": "<displayName>"}` interleave is not emitted.
+- **`build_request` re-validates** (api-family: constructors validate):
+  `Request` is a plain struct a caller can edit after `Request::new`, so
+  the public build boundary runs `validate()` again and answers
+  `InvalidRequestError`. One extra pass per build; the alternative
+  (private fields, checked setters) would cost every caller more.
 
 - **Dependencies** (api-family rule 5): the port uses `serde` and
   `serde_json`, plus `sha2` and `hmac` (RustCrypto) for SigV4. Zero-dep is

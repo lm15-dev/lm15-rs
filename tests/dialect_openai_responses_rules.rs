@@ -905,7 +905,10 @@ fn a_path_addressed_part_is_read_and_inlined_or_refused() {
 }
 
 #[test]
-fn tool_results_render_as_text_or_their_part_types() {
+fn tool_results_carry_media_as_the_documented_array() {
+    // MAP-10: text-only stays a string; a result with media is the
+    // input_text/input_image/input_file array, order kept; is_error rides as
+    // the `[error] ` prefix (rule 5). The type-name placeholder is gone.
     let b = body(build(
         "openai",
         json!({"model": "m", "messages": [user("q"),
@@ -913,11 +916,13 @@ fn tool_results_render_as_text_or_their_part_types() {
             {"role": "tool", "parts": [
                 {"type": "tool_result", "id": "c1", "content": [
                     {"type": "text", "text": "one"},
-                    {"type": "citation", "title": "T", "url": "https://x"},
-                    {"type": "image", "media_type": "image/png", "url": "https://x/a.png"}]},
+                    {"type": "citation", "title": "T", "url": "https://x"}]},
                 {"type": "tool_result", "id": "c1", "content": [
                     {"type": "image", "media_type": "image/png", "url": "https://x/a.png"},
-                    {"type": "text", "text": ""}]}]}]}),
+                    {"type": "text", "text": "after"},
+                    {"type": "document", "media_type": "application/pdf", "data": "UERG"}]},
+                {"type": "tool_result", "id": "c1", "is_error": true, "content": [
+                    {"type": "image", "media_type": "image/png", "url": "https://x/a.png"}]}]}]}),
         false,
     ));
     assert_eq!(
@@ -927,8 +932,25 @@ fn tool_results_render_as_text_or_their_part_types() {
     assert_eq!(b["input"][2]["output"], json!("one\nT — https://x"));
     assert_eq!(
         b["input"][3]["output"],
-        json!("[{\"type\": \"image\"}, {\"type\": \"text\"}]")
+        json!([
+            {"type": "input_image", "image_url": "https://x/a.png"},
+            {"type": "input_text", "text": "after"},
+            {"type": "input_file", "filename": "file.pdf", "file_data": "data:application/pdf;base64,UERG"}
+        ])
     );
+    assert_eq!(
+        b["input"][4]["output"],
+        json!([{"type": "input_text", "text": "[error]"}, {"type": "input_image", "image_url": "https://x/a.png"}])
+    );
+    assert!(!serde_json::to_string(&b).unwrap().contains("[{\"type\": \"image\"}"));
+    // the moonshotai preset admits images, not documents; a reject preset nothing
+    let doc = json!({"model": "kimi-k3", "messages": [user("q"),
+        {"role": "assistant", "parts": [{"type": "tool_call", "id": "c1", "name": "f", "input": {}}]},
+        {"role": "tool", "parts": [{"type": "tool_result", "id": "c1", "content": [
+            {"type": "document", "media_type": "application/pdf", "data": "UERG"}]}]}]});
+    let err = build("moonshotai-responses", doc, false).unwrap_err();
+    assert_eq!(err.class_name(), "UnsupportedFeatureError");
+    assert!(err.message().contains("carries images but not document"), "{err}");
 }
 
 #[test]

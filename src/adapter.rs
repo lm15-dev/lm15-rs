@@ -88,6 +88,14 @@ impl ProviderLM {
         request: &Request,
         stream: bool,
     ) -> Result<TransportRequest, Lm15Error> {
+        // The public boundary: a `Request` is a plain struct a caller may
+        // have edited after `Request::new`; the dialects assume the
+        // invariants (INV-*) hold and never re-check them.
+        request.validate().map_err(|err| {
+            let mut meta = ErrorMeta::new(format!("{}: {}", self.provider, err.message));
+            meta.provider = Some(self.provider.clone());
+            Lm15Error::InvalidRequestError(meta)
+        })?;
         let cx = BuildContext {
             provider: &self.provider,
             policy: self.policy,

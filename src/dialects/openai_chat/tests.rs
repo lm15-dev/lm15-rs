@@ -1062,7 +1062,7 @@ fn user_content_text_and_image_forms() {
     );
     req.messages =
         vec![Message::user(vec![Part::Image(ImagePart::from_file_id("f1").unwrap())]).unwrap()];
-    refuses(build(OpenAIChatCompat::EMPTY, &req), "file_id or path");
+    refuses(build(OpenAIChatCompat::EMPTY, &req), "addressed by file_id");
     req.messages = vec![Message::user(vec![
         Part::text("hear"),
         Part::Audio(crate::types::AudioPart::from_data("audio/wav", "AAAA").unwrap()),
@@ -1118,22 +1118,40 @@ fn assistant_media_refuses_and_citations_are_dropped() {
 }
 
 #[test]
-fn tool_result_without_text_names_its_part_types() {
+fn tool_result_media_follows_the_preset_and_never_a_placeholder() {
+    // MAP-10: the base wire's tool row is text-only → a raise naming the
+    // door; a preset that proved the array form live (xai) sends
+    // text + image_url blocks; a document raises on an `images` preset.
+    let image = Part::Image(ImagePart::from_url("https://img").unwrap());
     let mut req = tool_loop();
     req.messages[2] = Message::new(
         crate::types::Role::Tool,
-        vec![Part::tool_result(
-            "c1",
-            vec![Part::Image(ImagePart::from_url("https://img").unwrap())],
-        )
-        .unwrap()],
+        vec![Part::tool_result("c1", vec![Part::text("panel"), image.clone()]).unwrap()],
     )
     .unwrap();
-    let body = build(OpenAIChatCompat::EMPTY, &req).unwrap();
+    refuses(build(OpenAIChatCompat::EMPTY, &req), "text-only tool results");
+    let body = build(preset("xai"), &req).unwrap();
     assert_eq!(
         body["messages"][2]["content"],
-        json!("[{\"type\": \"image\"}]")
+        json!([{"type": "text", "text": "panel"}, {"type": "image_url", "image_url": {"url": "https://img"}}])
     );
+    assert!(!body.to_string().contains("[{\"type\": \"image\"}]"));
+    // text-only stays a string; is_error rides as the prefix (rule 5)
+    let mut err = crate::types::ToolResultPart::new("c1", "boom").unwrap();
+    err.is_error = true;
+    req.messages[2] = Message::new(crate::types::Role::Tool, vec![Part::ToolResult(err)]).unwrap();
+    assert_eq!(build(preset("xai"), &req).unwrap()["messages"][2]["content"], json!("[error] boom"));
+    let document = Part::Document(crate::types::DocumentPart {
+        media_type: "application/pdf".into(),
+        data: Some("UERG".into()),
+        ..Default::default()
+    });
+    req.messages[2] = Message::new(
+        crate::types::Role::Tool,
+        vec![Part::tool_result("c1", vec![document]).unwrap()],
+    )
+    .unwrap();
+    refuses(build(preset("xai"), &req), "carries images but not document");
 }
 
 #[test]

@@ -11,7 +11,8 @@ use std::path::Path;
 
 use serde_json::{json, Map, Value};
 
-use crate::compat::AnthropicThinkingReplay;
+use crate::compat::{AnthropicThinkingReplay, ToolResultMedia};
+use crate::dialects::content;
 use crate::errors::Lm15Error;
 use crate::types::{
     base64_encode, base64_payload, continuation_data, CitationPart, DocumentPart, ImagePart,
@@ -36,6 +37,8 @@ pub const DEVELOPER_PREFIX: &str = "[developer]";
 pub struct PartContext<'a> {
     pub refuse: &'a Refuse<'a>,
     pub thinking_replay: AnthropicThinkingReplay,
+    /// MAP-10: what a tool result's media parts may become on this preset.
+    pub tool_result_media: ToolResultMedia,
 }
 
 /// One canonical message as `{"role", "content": [blocks]}`.
@@ -126,6 +129,7 @@ fn block(part: &Part, cx: &PartContext<'_>) -> Result<Option<Value>, Lm15Error> 
 /// one text part travels as a string, anything else as blocks (images and
 /// documents survive that way); `is_error` only when true.
 fn tool_result_block(result: &ToolResultPart, cx: &PartContext<'_>) -> Result<Value, Lm15Error> {
+    content::check_tool_result_media(cx.refuse.provider, result, cx.tool_result_media, "a tool_result block")?;
     let content = tool_result_content(&result.content, cx)?;
     let mut block = Map::new();
     block.insert("type".into(), "tool_result".into());
@@ -300,6 +304,7 @@ mod tests {
         PartContext {
             refuse,
             thinking_replay: replay,
+            tool_result_media: ToolResultMedia::Native,
         }
     }
 

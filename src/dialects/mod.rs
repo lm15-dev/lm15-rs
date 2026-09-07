@@ -6,6 +6,7 @@ use crate::registry::DialectId;
 use crate::wire::Dialect;
 
 pub mod anthropic;
+pub mod content;
 pub mod gemini;
 pub mod openai_chat;
 pub mod openai_responses;

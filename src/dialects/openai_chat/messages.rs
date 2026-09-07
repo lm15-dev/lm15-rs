@@ -8,7 +8,8 @@
 use serde_json::{json, Map, Value};
 
 use super::cache::{breakpoint_index, breakpoint_unsupported, stable_prefix};
-use super::text::{data_uri, parts_to_text, unsupported};
+use super::text::{data_uri, unsupported};
+use crate::dialects::content;
 use crate::compat::{
     IncludeOmit, OpenAIChatAssistantAfterToolResult, OpenAIChatAssistantReasoningContent,
     OpenAIChatThinkingReplay, ResolvedOpenAIChatCompat,
@@ -41,7 +42,7 @@ pub(super) fn build_messages(
     if let Some(system) = &request.system {
         let text = match system {
             SystemContent::Text(text) => text.clone(),
-            SystemContent::Parts(parts) => parts_to_text(parts),
+            SystemContent::Parts(parts) => content::parts_to_text(parts, provider, "the system message")?,
         };
         if stable_prefix(request, compat.cache_control) {
             // prefix="stable": the mark rides on the system message's text
@@ -75,7 +76,7 @@ pub(super) fn build_messages(
             Role::Tool => {
                 for part in &message.parts {
                     if let Part::ToolResult(result) = part {
-                        messages.push(tool_row(result, compat));
+                        messages.push(tool_row(result, compat, provider)?);
                     }
                 }
                 // `assistant_after_tool_result="insert"`: servers that
@@ -126,31 +127,51 @@ pub(super) fn build_messages(
     Ok(messages)
 }
 
-/// One `tool` row (`openai_chat.py:242-256`). The output is the lossy
-/// text of the result content; a result with no text at all names its
-/// part types (the reference's placeholder, kept: a refusal here would
-/// break the tool loop for a tool that returned media).
-fn tool_row(result: &ToolResultPart, compat: &ResolvedOpenAIChatCompat) -> Value {
-    let mut output = parts_to_text(&result.content);
-    if output.is_empty() {
-        let types: Vec<String> = result
-            .content
-            .iter()
-            .map(|p| format!("{{\"type\": \"{}\"}}", p.type_name()))
-            .collect();
-        output = format!("[{}]", types.join(", "));
-    }
+/// One `tool` row (MAP-10): a string when the content is text-only; on a
+/// preset that proved the array form live, text and image_url blocks; a
+/// media part the preset does not admit raises first. `is_error` rides
+/// as an `[error] ` prefix (rule 5: the wire has no flag).
+fn tool_row(
+    result: &ToolResultPart,
+    compat: &ResolvedOpenAIChatCompat,
+    provider: &str,
+) -> Result<Value, Lm15Error> {
+    content::check_tool_result_media(provider, result, compat.tool_result_media, "a Chat Completions tool row")?;
+    let output = if content::text_only(&result.content) {
+        Value::String(content::error_text(
+            result,
+            content::parts_to_text(&result.content, provider, "a Chat Completions tool row")?,
+        ))
+    } else {
+        let mut blocks: Vec<Value> = Vec::with_capacity(result.content.len());
+        for part in &result.content {
+            blocks.push(match part {
+                Part::Image(image) => image_block(image, provider)?,
+                other => text_block(&content::parts_to_text(std::slice::from_ref(other), provider, "a Chat Completions tool row")?),
+            });
+        }
+        if result.is_error {
+            match blocks.iter_mut().find(|b| b.get("type") == Some(&Value::String("text".into()))) {
+                Some(Value::Object(block)) => {
+                    let text = block.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                    block.insert("text".into(), Value::String(format!("[error] {text}")));
+                }
+                _ => blocks.insert(0, text_block("[error]")),
+            }
+        }
+        Value::Array(blocks)
+    };
     let mut pairs = vec![
         ("role", Value::String("tool".into())),
         ("tool_call_id", Value::String(result.id.clone())),
-        ("content", Value::String(output)),
+        ("content", output),
     ];
     if compat.tool_result_name == IncludeOmit::Include {
         if let Some(name) = result.name.as_ref().filter(|n| !n.is_empty()) {
             pairs.push(("name", Value::String(name.clone())));
         }
     }
-    object(pairs)
+    Ok(object(pairs))
 }
 
 /// One assistant row (`openai_chat.py:258-284`): text, refusal text and
@@ -280,17 +301,23 @@ fn text_block(text: &str) -> Value {
 }
 
 /// `{"type": "image_url", "image_url": {"url", "detail"?}}`: a URL
-/// verbatim or inline data as a data URI. `file_id` and `path` have no
-/// slot (the reference raised an untyped error; here the pinned class).
+/// verbatim, inline data or a path (read now) as a data URI. `file_id`
+/// has no slot on this wire (MAP-10: a raise, never empty text).
 fn image_block(image: &ImagePart, provider: &str) -> Result<Value, Lm15Error> {
-    let url = match (&image.url, &image.data) {
-        (Some(url), _) => url.clone(),
-        (None, Some(data)) => data_uri(&image.media_type, data),
-        (None, None) => {
+    let url = match (&image.url, &image.data, &image.path) {
+        (Some(url), _, _) => url.clone(),
+        (None, Some(data), _) => data_uri(&image.media_type, data),
+        (None, None, Some(path)) => {
+            let bytes = std::fs::read(path).map_err(|err| {
+                unsupported(provider, format!("cannot read image part path {}: {err}", path.display()))
+            })?;
+            data_uri(&image.media_type, &crate::types::base64_encode(&bytes))
+        }
+        (None, None, None) => {
             return Err(unsupported(
                 provider,
-                "an image addressed by file_id or path cannot be sent on the Chat Completions \
-                 wire; pass a URL or inline data",
+                "an image addressed by file_id cannot be sent on the Chat Completions wire (no file \
+                 reference form); pass a URL or inline data",
             ))
         }
     };

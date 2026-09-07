@@ -70,7 +70,7 @@ pub fn build_payload(
     if let Some(system) = &request.system {
         let text = match system {
             SystemContent::Text(text) => text.clone(),
-            SystemContent::Parts(parts) => parts_to_text(parts),
+            SystemContent::Parts(parts) => parts_to_text(parts, provider, "instructions")?,
         };
         if stable_prefix(request, compat.cache_control) {
             input.insert(
@@ -105,6 +105,20 @@ pub fn build_payload(
     }
     if let Some(top_p) = config.top_p {
         payload.insert("top_p".into(), json!(top_p));
+    }
+    if !config.stop.is_empty() {
+        // No slot on the Responses wire (port.md rule 4: a raise, never omission).
+        return Err(unsupported(
+            provider,
+            "config.stop has no field on the Responses wire (the Chat Completions dialect carries `stop`); \
+             a silent omission would run the model past the sequence",
+        ));
+    }
+    if config.top_k.is_some() {
+        return Err(unsupported(
+            provider,
+            "config.top_k has no field on the Responses wire (Anthropic and Gemini carry it)",
+        ));
     }
     if let Some(logprobs) = config.logprobs {
         // Live 2026-09-01: `include` triggers per-token logprobs;

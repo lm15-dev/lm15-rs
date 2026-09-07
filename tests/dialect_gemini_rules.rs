@@ -266,20 +266,32 @@ fn map7_thought_signature_replays_natively_and_thinking_without_state_is_text() 
 }
 
 #[test]
-fn tool_result_without_any_name_takes_the_reference_placeholder() {
+fn tool_result_without_any_name_raises_never_the_placeholder() {
+    // MAP-10 rule 6: the name comes from the caller or the transcript's
+    // matching tool_call; with neither it is a raise, never "tool".
+    let err = refusal(json!({
+        "model": "gemini-2.5-flash",
+        "messages": [
+            user("hi"),
+            {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "content": [{"type": "text", "text": ""}]}]}
+        ]
+    }));
+    assert_unsupported(&err);
+    assert!(err.message().contains("needs a function name"), "{err}");
     let out = body(
         "gemini",
         json!({
             "model": "gemini-2.5-flash",
             "messages": [
                 user("hi"),
+                {"role": "assistant", "parts": [{"type": "tool_call", "id": "x", "name": "weather", "input": {}}]},
                 {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "content": [{"type": "text", "text": ""}]}]}
             ]
         }),
     );
     assert_eq!(
-        out["contents"][1],
-        json!({"role": "user", "parts": [{"functionResponse": {"id": "x", "name": "tool", "response": {"result": ""}}}]})
+        out["contents"][2],
+        json!({"role": "user", "parts": [{"functionResponse": {"id": "x", "name": "weather", "response": {"result": ""}}}]})
     );
 }
 
@@ -414,19 +426,29 @@ fn developer_turns_are_prefixed_user_text() {
 }
 
 #[test]
-fn text_only_slots_refuse_media_and_is_error_refuses() {
+fn text_only_slots_refuse_media_and_tool_results_carry_it() {
     let err = refusal(
         json!({"model": "gemini-2.5-flash", "messages": [user("hi")],
         "system": [{"type": "text", "text": "s"}, {"type": "image", "media_type": "image/png", "url": "https://x/y.png"}]}),
     );
     assert_unsupported(&err);
-    let err = refusal(json!({"model": "gemini-2.5-flash", "messages": [user("hi"),
+    // MAP-10 on this wire: media nests under functionResponse.parts; an
+    // image-only result has an empty response object (live 2026-09-07);
+    // is_error is response.error; audio has no slot.
+    let out = body("gemini", json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
         {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "name": "t",
-         "content": [{"type": "image", "media_type": "image/png", "url": "https://x/y.png"}]}]}]}));
-    assert_unsupported(&err);
-    let err = refusal(json!({"model": "gemini-2.5-flash", "messages": [user("hi"),
+         "content": [{"type": "image", "media_type": "image/png", "data": "QUJD"}]}]}]}));
+    assert_eq!(
+        out["contents"][1]["parts"][0]["functionResponse"],
+        json!({"id": "x", "name": "t", "response": {}, "parts": [{"inlineData": {"mimeType": "image/png", "data": "QUJD"}}]})
+    );
+    let out = body("gemini", json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
         {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "name": "t", "is_error": true,
          "content": [{"type": "text", "text": "boom"}]}]}]}));
+    assert_eq!(out["contents"][1]["parts"][0]["functionResponse"]["response"], json!({"error": "boom"}));
+    let err = refusal(json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
+        {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "name": "t",
+         "content": [{"type": "audio", "media_type": "audio/wav", "data": "QUJD"}]}]}]}));
     assert_unsupported(&err);
 }
 

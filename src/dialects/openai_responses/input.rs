@@ -12,6 +12,7 @@ use crate::types::{
 };
 
 use super::{invalid_request, unsupported};
+use crate::dialects::content;
 
 /// The `input` array for `messages`. `breakpoint_index` is the message
 /// that carries `prompt_cache_breakpoint` (MAP-6 `prefix_until_index`).
@@ -31,7 +32,7 @@ pub fn build_input(
             Role::Tool => {
                 for part in &message.parts {
                     if let Part::ToolResult(result) = part {
-                        items.push(tool_result_item(result, compat));
+                        items.push(tool_result_item(provider, result, compat)?);
                     }
                 }
             }
@@ -190,32 +191,48 @@ fn reasoning_item(state: &Map<String, Value>, text: &str) -> Value {
     Value::Object(item)
 }
 
-fn tool_result_item(result: &ToolResultPart, compat: &ResolvedOpenAIResponsesCompat) -> Value {
-    let mut output = parts_to_text(&result.content);
-    if output.is_empty() {
-        // The reference's lossy fallback for non-text results
-        // (`openai.py:698-700`): the part types, `json.dumps` default
-        // spacing.
-        output = format!(
-            "[{}]",
-            result
-                .content
-                .iter()
-                .map(|part| format!("{{\"type\": \"{}\"}}", part.type_name()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
+/// `function_call_output` (MAP-10; `lm15/providers/common.py`
+/// `tool_result_output_openai`): a string when the content is text-only,
+/// the documented array of input_text/input_image/input_file blocks
+/// otherwise; a media part the preset does not admit raises first.
+/// `is_error` rides as an `[error] ` prefix on the text (rule 5).
+fn tool_result_item(
+    provider: &str,
+    result: &ToolResultPart,
+    compat: &ResolvedOpenAIResponsesCompat,
+) -> Result<Value, Lm15Error> {
+    content::check_tool_result_media(provider, result, compat.tool_result_media, "function_call_output")?;
+    let output = if content::text_only(&result.content) {
+        Value::String(content::error_text(
+            result,
+            content::parts_to_text(&result.content, provider, "function_call_output")?,
+        ))
+    } else {
+        let mut blocks: Vec<Value> = Vec::with_capacity(result.content.len());
+        for part in &result.content {
+            blocks.push(part_to_input(provider, part)?);
+        }
+        if result.is_error {
+            match blocks.iter_mut().find(|b| b.get("type") == Some(&json!("input_text"))) {
+                Some(Value::Object(block)) => {
+                    let text = block.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                    block.insert("text".into(), Value::String(format!("[error] {text}")));
+                }
+                _ => blocks.insert(0, json!({"type": "input_text", "text": "[error]"})),
+            }
+        }
+        Value::Array(blocks)
+    };
     let mut item = Map::new();
     item.insert("type".into(), Value::String("function_call_output".into()));
     item.insert("call_id".into(), Value::String(result.id.clone()));
-    item.insert("output".into(), Value::String(output));
+    item.insert("output".into(), output);
     if compat.tool_result_name == IncludeOmit::Include {
         if let Some(name) = &result.name {
             item.insert("name".into(), Value::String(name.clone()));
         }
     }
-    Value::Object(item)
+    Ok(Value::Object(item))
 }
 
 fn output_text(text: &str) -> Value {
@@ -228,25 +245,10 @@ fn compact_json(value: &Map<String, Value>) -> String {
     serde_json::to_string(value).expect("a JSON object serializes")
 }
 
-/// `lm15/providers/common.py:53-66` `parts_to_text`: the lossy text
-/// rendering for text-only wire fields.
-pub fn parts_to_text(parts: &[Part]) -> String {
-    let mut out = Vec::new();
-    for part in parts {
-        match part {
-            Part::Text(text) => out.push(text.text.clone()),
-            Part::Thinking(thinking) if !thinking.text.is_empty() => {
-                out.push(thinking.text.clone())
-            }
-            Part::Citation(citation) => {
-                if let Some(text) = citation_text(citation) {
-                    out.push(text);
-                }
-            }
-            _ => {}
-        }
-    }
-    out.join("\n")
+/// Text for a text-only field (MAP-10: a media part raises; see
+/// `dialects::content::parts_to_text`).
+pub fn parts_to_text(parts: &[Part], provider: &str, where_: &str) -> Result<String, Lm15Error> {
+    content::parts_to_text(parts, provider, where_)
 }
 
 fn citation_text(citation: &CitationPart) -> Option<String> {
@@ -289,17 +291,17 @@ fn part_to_input(provider: &str, part: &Part) -> Result<Value, Lm15Error> {
             binary.path.as_deref(),
         )?,
         Part::Video(video) => video_input(provider, video)?,
-        // INV-024 keeps these out of prompt messages; the reference's
-        // text fallback is kept for the tool-result content case.
-        Part::ToolResult(result) => {
-            json!({"type": "input_text", "text": parts_to_text(&result.content)})
-        }
         Part::Citation(citation) => {
             json!({"type": "input_text", "text": citation_text(citation).unwrap_or_default()})
         }
         Part::Thinking(thinking) => json!({"type": "input_text", "text": thinking.text}),
-        Part::Refusal(refusal) => json!({"type": "input_text", "text": refusal.text}),
-        Part::ToolCall(_) => json!({"type": "input_text", "text": ""}),
+        // INV-013/INV-024 keep these out of prompt and tool-result content.
+        Part::Refusal(_) | Part::ToolResult(_) | Part::ToolCall(_) => {
+            return Err(unsupported(
+                provider,
+                format!("a {} part has no input block on the Responses wire (MAP-10)", part.type_name()),
+            ))
+        }
     })
 }
 

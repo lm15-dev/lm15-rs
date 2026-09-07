@@ -63,6 +63,7 @@ pub fn payload(
     let part_cx = PartContext {
         refuse: &refuse,
         thinking_replay: compat.thinking_replay,
+        tool_result_media: compat.tool_result_media,
     };
     let mut messages: Vec<Value> = request
         .messages

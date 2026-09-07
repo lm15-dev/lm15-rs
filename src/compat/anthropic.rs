@@ -2,7 +2,7 @@
 //! Anthropic dialect (module 4 W1) consults the resolved value at the
 //! named points.
 
-use super::{JsonObject, Knob, ReasoningEfforts, SendReject};
+use super::{JsonObject, Knob, ReasoningEfforts, SendReject, ToolResultMedia};
 use crate::types::ReasoningEffort;
 
 /// `lm15/compat.py:839-853` `AnthropicThinkingFormat`.
@@ -55,6 +55,8 @@ pub struct AnthropicCompat {
     pub structured_output: Option<Knob<AnthropicStructuredOutput>>,
     pub parallel_tool_calls: Option<Knob<AnthropicParallelToolCalls>>,
     pub sampling_params: Option<Knob<AnthropicSamplingParams>>,
+    /// MAP-10: media inside `tool_result.content` (`lm15/compat.py` `tool_result_media`).
+    pub tool_result_media: Option<Knob<ToolResultMedia>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub model_prefixes: Option<&'static [&'static str]>,
     pub extensions: Option<JsonObject>,
@@ -68,6 +70,7 @@ impl AnthropicCompat {
         structured_output: None,
         parallel_tool_calls: None,
         sampling_params: None,
+        tool_result_media: None,
         reasoning_efforts: None,
         model_prefixes: None,
         extensions: None,
@@ -90,6 +93,8 @@ impl AnthropicCompat {
             structured_output: Knob::resolve(self.structured_output, SendReject::Send),
             parallel_tool_calls: Knob::resolve(self.parallel_tool_calls, SendReject::Send),
             sampling_params: Knob::resolve(self.sampling_params, SendReject::Send),
+            // tool_result.content takes image and document blocks (anthropic exact, 2026-09-07).
+            tool_result_media: Knob::resolve(self.tool_result_media, ToolResultMedia::Native),
             reasoning_efforts: self.reasoning_efforts,
             model_prefixes: self.model_prefixes,
             extensions: self.extensions.clone(),
@@ -106,6 +111,7 @@ pub struct ResolvedAnthropicCompat {
     pub structured_output: AnthropicStructuredOutput,
     pub parallel_tool_calls: AnthropicParallelToolCalls,
     pub sampling_params: AnthropicSamplingParams,
+    pub tool_result_media: ToolResultMedia,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub model_prefixes: Option<&'static [&'static str]>,
     pub extensions: Option<JsonObject>,
@@ -130,6 +136,8 @@ pub const ANTHROPIC_PRESETS: &[(&str, AnthropicCompat)] = &[
             cache_control: Some(Set(AnthropicCacheControl::None)),
             structured_output: Some(Set(SendReject::Reject)),
             parallel_tool_calls: Some(Set(SendReject::Reject)),
+            // MAP-10: HTTP 200 and the model sees [Unsupported Image] — silent degrade.
+            tool_result_media: Some(Set(ToolResultMedia::Reject)),
             model_prefixes: Some(&["deepseek-"]),
             ..AnthropicCompat::EMPTY
         },
@@ -155,6 +163,8 @@ pub const ANTHROPIC_PRESETS: &[(&str, AnthropicCompat)] = &[
             structured_output: Some(Set(SendReject::Send)),
             parallel_tool_calls: Some(Set(SendReject::Reject)),
             sampling_params: Some(Set(SendReject::Reject)),
+            // MAP-10: images received (kimi-k3); a document block is 400.
+            tool_result_media: Some(Set(ToolResultMedia::Images)),
             reasoning_efforts: Some(&[
                 ReasoningEffort::Low,
                 ReasoningEffort::High,
