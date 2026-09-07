@@ -17,6 +17,7 @@ const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Ops this shim answers (`capabilities.ops`).
 const OPS: &[&str] = &[
     "capabilities",
+    "explain_auth",
     "normalize_error",
     "serde_roundtrip",
     "validate",
@@ -87,14 +88,55 @@ fn op_normalize_error(msg: &Map<String, Value>) -> Result<Value, Failure> {
     }))
 }
 
+fn op_explain_auth(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    // PROTOCOL.md explain_auth: the harness owns every input. The env map is
+    // the whole environment (never the process env), api_keys_providers get
+    // the sentinel planted, credentials_path is the harness-written file.
+    let provider = field_str(msg, "provider")?;
+    let mut env = std::collections::HashMap::new();
+    if let Some(map) = msg.get("env").and_then(Value::as_object) {
+        for (k, v) in map {
+            if let Some(s) = v.as_str() {
+                env.insert(k.clone(), s.to_string());
+            }
+        }
+    }
+    let options = lm15::auth::ExplainOptions {
+        env: Some(env),
+        api_key_providers: msg
+            .get("api_keys_providers")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        credentials_path: msg
+            .get("credentials_path")
+            .and_then(Value::as_str)
+            .map(std::path::PathBuf::from),
+    };
+    let report = lm15::auth::explain_auth(&provider, &options).map_err(Lm15Error::from)?;
+    let steps: Vec<Value> = report
+        .steps
+        .iter()
+        .map(|s| json!({ "kind": s.kind, "state": s.state.as_str() }))
+        .collect();
+    let report_text = format!("{}\n{}\n{:?}", report.describe(), report, report);
+    Ok(json!({ "configured": report.configured, "steps": steps, "report_text": report_text }))
+}
+
 fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
     match op {
         "capabilities" => Ok(op_capabilities()),
         "serde_roundtrip" => op_serde_roundtrip(msg),
         "validate" => op_validate(msg),
         "normalize_error" => op_normalize_error(msg),
+        "explain_auth" => op_explain_auth(msg),
         other => Err(Lm15Error::unsupported_feature(format!(
-            "op {other:?} is not implemented by the Rust shim (modules 1-2: capabilities, serde_roundtrip, validate, normalize_error)"
+            "op {other:?} is not implemented by the Rust shim (modules 1-3a: capabilities, serde_roundtrip, validate, normalize_error, explain_auth)"
         ))
         .into()),
     }

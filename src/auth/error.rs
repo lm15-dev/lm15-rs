@@ -98,3 +98,13 @@ impl fmt::Display for AuthError {
 }
 
 impl std::error::Error for AuthError {}
+
+impl From<AuthError> for crate::errors::Lm15Error {
+    /// Every auth error is a `NotConfiguredError` (AUTH-6); the message is
+    /// the redacted rendering, the provider is carried when known.
+    fn from(err: AuthError) -> Self {
+        let mut meta = crate::errors::ErrorMeta::new(err.to_string());
+        meta.provider = err.provider().map(str::to_string);
+        crate::errors::Lm15Error::NotConfiguredError(meta)
+    }
+}
