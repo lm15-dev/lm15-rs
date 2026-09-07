@@ -15,7 +15,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use super::error::AuthError;
-use super::policy::{access_policy, CredentialPolicy};
+use super::policy::{access_policy, canonical_provider, CredentialPolicy};
 use super::stores::{
     claude_credentials_path, codex_auth_path, pi_agent_auth_path, read_claude_code_credential,
     read_codex_cli_credential, read_xai_credential, LocalOAuthCredential,
@@ -250,7 +250,7 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
     let explicit = options
         .api_key_providers
         .iter()
-        .any(|name| super::policy::canonical_provider(name) == canonical);
+        .any(|name| canonical_provider(name) == canonical);
     if explicit {
         steps.push(Step::new(
             "api_keys",
@@ -364,10 +364,13 @@ fn oauth_file_step(provider: &str, paths: &[PathBuf], shadowed: bool) -> Step {
 }
 
 fn expiry_detail(credential: &LocalOAuthCredential) -> String {
-    let Some(expires) = credential.expires_at_ms() else {
-        return "no recorded expiry".into();
+    let remaining_ms = match credential.remaining_ms() {
+        Ok(None) => return "no recorded expiry".into(),
+        // AUTH-8: a value the clock arithmetic cannot use is reported, not
+        // read as fresh; the rung is `absent` because `usable()` is false.
+        Err(_) => return "malformed expiry (out of range)".into(),
+        Ok(Some(remaining)) => remaining,
     };
-    let remaining_ms = expires - super::time::now_ms();
     if remaining_ms <= 0 {
         return if credential.has_refresh_token() {
             "expired, refresh token present".into()
@@ -489,5 +492,51 @@ mod tests {
         assert!(text.contains("=> local-server placeholder key"));
         assert!(text.ends_with("configured: yes — local-server placeholder key"));
         assert_eq!(text, report.to_string());
+    }
+
+    /// F6 (review 2026-09-07): an expiry the `i64` clock arithmetic cannot
+    /// use is `absent` with a "malformed" detail — never fresh, never a
+    /// panic (AUTH-6, AUTH-8).
+    #[test]
+    fn out_of_range_expiry_is_absent_and_malformed() {
+        let dir = std::env::temp_dir().join(format!("lm15-doctor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // xai store: expires = i64::MIN.
+        let xai = dir.join("xai.json");
+        std::fs::write(
+            &xai,
+            r#"{"xai": {"type": "oauth", "access": "t", "expires": -9223372036854775808, "refresh": "r"}}"#,
+        )
+        .unwrap();
+        // codex: JWT exp = i64::MAX, so exp * 1000 overflows.
+        let codex = dir.join("codex.json");
+        std::fs::write(
+            &codex,
+            r#"{"tokens": {"access_token": "h.eyJleHAiOjkyMjMzNzIwMzY4NTQ3NzU4MDd9.s", "refresh_token": "r"}}"#,
+        )
+        .unwrap();
+        for (provider, path) in [("xai", &xai), ("openai-codex", &codex)] {
+            let mut options = hermetic(&[]);
+            options.credentials_path = Some(path.clone());
+            let report = explain_auth(provider, &options).unwrap();
+            let step = report
+                .steps
+                .iter()
+                .find(|s| s.kind == "oauth-file")
+                .unwrap_or_else(|| panic!("{provider}: no oauth-file rung"));
+            assert_eq!(step.state, StepState::Absent, "{provider}: {step:?}");
+            assert!(
+                step.detail.contains("malformed"),
+                "{provider}: {}",
+                step.detail
+            );
+            assert!(
+                !step.detail.contains("fresh"),
+                "{provider}: {}",
+                step.detail
+            );
+            assert!(!report.configured, "{provider}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

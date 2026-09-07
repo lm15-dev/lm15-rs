@@ -11,6 +11,7 @@
 //! `serde_json::from_str::<Request>(s)` work as the api-family expects.
 
 mod config;
+mod credential;
 mod endpoints;
 mod helpers;
 mod kinds;

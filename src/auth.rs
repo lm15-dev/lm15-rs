@@ -23,7 +23,7 @@ mod doctor;
 mod error;
 mod policy;
 mod stores;
-mod time;
+pub(crate) mod time;
 
 pub use credential::{
     select_scheme, AuthScheme, Credential, CredentialKind, CredentialProvider, FnCredential,
@@ -36,7 +36,7 @@ pub use policy::{
     ACCESS_POLICIES,
 };
 pub use stores::{
-    read_claude_code_credential, read_codex_cli_credential, read_xai_credential,
+    read_claude_code_credential, read_codex_cli_credential, read_xai_credential, Expiry,
     LocalOAuthCredential, CLAUDE_CODE_LOGIN_HINT, OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT,
 };
 pub use time::{format_rfc3339, parse_rfc3339};

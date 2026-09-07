@@ -27,7 +27,7 @@ impl Canonical for Usage {
             input_audio_tokens: r.opt_u64("input_audio_tokens")?,
             output_audio_tokens: r.opt_u64("output_audio_tokens")?,
         }
-        .normalized();
+        .normalized()?;
         usage.validate()?;
         Ok(usage)
     }

@@ -8,7 +8,9 @@
 //! 2. errors (`spec/vocabularies.md` ErrorCode + hierarchy shape) and
 //!    provider error normalization — [`errors`], [`registry`].
 //!
-//! Module 3a (auth surface, spec/auth.md) is in progress in [`auth`].
+//! 3a. core auth (`spec/auth.md` AUTH-1/2/5/7/8/10; module 3b cloud chains
+//!    are not implemented) — [`auth`]. [`Credential`] is the one AUTH-2
+//!    value type, exported here and as `auth::Credential`.
 
 pub mod auth;
 pub mod errors;
@@ -16,6 +18,7 @@ pub mod registry;
 pub mod serde;
 pub mod types;
 
+pub use auth::Credential;
 pub use errors::{normalize_error, ErrorClass, ErrorCode, ErrorMeta, Lm15Error};
 pub use serde::Canonical;
 pub use types::*;

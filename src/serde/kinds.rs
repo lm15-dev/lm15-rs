@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use super::Canonical;
+use crate::auth::Credential;
 use crate::types::*;
 
 /// Every kind string accepted by `serde_roundtrip` / `validate`, in the

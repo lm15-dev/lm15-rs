@@ -100,3 +100,20 @@ fn malformed_lines_answer_without_crashing() {
     assert_eq!(replies[1]["id"], "after");
     assert_eq!(replies[1]["ok"], true);
 }
+
+/// A malformed `credential` timestamp (a multibyte character at byte 10)
+/// is a refusal, not a crash: the next op in the batch still answers.
+#[test]
+fn malformed_credential_timestamp_does_not_kill_the_shim() {
+    let replies = run_shim(&[
+        json!({"op": "validate", "id": "1", "kind": "credential",
+               "value": {"kind": "bearer_token", "value": "t", "expires_at": "2026-09-0\u{e9}X"}}),
+        json!({"op": "capabilities", "id": "2"}),
+    ]);
+    assert_eq!(replies.len(), 2);
+    assert_eq!(replies[0]["id"], "1");
+    assert_eq!(replies[0]["ok"], false);
+    assert_eq!(replies[0]["error"]["type"], "ValueError");
+    assert_eq!(replies[1]["id"], "2");
+    assert_eq!(replies[1]["ok"], true);
+}

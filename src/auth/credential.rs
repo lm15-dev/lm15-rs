@@ -8,6 +8,9 @@
 //!
 //! `expires_at` is RFC 3339 on the wire and Unix seconds here; absent means
 //! non-expiring. Absent fields are omitted, never null (docs/serde-rules.md).
+//! The wire form is [`crate::Canonical`] (`from_json` / `to_json`), in
+//! `crate::serde`; this is the one `Credential` type of the crate, also
+//! exported as `lm15::Credential`.
 //!
 //! Secrecy (AUTH-5): `Debug` and `Display` never show values; `to_json` is
 //! the only way out and its callers are the ones sending the value on the
@@ -15,10 +18,8 @@
 
 use std::fmt;
 
-use serde_json::{Map, Value};
-
 use super::error::AuthError;
-use super::time::{format_rfc3339, now_unix, parse_rfc3339};
+use super::time::{format_rfc3339, now_unix};
 
 /// AUTH-3: a token inside this window counts as expired.
 pub const EXPIRY_SKEW_SECONDS: i64 = 300;
@@ -177,86 +178,6 @@ impl Credential {
     pub fn is_expired(&self) -> bool {
         self.is_expired_at(now_unix())
     }
-
-    /// Canonical JSON (AUTH-2). Absent fields are omitted, never null.
-    pub fn to_json(&self) -> Value {
-        let mut out = Map::new();
-        out.insert("kind".into(), Value::String(self.kind().as_str().into()));
-        match self {
-            Credential::ApiKey { value } => {
-                out.insert("value".into(), Value::String(value.clone()));
-            }
-            Credential::BearerToken { value, expires_at } => {
-                out.insert("value".into(), Value::String(value.clone()));
-                if let Some(expires) = expires_at {
-                    out.insert("expires_at".into(), Value::String(format_rfc3339(*expires)));
-                }
-            }
-            Credential::AwsCredentials {
-                access_key_id,
-                secret_access_key,
-                session_token,
-                expires_at,
-            } => {
-                out.insert("access_key_id".into(), Value::String(access_key_id.clone()));
-                out.insert(
-                    "secret_access_key".into(),
-                    Value::String(secret_access_key.clone()),
-                );
-                if let Some(token) = session_token {
-                    out.insert("session_token".into(), Value::String(token.clone()));
-                }
-                if let Some(expires) = expires_at {
-                    out.insert("expires_at".into(), Value::String(format_rfc3339(*expires)));
-                }
-            }
-        }
-        Value::Object(out)
-    }
-
-    /// Parses canonical JSON (AUTH-2); the constructors validate.
-    pub fn from_json(value: &Value) -> Result<Self, AuthError> {
-        let object = value
-            .as_object()
-            .ok_or_else(|| invalid("a credential is a JSON object"))?;
-        let kind = object
-            .get("kind")
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid("a credential needs a string `kind`"))?;
-        let expires_at = match object.get("expires_at") {
-            None | Some(Value::Null) => None,
-            Some(Value::String(text)) => Some(
-                parse_rfc3339(text)
-                    .ok_or_else(|| invalid("`expires_at` must be an RFC 3339 timestamp"))?,
-            ),
-            Some(_) => return Err(invalid("`expires_at` must be an RFC 3339 string")),
-        };
-        let text = |key: &str| -> Result<String, AuthError> {
-            object
-                .get(key)
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| invalid(&format!("`{key}` must be a string")))
-        };
-        match kind {
-            "api_key" => Credential::api_key(text("value")?),
-            "bearer_token" => Credential::bearer_token(text("value")?, expires_at),
-            "aws" => {
-                let session_token = match object.get("session_token") {
-                    None | Some(Value::Null) => None,
-                    Some(Value::String(token)) => Some(token.clone()),
-                    Some(_) => return Err(invalid("`session_token` must be a string")),
-                };
-                Credential::aws(
-                    text("access_key_id")?,
-                    text("secret_access_key")?,
-                    session_token,
-                    expires_at,
-                )
-            }
-            other => Err(invalid(&format!("unknown credential kind {other:?}"))),
-        }
-    }
 }
 
 fn non_empty(field: &str, value: &str) -> Result<(), AuthError> {
@@ -306,18 +227,20 @@ impl fmt::Display for Credential {
 }
 
 /// A plain string reads as an `ApiKey` (AUTH-2 shorthand). An empty string
-/// is still an `ApiKey` here; the adapter rejects it when it resolves.
-impl From<&str> for Credential {
-    fn from(value: &str) -> Self {
-        Credential::ApiKey {
-            value: value.to_string(),
-        }
+/// is rejected here exactly as `"".credential()` rejects it.
+impl TryFrom<&str> for Credential {
+    type Error = AuthError;
+
+    fn try_from(value: &str) -> Result<Self, AuthError> {
+        Credential::api_key(value)
     }
 }
 
-impl From<String> for Credential {
-    fn from(value: String) -> Self {
-        Credential::ApiKey { value }
+impl TryFrom<String> for Credential {
+    type Error = AuthError;
+
+    fn try_from(value: String) -> Result<Self, AuthError> {
+        Credential::api_key(value)
     }
 }
 
@@ -409,8 +332,10 @@ impl<T: CredentialProvider + ?Sized> CredentialProvider for Box<T> {
 pub struct StaticCredential(Credential);
 
 impl StaticCredential {
-    pub fn new(value: impl Into<Credential>) -> Self {
-        Self(value.into())
+    /// Resolves `source` once and holds the value: a [`Credential`], or a
+    /// string as the `ApiKey` shorthand (an empty string is rejected).
+    pub fn new(source: impl CredentialProvider) -> Result<Self, AuthError> {
+        source.credential().map(Self)
     }
 }
 
@@ -445,7 +370,8 @@ impl<F: Fn() -> Result<Credential, AuthError>> fmt::Debug for FnCredential<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::Canonical;
+    use serde_json::{json, Value};
 
     const SENTINEL: &str = "SECRET-SENTINEL-DO-NOT-PRINT";
 
@@ -531,7 +457,7 @@ mod tests {
             format!("{:?}", credentials[1]),
             "BearerToken(<redacted>, expires_at=2026-09-03T13:00:00Z)"
         );
-        let provider = StaticCredential::new(SENTINEL);
+        let provider = StaticCredential::new(SENTINEL).unwrap();
         assert!(!format!("{provider:?}").contains(SENTINEL));
     }
 
@@ -554,8 +480,14 @@ mod tests {
             String::from("k").credential().unwrap().kind(),
             CredentialKind::ApiKey
         );
+        // N3: every string door rejects the empty string.
         assert!("".credential().is_err());
-        assert_eq!(Credential::from("k").kind(), CredentialKind::ApiKey);
+        assert!(Credential::try_from("").is_err());
+        assert!(StaticCredential::new("").is_err());
+        assert_eq!(
+            Credential::try_from("k").unwrap().kind(),
+            CredentialKind::ApiKey
+        );
     }
 
     #[test]

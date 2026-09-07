@@ -10,7 +10,6 @@
 
 mod config;
 mod continuation;
-mod credential;
 mod delta;
 mod endpoints;
 mod json;
@@ -26,7 +25,6 @@ mod vocab;
 
 pub use config::{CacheConfig, Config, Reasoning, ToolChoice};
 pub use continuation::{continuation_data, ContinuationState};
-pub use credential::{ApiKey, AwsCredentials, BearerToken, Credential};
 pub use delta::{
     AudioDelta, CitationDelta, ContinuationDelta, Delta, ImageDelta, TextDelta, ThinkingDelta,
     ToolCallDelta,
@@ -38,8 +36,8 @@ pub use endpoints::{
 };
 pub(crate) use json::{base64_decode, base64_encode};
 pub use json::{
-    base64_payload, is_base64_shaped, normalize_rfc3339, JsonObject, ValidationError,
-    ValidationKind,
+    base64_payload, is_base64_shaped, normalize_rfc3339, parse_rfc3339_lenient, JsonObject,
+    ValidationError, ValidationKind,
 };
 pub use live::{
     AudioFormat, LiveClientAudioEvent, LiveClientEndAudioEvent, LiveClientEvent,

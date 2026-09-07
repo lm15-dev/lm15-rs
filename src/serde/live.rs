@@ -1,5 +1,5 @@
-//! AudioFormat, LiveConfig, live client/server events, Credential
-//! (serde.py `audio_format_*`, `live_*`; credentials.py).
+//! AudioFormat, LiveConfig, live client/server events (serde.py
+//! `audio_format_*`, `live_*`).
 
 use serde_json::Value;
 
@@ -10,12 +10,12 @@ use super::parts::{parts_from_list, parts_to_json};
 use super::stream::{usage_from_parent, usage_to_json_opt};
 use super::{impl_serde_via_canonical, Canonical};
 use crate::types::{
-    ApiKey, AudioEncoding, AudioFormat, AwsCredentials, BearerToken, Credential, ErrorDetail,
-    LiveClientAudioEvent, LiveClientEndAudioEvent, LiveClientEvent, LiveClientImageEvent,
-    LiveClientInterruptEvent, LiveClientTextEvent, LiveClientToolResultEvent, LiveClientTurnEvent,
-    LiveConfig, LiveServerAudioEvent, LiveServerErrorEvent, LiveServerEvent,
-    LiveServerInterruptedEvent, LiveServerTextEvent, LiveServerToolCallDeltaEvent,
-    LiveServerToolCallEvent, LiveServerTurnEndEvent, LiveServerUsageEvent, ValidationError,
+    AudioEncoding, AudioFormat, ErrorDetail, LiveClientAudioEvent, LiveClientEndAudioEvent,
+    LiveClientEvent, LiveClientImageEvent, LiveClientInterruptEvent, LiveClientTextEvent,
+    LiveClientToolResultEvent, LiveClientTurnEvent, LiveConfig, LiveServerAudioEvent,
+    LiveServerErrorEvent, LiveServerEvent, LiveServerInterruptedEvent, LiveServerTextEvent,
+    LiveServerToolCallDeltaEvent, LiveServerToolCallEvent, LiveServerTurnEndEvent,
+    LiveServerUsageEvent, ValidationError,
 };
 
 impl Canonical for AudioFormat {
@@ -222,57 +222,4 @@ impl Canonical for LiveServerEvent {
     }
 }
 
-impl Canonical for Credential {
-    fn from_json(value: &Value) -> VResult<Self> {
-        let r = Reader::new(value, "Credential")?;
-        let credential = match r.req_str("kind")?.as_str() {
-            "api_key" => Credential::ApiKey(ApiKey {
-                value: r.req_str("value")?,
-            }),
-            "bearer_token" => Credential::BearerToken(BearerToken {
-                value: r.req_str("value")?,
-                expires_at: r.opt_str("expires_at")?,
-            }),
-            "aws" => Credential::AwsCredentials(AwsCredentials {
-                access_key_id: r.req_str("access_key_id")?,
-                secret_access_key: r.req_str("secret_access_key")?,
-                session_token: r.opt_str("session_token")?,
-                expires_at: r.opt_str("expires_at")?,
-            }),
-            _ => return Err(ValidationError::value("unknown credential kind")),
-        }
-        .normalized()?;
-        credential.validate()?;
-        Ok(credential)
-    }
-
-    fn to_json(&self) -> Value {
-        // AUTH-2: absent fields are omitted, never null.
-        let mut o = Obj::new();
-        o.set("kind", self.kind());
-        match self {
-            Credential::ApiKey(k) => {
-                o.set("value", k.value.as_str());
-            }
-            Credential::BearerToken(t) => {
-                o.set("value", t.value.as_str());
-                o.opt("expires_at", t.expires_at.clone());
-            }
-            Credential::AwsCredentials(c) => {
-                o.set("access_key_id", c.access_key_id.as_str())
-                    .set("secret_access_key", c.secret_access_key.as_str());
-                o.opt("session_token", c.session_token.clone());
-                o.opt("expires_at", c.expires_at.clone());
-            }
-        }
-        o.finish()
-    }
-}
-
-impl_serde_via_canonical!(
-    AudioFormat,
-    LiveConfig,
-    LiveClientEvent,
-    LiveServerEvent,
-    Credential
-);
+impl_serde_via_canonical!(AudioFormat, LiveConfig, LiveClientEvent, LiveServerEvent);

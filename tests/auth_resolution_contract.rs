@@ -1,7 +1,9 @@
-//! Runs the lm15-contract auth-resolution fixture (`auth/resolution.json`,
-//! copied byte for byte to `conformance/auth_resolution.json`; spec/auth.md
-//! AUTH-1/AUTH-7). Divergence between this port and the fixture is a port
-//! bug, never a reason to edit the fixture (AUTHORITY.md).
+//! Runs the lm15-contract auth-resolution fixture (`auth/resolution.json`;
+//! spec/auth.md AUTH-1/AUTH-7) from the pinned checkout, located as
+//! `tests/contract_corpus.rs` locates it (`LM15_CONTRACT_DIR`, else the
+//! sibling `../lm15-contract`). The corpus is never copied here. Divergence
+//! between this port and the fixture is a port bug, never a reason to edit
+//! the fixture (AUTHORITY.md).
 //!
 //! Scope (playbooks/port.md modules 3a/3b; changes/2026-09-06-decisions.md
 //! D14): the cases are split exactly as `harness/check.py --auth-scope`
@@ -45,10 +47,29 @@ const CLOUD_RUNG_KINDS: &[&str] = &[
 const EXPECTED_CORE_CASES: usize = 26;
 const EXPECTED_CLOUD_CASES: usize = 11;
 
-fn fixture() -> Value {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("conformance/auth_resolution.json");
-    serde_json::from_str(&std::fs::read_to_string(path).expect("read fixture"))
-        .expect("parse fixture")
+fn contract_dir() -> Option<PathBuf> {
+    let dir = std::env::var_os("LM15_CONTRACT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../lm15-contract"));
+    if dir.join("auth/resolution.json").is_file() {
+        Some(dir)
+    } else {
+        eprintln!(
+            "contract checkout not found at {}; auth fixture test not run",
+            dir.display()
+        );
+        None
+    }
+}
+
+/// `auth/resolution.json` from the contract checkout; `None` when there is
+/// no checkout to read (the test then does nothing, as in `contract_corpus.rs`).
+fn fixture() -> Option<Value> {
+    let path = contract_dir()?.join("auth/resolution.json");
+    Some(
+        serde_json::from_str(&std::fs::read_to_string(path).expect("read fixture"))
+            .expect("parse fixture"),
+    )
 }
 
 /// `harness/check.py` `cloud_auth_providers`: per provider, from the fixture.
@@ -160,7 +181,7 @@ fn scratch_dir(name: &str) -> PathBuf {
 
 #[test]
 fn core_cases_pass_the_fixture() {
-    let fixture = fixture();
+    let Some(fixture) = fixture() else { return };
     let sentinel = fixture["sentinel"].as_str().unwrap();
     let cloud = cloud_auth_providers(&fixture);
     let scratch = scratch_dir("core");
@@ -218,7 +239,7 @@ fn core_cases_pass_the_fixture() {
 
 #[test]
 fn cloud_cases_are_counted_as_not_implemented() {
-    let fixture = fixture();
+    let Some(fixture) = fixture() else { return };
     let sentinel = fixture["sentinel"].as_str().unwrap();
     let cloud = cloud_auth_providers(&fixture);
     let scratch = scratch_dir("cloud");
@@ -269,7 +290,7 @@ fn cloud_cases_are_counted_as_not_implemented() {
 
 #[test]
 fn the_split_covers_every_case() {
-    let fixture = fixture();
+    let Some(fixture) = fixture() else { return };
     let total = fixture["cases"].as_array().unwrap().len();
     assert_eq!(
         total,

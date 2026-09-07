@@ -26,13 +26,26 @@ pub const OPENAI_CODEX_LOGIN_HINT: &str =
 pub const XAI_LOGIN_HINT: &str =
     "Log in again: run lm15's xAI login (`login(\"xai\")`, spec/auth.md AUTH-9; SuperGrok / X Premium subscription auth)";
 
+/// The recorded expiry of a borrowed file, as read (AUTH-8: revalidated
+/// against reality, never "cleaned").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Expiry {
+    /// The file records no expiry.
+    Unrecorded,
+    /// Unix milliseconds, as the file records it.
+    AtMs(i64),
+    /// The file records a value the clock arithmetic cannot use (out of
+    /// the `i64` millisecond range). Never fresh, never usable.
+    Malformed,
+}
+
 /// A locally stored OAuth credential. Token fields are private and `Debug`
 /// is redacted (AUTH-5); use the accessors.
 #[derive(Clone)]
 pub struct LocalOAuthCredential {
     access_token: String,
     refresh_token: Option<String>,
-    expires_at_ms: Option<i64>,
+    expiry: Expiry,
     account_id: Option<String>,
 }
 
@@ -49,23 +62,53 @@ impl LocalOAuthCredential {
         self.account_id.as_deref()
     }
 
-    /// Unix milliseconds, as the file records it; `None` when unrecorded.
-    pub fn expires_at_ms(&self) -> Option<i64> {
-        self.expires_at_ms
+    /// The recorded expiry.
+    pub fn expiry(&self) -> Expiry {
+        self.expiry
     }
 
-    /// The file's own clock: `now >= expiresAt`.
+    /// Unix milliseconds, as the file records it; `None` when unrecorded
+    /// or malformed.
+    pub fn expires_at_ms(&self) -> Option<i64> {
+        match self.expiry {
+            Expiry::AtMs(ms) => Some(ms),
+            Expiry::Unrecorded | Expiry::Malformed => None,
+        }
+    }
+
+    /// Milliseconds until the recorded expiry at the file's own clock
+    /// (`expiresAt - now`; `<= 0` is expired). `Err(Malformed)` when the
+    /// file records a value the subtraction cannot represent.
+    pub fn remaining_ms(&self) -> Result<Option<i64>, Expiry> {
+        match self.expiry {
+            Expiry::Unrecorded => Ok(None),
+            Expiry::Malformed => Err(Expiry::Malformed),
+            Expiry::AtMs(expires) => expires
+                .checked_sub(now_ms())
+                .map(Some)
+                .ok_or(Expiry::Malformed),
+        }
+    }
+
+    /// The file's own clock: `now >= expiresAt`. A malformed expiry counts
+    /// as expired.
     pub fn expired(&self) -> bool {
-        match self.expires_at_ms {
-            Some(expires) => now_ms() >= expires,
-            None => false,
+        match self.remaining_ms() {
+            Ok(Some(remaining)) => remaining <= 0,
+            Ok(None) => false,
+            Err(_) => true,
         }
     }
 
     /// Fresh, or expired with a refresh token to refresh it at request
-    /// time (AUTH-1 `oauth-unless-explicit`: "usable").
+    /// time (AUTH-1 `oauth-unless-explicit`: "usable"). A malformed expiry
+    /// is never usable.
     pub fn usable(&self) -> bool {
-        !self.expired() || self.has_refresh_token()
+        match self.remaining_ms() {
+            Ok(None) => true,
+            Ok(Some(remaining)) => remaining > 0 || self.has_refresh_token(),
+            Err(_) => false,
+        }
     }
 }
 
@@ -73,8 +116,8 @@ impl fmt::Debug for LocalOAuthCredential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "LocalOAuthCredential(expires_at_ms={:?}, refresh={}, <redacted>)",
-            self.expires_at_ms,
+            "LocalOAuthCredential(expiry={:?}, refresh={}, <redacted>)",
+            self.expiry,
             self.has_refresh_token()
         )
     }
@@ -165,7 +208,7 @@ pub fn read_claude_code_credential(path: &Path) -> Result<LocalOAuthCredential, 
     Ok(LocalOAuthCredential {
         access_token,
         refresh_token: string_field(oauth, "refreshToken"),
-        expires_at_ms: oauth.get("expiresAt").and_then(number_ms),
+        expiry: expiry_ms(oauth.get("expiresAt")),
         account_id: None,
     })
 }
@@ -198,11 +241,17 @@ pub fn read_codex_cli_credential(path: &Path) -> Result<LocalOAuthCredential, Au
         )
     })?;
     let payload = jwt_payload(&access_token);
-    let expires_at_ms = payload
+    let expiry = match payload
         .as_ref()
         .and_then(|p| p.get("exp"))
-        .and_then(Value::as_i64)
-        .map(|exp| exp * 1000 - REFRESH_SKEW_MS);
+        .and_then(number_ms)
+    {
+        None => Expiry::Unrecorded,
+        Some(exp) => exp
+            .checked_mul(1000)
+            .and_then(|ms| ms.checked_sub(REFRESH_SKEW_MS))
+            .map_or(Expiry::Malformed, Expiry::AtMs),
+    };
     let account_id = string_field(tokens, "account_id").or_else(|| {
         payload
             .as_ref()
@@ -212,7 +261,7 @@ pub fn read_codex_cli_credential(path: &Path) -> Result<LocalOAuthCredential, Au
     Ok(LocalOAuthCredential {
         access_token,
         refresh_token: string_field(tokens, "refresh_token"),
-        expires_at_ms,
+        expiry,
         account_id,
     })
 }
@@ -241,15 +290,26 @@ pub fn read_xai_credential(path: &Path) -> Result<LocalOAuthCredential, AuthErro
     Ok(LocalOAuthCredential {
         access_token,
         refresh_token: string_field(entry, "refresh"),
-        expires_at_ms: entry.get("expires").and_then(number_ms),
+        expiry: expiry_ms(entry.get("expires")),
         account_id: None,
     })
 }
 
-/// A millisecond timestamp: an integer, or a float truncated as the
-/// reference does (`int(expires)`).
+/// A number: an integer, or a float truncated as the reference does
+/// (`int(expires)`). Anything else is not a number.
 fn number_ms(value: &Value) -> Option<i64> {
     value.as_i64().or_else(|| value.as_f64().map(|f| f as i64))
+}
+
+/// A recorded millisecond expiry: absent or non-numeric is unrecorded (as
+/// the reference reads it); a number `now` cannot be subtracted from is
+/// malformed (the reference has unbounded ints; `i64` does not).
+fn expiry_ms(value: Option<&Value>) -> Expiry {
+    match value.and_then(number_ms) {
+        None => Expiry::Unrecorded,
+        Some(ms) if ms.checked_sub(now_ms()).is_some() => Expiry::AtMs(ms),
+        Some(_) => Expiry::Malformed,
+    }
 }
 
 fn jwt_payload(token: &str) -> Option<Value> {
@@ -360,8 +420,55 @@ mod tests {
         .unwrap();
         let credential = read_codex_cli_credential(&path).unwrap();
         assert_eq!(credential.expires_at_ms(), Some(1000 - REFRESH_SKEW_MS));
+        assert_eq!(credential.expiry(), Expiry::AtMs(1000 - REFRESH_SKEW_MS));
         assert!(credential.expired());
         assert!(!credential.usable());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// F6: `checked_mul` / `checked_sub` on foreign numbers.
+    #[test]
+    fn out_of_range_expiry_reads_as_malformed_never_usable() {
+        let dir = scratch("range");
+        let path = dir.join("claude.json");
+        std::fs::write(
+            &path,
+            r#"{"claudeAiOauth": {"accessToken": "t", "expiresAt": -9223372036854775808, "refreshToken": "r"}}"#,
+        )
+        .unwrap();
+        let credential = read_claude_code_credential(&path).unwrap();
+        assert_eq!(credential.expiry(), Expiry::Malformed);
+        assert_eq!(credential.expires_at_ms(), None);
+        assert!(credential.expired());
+        assert!(!credential.usable());
+        // A large but representable value stays a plain timestamp.
+        std::fs::write(
+            &path,
+            r#"{"claudeAiOauth": {"accessToken": "t", "expiresAt": 9223372036854775807}}"#,
+        )
+        .unwrap();
+        let credential = read_claude_code_credential(&path).unwrap();
+        assert_eq!(credential.expiry(), Expiry::AtMs(i64::MAX));
+        assert!(!credential.expired());
+        // codex: exp * 1000 overflows.
+        let codex = dir.join("codex.json");
+        std::fs::write(
+            &codex,
+            r#"{"tokens": {"access_token": "h.eyJleHAiOjkyMjMzNzIwMzY4NTQ3NzU4MDd9.s"}}"#,
+        )
+        .unwrap();
+        let credential = read_codex_cli_credential(&codex).unwrap();
+        assert_eq!(credential.expiry(), Expiry::Malformed);
+        assert!(!credential.usable());
+        // A non-numeric expiry is unrecorded, as the reference reads it.
+        std::fs::write(
+            &path,
+            r#"{"claudeAiOauth": {"accessToken": "t", "expiresAt": "soon"}}"#,
+        )
+        .unwrap();
+        let credential = read_claude_code_credential(&path).unwrap();
+        assert_eq!(credential.expiry(), Expiry::Unrecorded);
+        assert!(credential.usable());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -5,6 +5,8 @@ use std::fmt;
 
 use serde_json::Value;
 
+use crate::auth::time::{days_from_civil, format_rfc3339};
+
 /// An opaque JSON object payload (INV-001, INV-002). `serde_json::Value`
 /// can only hold finite numbers and string keys, so strict-JSON validity
 /// holds by construction; payloads are stored as given and never rewritten.
@@ -192,15 +194,21 @@ pub(crate) fn base64_decode(text: &str) -> VResult<Vec<u8>> {
 
 // ─── RFC 3339 (credential expiry) ────────────────────────────────────
 
-/// Normalize an RFC 3339 timestamp to `YYYY-MM-DDTHH:MM:SSZ` (whole
-/// seconds, UTC). Accepts `Z`/`z`, a numeric offset, or no offset (UTC).
-pub fn normalize_rfc3339(text: &str) -> VResult<String> {
+/// Parses an RFC 3339 / ISO 8601 timestamp into Unix seconds (UTC) with
+/// the leniency of the reference's `datetime.fromisoformat`
+/// (`lm15/credentials.py` `parse_rfc3339`): a date alone, a `T`/`t`/space
+/// separator, fractional seconds (truncated), `Z`/`z`, a numeric offset
+/// (`+HH:MM`, `+HHMM`, `+HH`), or no offset (UTC).
+///
+/// The text is untrusted: nothing here indexes into it by byte, so a short
+/// or non-ASCII input is a `ValueError`, never a panic.
+pub fn parse_rfc3339_lenient(text: &str) -> VResult<i64> {
     let bad = || ValidationError::value(format!("invalid RFC 3339 timestamp: {text:?}"));
     let s = text.trim();
-    if s.len() < 10 {
+    if !s.is_ascii() {
         return Err(bad());
     }
-    let (date, rest) = s.split_at(10);
+    let (date, rest) = s.get(..10).zip(s.get(10..)).ok_or_else(bad)?;
     let mut parts = date.split('-');
     let year: i64 = parts.next().and_then(|p| p.parse().ok()).ok_or_else(bad)?;
     let month: i64 = parts.next().and_then(|p| p.parse().ok()).ok_or_else(bad)?;
@@ -219,7 +227,7 @@ pub fn normalize_rfc3339(text: &str) -> VResult<String> {
             .or_else(|| rest.strip_prefix(' '))
             .ok_or_else(bad)?;
         let (clock, offset) = match time.find(['Z', 'z', '+', '-']) {
-            Some(i) => (&time[..i], &time[i..]),
+            Some(i) => time.split_at(i),
             None => (time, ""),
         };
         let clock = clock.split('.').next().unwrap_or(clock);
@@ -238,51 +246,29 @@ pub fn normalize_rfc3339(text: &str) -> VResult<String> {
             "" | "Z" | "z" => {}
             _ => {
                 let sign = if offset.starts_with('-') { -1 } else { 1 };
-                let body = &offset[1..];
+                let body = offset.get(1..).ok_or_else(bad)?;
                 let (oh, om) = match body.split_once(':') {
                     Some((h, m)) => (h, m),
-                    None if body.len() == 4 => body.split_at(2),
+                    None if body.len() == 4 => body.get(..2).zip(body.get(2..)).ok_or_else(bad)?,
                     None => (body, "0"),
                 };
                 let oh: i64 = oh.parse().map_err(|_| bad())?;
                 let om: i64 = om.parse().map_err(|_| bad())?;
+                if !(0..=23).contains(&oh) || !(0..=59).contains(&om) {
+                    return Err(bad());
+                }
                 offset_minutes = sign * (oh * 60 + om);
             }
         }
     }
     let days = days_from_civil(year, month, day);
-    let total = days * 86_400 + hour * 3600 + minute * 60 + second - offset_minutes * 60;
-    let (days, secs) = (total.div_euclid(86_400), total.rem_euclid(86_400));
-    let (y, m, d) = civil_from_days(days);
-    Ok(format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        secs / 3600,
-        (secs % 3600) / 60,
-        secs % 60
-    ))
+    Ok(days * 86_400 + hour * 3600 + minute * 60 + second - offset_minutes * 60)
 }
 
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
+/// Normalize an RFC 3339 timestamp to `YYYY-MM-DDTHH:MM:SSZ` (whole
+/// seconds, UTC). Accepts what [`parse_rfc3339_lenient`] accepts.
+pub fn normalize_rfc3339(text: &str) -> VResult<String> {
+    parse_rfc3339_lenient(text).map(format_rfc3339)
 }
 
 #[cfg(test)]
@@ -320,5 +306,28 @@ mod tests {
             "2026-01-01T01:30:00Z"
         );
         assert!(normalize_rfc3339("yesterday").is_err());
+        assert_eq!(
+            normalize_rfc3339("2026-09-03").unwrap(),
+            "2026-09-03T00:00:00Z"
+        );
+    }
+
+    /// F1 (review 2026-09-07): untrusted text is never sliced by byte.
+    #[test]
+    fn rfc3339_rejects_short_and_non_ascii_input_without_panic() {
+        for text in [
+            "2026-09-0\u{e9}X",
+            "\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}",
+            "2026-09-03T10:00:00+\u{e9}",
+            "2026-09-03T10:00:00+a\u{e9}a",
+            "2026-09-03T10:00:00+",
+            "2026-09-03T10:00:00+999999999999999999:00",
+            "2026-09",
+            "",
+            "9999999999999999999-01-01",
+        ] {
+            let err = normalize_rfc3339(text).unwrap_err();
+            assert_eq!(err.type_name(), "ValueError", "{text:?}");
+        }
     }
 }

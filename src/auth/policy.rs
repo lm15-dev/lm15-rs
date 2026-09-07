@@ -6,7 +6,8 @@
 //!
 //! Providers are named by their registry id (`lm15/registry.py`), which is
 //! the string a model spec uses; `openai_chat` (the access-table spelling)
-//! maps to `openai-chat` through [`canonical_provider`].
+//! maps to `openai-chat` through [`crate::registry::canonical_provider`]
+//! (the one home of that rule; re-exported here for the auth surface).
 
 use super::credential::AuthScheme;
 use super::stores::{CLAUDE_CODE_LOGIN_HINT, OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT};
@@ -179,10 +180,7 @@ pub const ACCESS_POLICIES: &[AccessPolicy] = &[
     },
 ];
 
-/// Maps the permanent underscore alias to the hyphenated provider string.
-pub fn canonical_provider(name: &str) -> String {
-    name.replace('_', "-")
-}
+pub use crate::registry::canonical_provider;
 
 /// Every provider in the table, sorted.
 pub fn known_providers() -> Vec<&'static str> {

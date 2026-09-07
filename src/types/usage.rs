@@ -1,7 +1,7 @@
 //! Usage and logprobs (types.md § Usage, § TokenLogprob, § TopLogprob;
 //! INV-029).
 
-use super::json::VResult;
+use super::json::{VResult, ValidationError};
 
 /// Token usage. Every counter is `Option<u64>`: `None` means "not
 /// reported", distinct from a reported `0` (INV-029). Counters are
@@ -21,14 +21,18 @@ pub struct Usage {
 
 impl Usage {
     /// Apply INV-029: `total_tokens` auto-computes as input + output only
-    /// when both are present and no total was reported.
-    pub fn normalized(mut self) -> Usage {
+    /// when both are present and no total was reported. A sum that does
+    /// not fit `u64` is a `ValidationError` (a total that cannot be known
+    /// is never invented).
+    pub fn normalized(mut self) -> VResult<Usage> {
         if self.total_tokens.is_none() {
             if let (Some(input), Some(output)) = (self.input_tokens, self.output_tokens) {
-                self.total_tokens = Some(input + output);
+                self.total_tokens = Some(input.checked_add(output).ok_or_else(|| {
+                    ValidationError::value("Usage.total_tokens overflows: input + output")
+                })?);
             }
         }
-        self
+        Ok(self)
     }
 
     /// True when nothing was reported: serializes to `{}` and is omitted by
@@ -84,13 +88,15 @@ mod tests {
             output_tokens: Some(2),
             ..Default::default()
         }
-        .normalized();
+        .normalized()
+        .unwrap();
         assert_eq!(both.total_tokens, Some(3));
         let one = Usage {
             input_tokens: Some(7),
             ..Default::default()
         }
-        .normalized();
+        .normalized()
+        .unwrap();
         assert_eq!(one.total_tokens, None);
         let explicit = Usage {
             input_tokens: Some(1),
@@ -98,7 +104,8 @@ mod tests {
             total_tokens: Some(10),
             ..Default::default()
         }
-        .normalized();
+        .normalized()
+        .unwrap();
         assert_eq!(explicit.total_tokens, Some(10));
         assert!(Usage::default().is_empty());
         assert!(!Usage {
@@ -106,5 +113,26 @@ mod tests {
             ..Default::default()
         }
         .is_empty());
+    }
+
+    /// F7 (review 2026-09-07): a sum that does not fit is a refusal, not a
+    /// panic, through the public struct.
+    #[test]
+    fn inv_029_total_overflow_is_a_validation_error() {
+        let big = Usage {
+            input_tokens: Some(u64::MAX),
+            output_tokens: Some(1),
+            ..Default::default()
+        };
+        let err = big.normalized().unwrap_err();
+        assert_eq!(err.type_name(), "ValueError");
+        // An explicit total is kept, whatever the counters add up to.
+        let explicit = Usage {
+            total_tokens: Some(5),
+            ..big
+        }
+        .normalized()
+        .unwrap();
+        assert_eq!(explicit.total_tokens, Some(5));
     }
 }
