@@ -11,6 +11,14 @@ pub enum OpenAIResponsesDeveloperRole {
 }
 
 impl OpenAIResponsesDeveloperRole {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "developer" => Some(OpenAIResponsesDeveloperRole::Developer),
+            "system" => Some(OpenAIResponsesDeveloperRole::System),
+            _ => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             OpenAIResponsesDeveloperRole::Developer => "developer",
@@ -28,6 +36,17 @@ pub enum OpenAIResponsesMaxOutputTokensField {
 }
 
 impl OpenAIResponsesMaxOutputTokensField {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "max_output_tokens" => Some(OpenAIResponsesMaxOutputTokensField::MaxOutputTokens),
+            "max_completion_tokens" => {
+                Some(OpenAIResponsesMaxOutputTokensField::MaxCompletionTokens)
+            }
+            "max_tokens" => Some(OpenAIResponsesMaxOutputTokensField::MaxTokens),
+            _ => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             OpenAIResponsesMaxOutputTokensField::MaxOutputTokens => "max_output_tokens",
@@ -50,12 +69,38 @@ pub enum OpenAIResponsesReasoningFormat {
     Zai,
 }
 
+impl OpenAIResponsesReasoningFormat {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "none" => Some(OpenAIResponsesReasoningFormat::None),
+            "responses_reasoning" => Some(OpenAIResponsesReasoningFormat::ResponsesReasoning),
+            "reasoning_effort" => Some(OpenAIResponsesReasoningFormat::ReasoningEffort),
+            "openrouter" => Some(OpenAIResponsesReasoningFormat::Openrouter),
+            "deepseek" => Some(OpenAIResponsesReasoningFormat::Deepseek),
+            "qwen" => Some(OpenAIResponsesReasoningFormat::Qwen),
+            "qwen_chat_template" => Some(OpenAIResponsesReasoningFormat::QwenChatTemplate),
+            "zai" => Some(OpenAIResponsesReasoningFormat::Zai),
+            _ => None,
+        }
+    }
+}
+
 /// `lm15/compat.py:86` `OpenAIResponsesCommentaryPhase` (marked for
 /// demotion, api-family.md § Providers, direct).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpenAIResponsesCommentaryPhase {
     Omit,
     Tag,
+}
+
+impl OpenAIResponsesCommentaryPhase {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "omit" => Some(OpenAIResponsesCommentaryPhase::Omit),
+            "tag" => Some(OpenAIResponsesCommentaryPhase::Tag),
+            _ => None,
+        }
+    }
 }
 
 /// `lm15/compat.py:91` `OpenAIResponsesEditImageField` (marked for demotion).
@@ -65,6 +110,16 @@ pub enum OpenAIResponsesEditImageField {
     Indexed,
 }
 
+impl OpenAIResponsesEditImageField {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "array" => Some(OpenAIResponsesEditImageField::Array),
+            "indexed" => Some(OpenAIResponsesEditImageField::Indexed),
+            _ => None,
+        }
+    }
+}
+
 /// `lm15/compat.py:101` `OpenAIResponsesBuiltinTools`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpenAIResponsesBuiltinTools {
@@ -72,6 +127,36 @@ pub enum OpenAIResponsesBuiltinTools {
     OpenAI,
     /// The canonical name IS the wire type (Meta, Moonshot).
     Verbatim,
+}
+
+impl OpenAIResponsesBuiltinTools {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "openai" => Some(OpenAIResponsesBuiltinTools::OpenAI),
+            "verbatim" => Some(OpenAIResponsesBuiltinTools::Verbatim),
+            _ => None,
+        }
+    }
+}
+
+/// The shared two-value knob's JSON spelling (`lm15/compat.py:68-69`).
+fn parse_include_omit(value: &str) -> Option<IncludeOmit> {
+    match value {
+        "include" => Some(IncludeOmit::Include),
+        "omit" => Some(IncludeOmit::Omit),
+        _ => None,
+    }
+}
+
+/// `lm15/compat.py:78` `OpenAICacheControl`.
+fn parse_cache_control(value: &str) -> Option<OpenAICacheControl> {
+    match value {
+        "none" => Some(OpenAICacheControl::None),
+        "openai" => Some(OpenAICacheControl::OpenAI),
+        "openai_implicit" => Some(OpenAICacheControl::OpenAIImplicit),
+        "anthropic" => Some(OpenAICacheControl::Anthropic),
+        _ => None,
+    }
 }
 
 /// Partial OpenAI Responses compat (`lm15/compat.py:104-153`).
@@ -108,6 +193,128 @@ impl OpenAIResponsesCompat {
     /// The named preset (`lm15/compat.py:142-153`; aliases accepted).
     pub fn preset(name: &str) -> Option<&'static OpenAIResponsesCompat> {
         super::find(OPENAI_RESPONSES_PRESETS, name)
+    }
+
+    /// `lm15/compat.py:1047-1065` `merge_openai_responses_compat`: `None`
+    /// fields inherit; set fields (including `Auto`) override; the two
+    /// `extensions` objects merge key-wise, `over` winning.
+    pub fn merge(&self, over: &OpenAIResponsesCompat) -> OpenAIResponsesCompat {
+        OpenAIResponsesCompat {
+            developer_role: over.developer_role.or(self.developer_role),
+            max_output_tokens_field: over
+                .max_output_tokens_field
+                .or(self.max_output_tokens_field),
+            reasoning_format: over.reasoning_format.or(self.reasoning_format),
+            tool_result_name: over.tool_result_name.or(self.tool_result_name),
+            strict_tools: over.strict_tools.or(self.strict_tools),
+            cache_control: over.cache_control.or(self.cache_control),
+            commentary_phase: over.commentary_phase.or(self.commentary_phase),
+            edit_image_field: over.edit_image_field.or(self.edit_image_field),
+            builtin_tools: over.builtin_tools.or(self.builtin_tools),
+            routing: over.routing.clone().or_else(|| self.routing.clone()),
+            extensions: match (&self.extensions, &over.extensions) {
+                (None, b) => b.clone(),
+                (a, None) => a.clone(),
+                (Some(a), Some(b)) => {
+                    let mut merged = a.clone();
+                    merged.extend(b.iter().map(|(k, v)| (k.clone(), v.clone())));
+                    Some(merged)
+                }
+            },
+        }
+    }
+
+    /// The request-level override (`lm15/profiles.py:146-181`
+    /// `openai_responses_compat_from_extensions`): `extensions.
+    /// openai_responses_compat`, else `openai_compat`, else
+    /// `compat.openai_responses` / `compat.openai`. A non-object is no
+    /// override; a knob with an unknown value is an error (the reference's
+    /// dataclass takes it and the wire sees garbage — the port refuses).
+    pub fn from_extensions(
+        extensions: Option<&JsonObject>,
+    ) -> Result<Option<OpenAIResponsesCompat>, String> {
+        let Some(extensions) = extensions else {
+            return Ok(None);
+        };
+        let raw = extensions
+            .get("openai_responses_compat")
+            .or_else(|| extensions.get("openai_compat"))
+            .or_else(|| {
+                extensions.get("compat").and_then(|compat| {
+                    let compat = compat.as_object()?;
+                    compat
+                        .get("openai_responses")
+                        .or_else(|| compat.get("openai"))
+                })
+            });
+        match raw.and_then(serde_json::Value::as_object) {
+            Some(object) => OpenAIResponsesCompat::from_json(object).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// A partial compat from its JSON spelling (the field names and values
+    /// of `lm15/compat.py:50-101`); unknown keys are ignored, as in the
+    /// reference's `allowed` filter (`lm15/profiles.py:166-180`).
+    pub fn from_json(object: &JsonObject) -> Result<OpenAIResponsesCompat, String> {
+        fn knob<T: Copy>(
+            object: &JsonObject,
+            key: &str,
+            parse: fn(&str) -> Option<T>,
+        ) -> Result<Option<Knob<T>>, String> {
+            match object.get(key) {
+                None | Some(serde_json::Value::Null) => Ok(None),
+                Some(serde_json::Value::String(s)) if s == "auto" => Ok(Some(Knob::Auto)),
+                Some(serde_json::Value::String(s)) => parse(s)
+                    .map(|v| Some(Knob::Set(v)))
+                    .ok_or_else(|| format!("OpenAIResponsesCompat.{key}: unknown value {s:?}")),
+                Some(other) => Err(format!(
+                    "OpenAIResponsesCompat.{key}: expected a string, got {other}"
+                )),
+            }
+        }
+        fn object_field(object: &JsonObject, key: &str) -> Result<Option<JsonObject>, String> {
+            match object.get(key) {
+                None | Some(serde_json::Value::Null) => Ok(None),
+                Some(serde_json::Value::Object(o)) => Ok(Some(o.clone())),
+                Some(other) => Err(format!(
+                    "OpenAIResponsesCompat.{key}: expected an object, got {other}"
+                )),
+            }
+        }
+        Ok(OpenAIResponsesCompat {
+            developer_role: knob(
+                object,
+                "developer_role",
+                OpenAIResponsesDeveloperRole::parse,
+            )?,
+            max_output_tokens_field: knob(
+                object,
+                "max_output_tokens_field",
+                OpenAIResponsesMaxOutputTokensField::parse,
+            )?,
+            reasoning_format: knob(
+                object,
+                "reasoning_format",
+                OpenAIResponsesReasoningFormat::parse,
+            )?,
+            tool_result_name: knob(object, "tool_result_name", parse_include_omit)?,
+            strict_tools: knob(object, "strict_tools", parse_include_omit)?,
+            cache_control: knob(object, "cache_control", parse_cache_control)?,
+            commentary_phase: knob(
+                object,
+                "commentary_phase",
+                OpenAIResponsesCommentaryPhase::parse,
+            )?,
+            edit_image_field: knob(
+                object,
+                "edit_image_field",
+                OpenAIResponsesEditImageField::parse,
+            )?,
+            builtin_tools: knob(object, "builtin_tools", OpenAIResponsesBuiltinTools::parse)?,
+            routing: object_field(object, "routing")?,
+            extensions: object_field(object, "extensions")?,
+        })
     }
 
     /// `lm15/compat.py:1068-1118` `resolve_openai_responses_compat`.
