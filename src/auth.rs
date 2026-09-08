@@ -13,18 +13,24 @@
 //! Secrecy invariant (AUTH-5): no secret value is stored on a [`Report`],
 //! rendered by `describe`, or emitted by any `Debug`/`Display` impl here.
 //!
-//! Module 3b (cloud chains: `aws-chain`, `azure-chain`, `gcp-chain`; AUTH-11
-//! rung kinds; SigV4; RS256) is not implemented. Their policies are present
-//! in the table; [`explain_auth`] answers [`AuthError::NotImplemented`]
-//! (class `NotConfiguredError`) naming module 3b. Also not implemented
-//! (stated, not absorbed): the AUTH-3/4 write side and the AUTH-9 login
-//! primitives. This port reads credentials only.
+//! - AUTH-3/AUTH-4 write side: [`StoredLogin::refreshing`] refreshes an
+//!   expired login under the cross-process [`FileLock`] with the
+//!   double-checked re-read and writes it back atomically (0600);
+//! - AUTH-9: [`login`] — the one uniform door; xAI's device-code flow is
+//!   the flow this port owns, every other provider fails typed naming the
+//!   real path. [`pkce_challenge`] (S256) is the only other primitive
+//!   shipped: no flow here needs a loopback listener, so none is built.
+//!
+//! Module 3b (cloud chains, AUTH-11, SigV4, RS256) lives in `crate::cloud`.
 
 mod credential;
+mod device;
 mod doctor;
 mod error;
+mod lock;
 mod login;
 mod policy;
+mod refresh;
 mod stores;
 pub(crate) mod time;
 
@@ -32,8 +38,15 @@ pub use credential::{
     select_scheme, AuthScheme, Credential, CredentialKind, CredentialProvider, FnCredential,
     StaticCredential, EXPIRY_SKEW_SECONDS,
 };
+pub use device::{
+    login, login_xai, pkce_challenge, poll_device_code, poll_xai_device_login,
+    start_xai_device_login, DeviceAuthorization, DevicePoll, Echo, LoginOptions, Sleeper,
+};
 pub use doctor::{explain_auth, ExplainOptions, Report, Step, StepState};
 pub use error::AuthError;
+pub use lock::{
+    lock_dir, lock_path_for, write_private_json_atomic, FileLock, DEFAULT_LOCK_TIMEOUT,
+};
 pub use login::{stored_login_paths, StoredLogin};
 pub use policy::{
     access_policy, canonical_provider, known_providers, AccessPolicy, AnthropicVersionIn,
@@ -47,10 +60,15 @@ pub use policy::{
     OPENAI_CHAT_API, OPENAI_CODEX, OPENROUTER, SGLANG, VERTEX, VERTEX_ANTHROPIC, VERTEX_EXPRESS,
     VLLM, XAI, ZAI,
 };
+pub use refresh::{
+    credential_from_token_response, merged_file, refresh_request, LoginProvider,
+    CLAUDE_CODE_CLIENT_ID, CLAUDE_CODE_TOKEN_URL, OPENAI_CODEX_CLIENT_ID, OPENAI_CODEX_TOKEN_URL,
+    XAI_CLIENT_ID, XAI_DEVICE_CODE_URL, XAI_OAUTH_SCOPE, XAI_TOKEN_URL,
+};
 pub use stores::{
-    extract_chatgpt_account_id, read_claude_code_credential, read_codex_cli_credential,
-    read_xai_credential, Expiry, LocalOAuthCredential, CLAUDE_CODE_LOGIN_HINT,
-    OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT,
+    extract_chatgpt_account_id, jwt_expires_at_ms, read_claude_code_credential,
+    read_codex_cli_credential, read_xai_credential, Expiry, LocalOAuthCredential,
+    CLAUDE_CODE_LOGIN_HINT, OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT,
 };
 pub use time::{format_rfc3339, parse_rfc3339};
 

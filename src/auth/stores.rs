@@ -3,8 +3,8 @@
 //! store (`~/.pi/agent/auth.json`, same xAI entry format).
 //!
 //! These formats are wire-fact-like: owned by foreign tools, revalidated
-//! against reality, never "cleaned". This port never writes them (the
-//! AUTH-3/4 write side is not implemented; stated in the README).
+//! against reality, never "cleaned". The write side (a refresh written
+//! back under the AUTH-4 lock) is `super::refresh` / `super::login`.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -21,10 +21,10 @@ pub const CLAUDE_CODE_LOGIN_HINT: &str =
     "Log in again: run `claude` and use /login (Claude subscription auth)";
 pub const OPENAI_CODEX_LOGIN_HINT: &str =
     "Log in again: run `codex login` (ChatGPT subscription auth)";
-/// AUTH-9 names the uniform `login(provider)` door; this port does not ship
-/// it yet (stated in the README), so the hint names the reference's flow.
+/// AUTH-9: the uniform `lm15::auth::login("xai", ..)` door runs the
+/// device-code flow this hint names.
 pub const XAI_LOGIN_HINT: &str =
-    "Log in again: run lm15's xAI login (`login(\"xai\")`, spec/auth.md AUTH-9; SuperGrok / X Premium subscription auth)";
+    "Log in again: run lm15::auth::login(\"xai\") (SuperGrok / X Premium subscription auth)";
 
 /// The recorded expiry of a borrowed file, as read (AUTH-8: revalidated
 /// against reality, never "cleaned").
@@ -50,12 +50,31 @@ pub struct LocalOAuthCredential {
 }
 
 impl LocalOAuthCredential {
+    pub(crate) fn new(
+        access_token: impl Into<String>,
+        refresh_token: Option<&str>,
+        expiry: Expiry,
+        account_id: Option<String>,
+    ) -> Self {
+        LocalOAuthCredential {
+            access_token: access_token.into(),
+            refresh_token: refresh_token.map(str::to_string),
+            expiry,
+            account_id,
+        }
+    }
+
     pub fn access_token(&self) -> &str {
         &self.access_token
     }
 
     pub fn has_refresh_token(&self) -> bool {
         self.refresh_token.is_some()
+    }
+
+    /// The refresh token, for the refresh flow. Never rendered.
+    pub fn refresh_token(&self) -> Option<&str> {
+        self.refresh_token.as_deref()
     }
 
     pub fn account_id(&self) -> Option<&str> {
@@ -240,24 +259,9 @@ pub fn read_codex_cli_credential(path: &Path) -> Result<LocalOAuthCredential, Au
             OPENAI_CODEX_LOGIN_HINT,
         )
     })?;
-    let payload = jwt_payload(&access_token);
-    let expiry = match payload
-        .as_ref()
-        .and_then(|p| p.get("exp"))
-        .and_then(number_ms)
-    {
-        None => Expiry::Unrecorded,
-        Some(exp) => exp
-            .checked_mul(1000)
-            .and_then(|ms| ms.checked_sub(REFRESH_SKEW_MS))
-            .map_or(Expiry::Malformed, Expiry::AtMs),
-    };
-    let account_id = string_field(tokens, "account_id").or_else(|| {
-        payload
-            .as_ref()
-            .and_then(|p| p.get("https://api.openai.com/auth"))
-            .and_then(|claim| string_field(claim, "chatgpt_account_id"))
-    });
+    let expiry = jwt_expires_at_ms(&access_token);
+    let account_id =
+        string_field(tokens, "account_id").or_else(|| extract_chatgpt_account_id(&access_token));
     Ok(LocalOAuthCredential {
         access_token,
         refresh_token: string_field(tokens, "refresh_token"),
@@ -309,6 +313,23 @@ fn expiry_ms(value: Option<&Value>) -> Expiry {
         None => Expiry::Unrecorded,
         Some(ms) if ms.checked_sub(now_ms()).is_some() => Expiry::AtMs(ms),
         Some(_) => Expiry::Malformed,
+    }
+}
+
+/// A Codex access token's expiry: the JWT `exp` claim (seconds) as
+/// milliseconds minus the AUTH-3 skew (`jwt_expires_at_ms`); unrecorded
+/// for a non-JWT or a token without the claim.
+pub fn jwt_expires_at_ms(token: &str) -> Expiry {
+    match jwt_payload(token)
+        .as_ref()
+        .and_then(|p| p.get("exp"))
+        .and_then(number_ms)
+    {
+        None => Expiry::Unrecorded,
+        Some(exp) => exp
+            .checked_mul(1000)
+            .and_then(|ms| ms.checked_sub(REFRESH_SKEW_MS))
+            .map_or(Expiry::Malformed, Expiry::AtMs),
     }
 }
 

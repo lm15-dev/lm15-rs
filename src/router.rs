@@ -755,6 +755,25 @@ fn missing_credential(policy: &AccessPolicy, what: &str) -> Lm15Error {
     Lm15Error::NotConfiguredError(meta)
 }
 
+/// The stored login of `provider` with AUTH-3 refresh enabled: the
+/// router's transport (or the shared one) for the token endpoint, the
+/// AUTH-8 lock directory from the router's env. Without a HOME (or
+/// `LM15_LOCK_DIR`) there is no lock directory and the login stays
+/// read-only: an expired token is then the typed `AuthError`, never an
+/// unlocked refresh.
+fn refreshing_login(provider: &str, config: &RouterConfig) -> Result<StoredLogin, Lm15Error> {
+    let env = |key: &str| config.env_value(key);
+    let login = StoredLogin::for_provider(provider, &env, config.credentials_path.as_deref());
+    let Some(lock_dir) = crate::auth::lock_dir(&env) else {
+        return Ok(login);
+    };
+    let transport: Arc<dyn Transport> = match &config.transport {
+        Some(transport) => Arc::clone(transport),
+        None => HttpTransport::shared()?,
+    };
+    Ok(login.refreshing(transport, lock_dir))
+}
+
 fn build_lm(resolution: &Resolution, config: &RouterConfig) -> Result<ProviderLM, Lm15Error> {
     let definition = lookup(&resolution.provider).expect("a resolution names a registry entry");
     let policy = definition.access();
@@ -767,8 +786,9 @@ fn build_lm(resolution: &Resolution, config: &RouterConfig) -> Result<ProviderLM
 
     if policy.credential_policy == CredentialPolicy::OAuth {
         // The stored login owns the provider (AUTH-1): validated now for
-        // the typed, re-login-guided error, then re-read per request.
-        let login = StoredLogin::for_provider(provider, &env, config.credentials_path.as_deref());
+        // the typed, re-login-guided error, then re-read per request and
+        // refreshed before a request when expired (AUTH-3).
+        let login = refreshing_login(provider, config)?;
         let initial = login.read()?;
         if let Some(account_id) = initial.account_id() {
             builder = builder.account_id(account_id);
@@ -819,7 +839,7 @@ fn build_lm(resolution: &Resolution, config: &RouterConfig) -> Result<ProviderLM
     if credential.is_none() && policy.credential_policy == CredentialPolicy::OAuthUnlessExplicit {
         // A usable stored subscription login outranks ambient env keys: it
         // spends no money per token (AUTH-1).
-        let login = StoredLogin::for_provider(provider, &env, config.credentials_path.as_deref());
+        let login = refreshing_login(provider, config)?;
         if login.is_usable() {
             credential = Some(Box::new(login));
         }
@@ -1222,7 +1242,10 @@ mod tests {
             LMRouter::with_config(hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&unusable));
         assert_eq!(bearer(&router), "Bearer env");
         // A usable-but-expired login (refresh token present) is selected by
-        // AUTH-1 and then refused by this port, loudly: never the env key.
+        // AUTH-1 (never the env key). `build_request` by hand skips the
+        // adapter's `prepare` step that refreshes it (AUTH-3, tested end to
+        // end in tests/login_refresh.rs), so the sync path is the typed
+        // refusal naming that step — loud, never a silent fall back.
         let refreshable = write_login(
             "xai.json",
             &format!(
@@ -1238,7 +1261,7 @@ mod tests {
             .build_request(&request, false)
             .unwrap_err();
         assert_eq!(err.class_name(), "AuthError");
-        assert!(err.message().contains("does not refresh"), "{err}");
+        assert!(err.message().contains("refresh"), "{err}");
         // Nothing anywhere: the login hint.
         let router = LMRouter::with_config(hermetic(&[]).credentials_path("/nonexistent/xai.json"));
         let err = router.lm("grok-4").unwrap_err();
