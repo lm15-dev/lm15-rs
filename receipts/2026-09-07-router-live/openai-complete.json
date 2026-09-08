@@ -1,0 +1,174 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "complete",
+  "sent": {
+    "method": "POST",
+    "url": "https://api.openai.com/v1/responses",
+    "params": {},
+    "headers": {
+      "authorization": "Bearer $OPENAI_API_KEY",
+      "content-type": "application/json"
+    },
+    "body": {
+      "model": "gpt-4.1-mini",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Reply with exactly the two words: hello world"
+            }
+          ]
+        }
+      ],
+      "stream": false,
+      "max_output_tokens": 64,
+      "temperature": 0.0
+    }
+  },
+  "status": 200,
+  "response_headers": {
+    "access-control-expose-headers": "CF-Ray",
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a37a1a6eaa2c8130-YUL",
+    "content-length": "1979",
+    "content-type": "application/json",
+    "date": "Tue, 08 Sep 2026 01:15:40 GMT",
+    "openai-organization": "user-5ie5j0kecta5ywlt7gnzvvvu",
+    "openai-processing-ms": "760",
+    "openai-project": "proj_lUCuxJwZ8FrA21hP8ZMzGWMo",
+    "openai-version": "2020-10-01",
+    "server": "cloudflare",
+    "set-cookie": "__cf_bm=gWiAFMBN5A9DhsDNBpA5OgqEsb0bMczWsbG.db5tns8-1788830138.6628041-1.0.1.1-Ib_pEltTLbUJIyJRDrVC_AFiw_cByVmOcTn4XERLvsQco17J3xfTs6JCC24YKxMBoBjs29MmF1cqC.mcfyLYVgVQQRnDBb1jh71rXmYBc2je4_pLE5o1QipDQjVFpl3m; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Tue, 08 Sep 2026 01:45:40 GMT",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "x-ratelimit-limit-requests": "10000",
+    "x-ratelimit-limit-tokens": "10000000",
+    "x-ratelimit-remaining-requests": "9999",
+    "x-ratelimit-remaining-tokens": "9999965",
+    "x-ratelimit-reset-requests": "6ms",
+    "x-ratelimit-reset-tokens": "0s",
+    "x-request-id": "req_1c3b195a2b894fe794389abb3692b49d"
+  },
+  "body": {
+    "id": "resp_002cc2beaec5455b006a9f61bb886087d28194726812630a8a",
+    "object": "response",
+    "created_at": 1788830139,
+    "status": "completed",
+    "background": false,
+    "billing": {
+      "payer": "developer"
+    },
+    "completed_at": 1788830140,
+    "error": null,
+    "frequency_penalty": 0.0,
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": 64,
+    "max_tool_calls": null,
+    "model": "gpt-4.1-mini-2025-04-14",
+    "moderation": null,
+    "output": [
+      {
+        "id": "msg_002cc2beaec5455b006a9f61bc12a087d29dcc5846a4909238",
+        "type": "message",
+        "status": "completed",
+        "content": [
+          {
+            "type": "output_text",
+            "annotations": [],
+            "logprobs": [],
+            "text": "hello world"
+          }
+        ],
+        "role": "assistant"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "presence_penalty": 0.0,
+    "previous_response_id": null,
+    "prompt_cache_key": null,
+    "prompt_cache_retention": "in_memory",
+    "reasoning": {
+      "context": null,
+      "effort": null,
+      "summary": null
+    },
+    "safety_identifier": null,
+    "service_tier": "default",
+    "store": true,
+    "temperature": 0.0,
+    "text": {
+      "format": {
+        "type": "text"
+      },
+      "verbosity": "medium"
+    },
+    "tool_choice": "auto",
+    "tool_usage": {
+      "image_gen": {
+        "input_tokens": 0,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 0
+        },
+        "total_tokens": 0
+      },
+      "web_search": {
+        "num_requests": 0
+      }
+    },
+    "tools": [],
+    "top_logprobs": 0,
+    "top_p": 1.0,
+    "truncation": "disabled",
+    "usage": {
+      "input_tokens": 16,
+      "input_tokens_details": {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      },
+      "output_tokens": 3,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 19
+    },
+    "user": null,
+    "metadata": {}
+  },
+  "lm15": {
+    "response": {
+      "id": "resp_002cc2beaec5455b006a9f61bb886087d28194726812630a8a",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "text",
+            "text": "hello world"
+          }
+        ]
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "input_tokens": 16,
+        "output_tokens": 3,
+        "total_tokens": 19,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0
+      }
+    }
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:15:41 GMT"
+}

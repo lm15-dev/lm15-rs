@@ -23,6 +23,7 @@
 mod credential;
 mod doctor;
 mod error;
+mod login;
 mod policy;
 mod stores;
 pub(crate) mod time;
@@ -33,6 +34,7 @@ pub use credential::{
 };
 pub use doctor::{explain_auth, ExplainOptions, Report, Step, StepState};
 pub use error::AuthError;
+pub use login::{stored_login_paths, StoredLogin};
 pub use policy::{
     access_policy, canonical_provider, known_providers, AccessPolicy, AnthropicVersionIn,
     CredentialPolicy, EndpointSupport, HostSetting, HostSpec, ModelPlacement, StreamFraming,
@@ -46,7 +48,8 @@ pub use policy::{
     VLLM, XAI, ZAI,
 };
 pub use stores::{
-    read_claude_code_credential, read_codex_cli_credential, read_xai_credential, Expiry,
-    LocalOAuthCredential, CLAUDE_CODE_LOGIN_HINT, OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT,
+    extract_chatgpt_account_id, read_claude_code_credential, read_codex_cli_credential,
+    read_xai_credential, Expiry, LocalOAuthCredential, CLAUDE_CODE_LOGIN_HINT,
+    OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT,
 };
 pub use time::{format_rfc3339, parse_rfc3339};

@@ -1,0 +1,112 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "complete",
+  "sent": {
+    "method": "POST",
+    "url": "https://api.groq.com/openai/v1/chat/completions",
+    "params": {},
+    "headers": {
+      "authorization": "Bearer $GROQ_API_KEY",
+      "content-type": "application/json"
+    },
+    "body": {
+      "model": "openai/gpt-oss-20b",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with exactly the two words: hello world"
+        }
+      ],
+      "max_tokens": 64,
+      "temperature": 0.0
+    }
+  },
+  "status": 200,
+  "response_headers": {
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cache-control": "private, max-age=0, no-store, no-cache, must-revalidate",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a37a1a8df886a2ae-YUL",
+    "content-length": "888",
+    "content-type": "application/json",
+    "date": "Tue, 08 Sep 2026 01:15:43 GMT",
+    "server": "cloudflare",
+    "set-cookie": "__cf_bm=XWYlyfcE3pqejPNfr7JY8dNpvQnu4z6C6Jec1HFKT9s-1788830143.6744208-1.0.1.1-C_gRP.b4353.ICbtDCgwUXsx2X2kJOMsAfKa8I.3vKyYnLx7jTeVKK728eogdk3e_C2pc9qPgJzq9qyuZUuAc0Sh8LK8SwcSwPU9SRQnbatpDsbEn3xak3JfHTTv61Rl; HttpOnly; SameSite=None; Secure; Path=/; Domain=groq.com; Expires=Tue, 08 Sep 2026 01:45:43 GMT",
+    "strict-transport-security": "max-age=15552000",
+    "vary": "Origin",
+    "x-groq-region": "yul",
+    "x-ratelimit-limit-requests": "500000",
+    "x-ratelimit-limit-tokens": "250000",
+    "x-ratelimit-remaining-requests": "499999",
+    "x-ratelimit-remaining-tokens": "249856",
+    "x-ratelimit-reset-requests": "172ms",
+    "x-ratelimit-reset-tokens": "34ms",
+    "x-request-id": "req_01m1z9bn77e0xvdvmgr0zey61p"
+  },
+  "body": {
+    "id": "chatcmpl-37e037c3-dacc-4831-8b0c-ac0ec790665f",
+    "object": "chat.completion",
+    "created": 1788830143,
+    "model": "openai/gpt-oss-20b",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "hello world",
+          "reasoning": "The user says: \"Reply with exactly the two words: hello world\". So we must output exactly \"hello world\". No extra punctuation, no quotes, no newlines? They didn't specify newline. Usually we output the phrase. So just \"hello world\"."
+        },
+        "logprobs": null,
+        "finish_reason": "length"
+      }
+    ],
+    "usage": {
+      "queue_time": 0.003190436,
+      "prompt_tokens": 80,
+      "prompt_time": 0.003895894,
+      "completion_tokens": 64,
+      "completion_time": 0.071139239,
+      "total_tokens": 144,
+      "total_time": 0.075035133,
+      "completion_tokens_details": {
+        "reasoning_tokens": 53
+      }
+    },
+    "usage_breakdown": null,
+    "system_fingerprint": "fp_99996fee8e",
+    "x_groq": {
+      "id": "req_01m1z9bn77e0xvdvmgr0zey61p",
+      "seed": 1671182443
+    },
+    "service_tier": "on_demand"
+  },
+  "lm15": {
+    "response": {
+      "id": "chatcmpl-37e037c3-dacc-4831-8b0c-ac0ec790665f",
+      "model": "openai/gpt-oss-20b",
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "thinking",
+            "text": "The user says: \"Reply with exactly the two words: hello world\". So we must output exactly \"hello world\". No extra punctuation, no quotes, no newlines? They didn't specify newline. Usually we output the phrase. So just \"hello world\"."
+          },
+          {
+            "type": "text",
+            "text": "hello world"
+          }
+        ]
+      },
+      "finish_reason": "length",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 64,
+        "total_tokens": 144,
+        "reasoning_tokens": 53
+      }
+    }
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:15:43 GMT"
+}

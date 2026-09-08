@@ -50,6 +50,7 @@ fn build_with(
         compat: &compat,
         base_url: "https://x/v1",
         model: &request.model,
+        account_id: None,
     };
     let wire = OPENAI_CHAT.build(request, stream, &cx)?;
     assert_eq!(wire.path, "/chat/completions");
@@ -192,6 +193,7 @@ fn headers_carry_content_type_and_the_policy_statics() {
         compat: &compat,
         base_url: "https://api.x.ai/v1",
         model: "grok-4.6",
+        account_id: None,
     };
     let wire = OPENAI_CHAT
         .build(&request(Config::default()), false, &cx)
@@ -1129,7 +1131,10 @@ fn tool_result_media_follows_the_preset_and_never_a_placeholder() {
         vec![Part::tool_result("c1", vec![Part::text("panel"), image.clone()]).unwrap()],
     )
     .unwrap();
-    refuses(build(OpenAIChatCompat::EMPTY, &req), "text-only tool results");
+    refuses(
+        build(OpenAIChatCompat::EMPTY, &req),
+        "text-only tool results",
+    );
     let body = build(preset("xai"), &req).unwrap();
     assert_eq!(
         body["messages"][2]["content"],
@@ -1140,7 +1145,10 @@ fn tool_result_media_follows_the_preset_and_never_a_placeholder() {
     let mut err = crate::types::ToolResultPart::new("c1", "boom").unwrap();
     err.is_error = true;
     req.messages[2] = Message::new(crate::types::Role::Tool, vec![Part::ToolResult(err)]).unwrap();
-    assert_eq!(build(preset("xai"), &req).unwrap()["messages"][2]["content"], json!("[error] boom"));
+    assert_eq!(
+        build(preset("xai"), &req).unwrap()["messages"][2]["content"],
+        json!("[error] boom")
+    );
     let document = Part::Document(crate::types::DocumentPart {
         media_type: "application/pdf".into(),
         data: Some("UERG".into()),
@@ -1151,7 +1159,10 @@ fn tool_result_media_follows_the_preset_and_never_a_placeholder() {
         vec![Part::tool_result("c1", vec![document]).unwrap()],
     )
     .unwrap();
-    refuses(build(preset("xai"), &req), "carries images but not document");
+    refuses(
+        build(preset("xai"), &req),
+        "carries images but not document",
+    );
 }
 
 #[test]

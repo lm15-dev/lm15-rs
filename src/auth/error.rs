@@ -28,24 +28,41 @@ pub enum AuthError {
         provider: String,
         policy: CredentialPolicy,
     },
+    /// A stored login that is expired and cannot be sent (AUTH-6:
+    /// expired-and-unrefreshable → the `AuthError` class, same hint
+    /// discipline). `refreshable`: the file holds a refresh token this
+    /// port does not exercise (the AUTH-3 write side is not implemented).
+    /// Class `AuthError`, code `auth`.
+    Expired {
+        provider: String,
+        refreshable: bool,
+        hint: String,
+    },
 }
 
 impl AuthError {
     /// The ErrorCode literal (spec/vocabularies.md ErrorCode).
     pub fn code(&self) -> &'static str {
-        "not_configured"
+        match self {
+            AuthError::Expired { .. } => "auth",
+            _ => "not_configured",
+        }
     }
 
     /// The canonical class name (spec/vocabularies.md ErrorCode table).
     pub fn class_name(&self) -> &'static str {
-        "NotConfiguredError"
+        match self {
+            AuthError::Expired { .. } => "AuthError",
+            _ => "NotConfiguredError",
+        }
     }
 
     /// The provider this error is about, when known.
     pub fn provider(&self) -> Option<&str> {
         match self {
             AuthError::UnknownProvider { provider }
-            | AuthError::NotImplemented { provider, .. } => Some(provider),
+            | AuthError::NotImplemented { provider, .. }
+            | AuthError::Expired { provider, .. } => Some(provider),
             AuthError::NotConfigured { provider, .. } => provider.as_deref(),
         }
     }
@@ -93,6 +110,27 @@ impl fmt::Display for AuthError {
                  to a port with module 3b, or use a non-cloud provider",
                 policy.as_str()
             ),
+            AuthError::Expired {
+                provider,
+                refreshable,
+                hint,
+            } => {
+                if *refreshable {
+                    write!(
+                        f,
+                        "{provider}: the stored login is expired; it holds a refresh token, \
+                         but this port does not refresh (spec/auth.md AUTH-3 write side, \
+                         stated in the README) — refresh it with the provider's own tool\n\n  \
+                         To fix:\n    - {hint}\n"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "{provider}: the stored login is expired and has no refresh token\n\n  \
+                         To fix:\n    - {hint}\n"
+                    )
+                }
+            }
         }
     }
 }
@@ -100,11 +138,16 @@ impl fmt::Display for AuthError {
 impl std::error::Error for AuthError {}
 
 impl From<AuthError> for crate::errors::Lm15Error {
-    /// Every auth error is a `NotConfiguredError` (AUTH-6); the message is
-    /// the redacted rendering, the provider is carried when known.
+    /// AUTH-6: a missing / unreadable / unimplemented source is a
+    /// `NotConfiguredError`; an expired login is an `AuthError`. The
+    /// message is the redacted rendering, the provider is carried when
+    /// known.
     fn from(err: AuthError) -> Self {
         let mut meta = crate::errors::ErrorMeta::new(err.to_string());
         meta.provider = err.provider().map(str::to_string);
-        crate::errors::Lm15Error::NotConfiguredError(meta)
+        match err {
+            AuthError::Expired { .. } => crate::errors::Lm15Error::AuthError(meta),
+            _ => crate::errors::Lm15Error::NotConfiguredError(meta),
+        }
     }
 }

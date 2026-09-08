@@ -942,7 +942,9 @@ fn tool_results_carry_media_as_the_documented_array() {
         b["input"][4]["output"],
         json!([{"type": "input_text", "text": "[error]"}, {"type": "input_image", "image_url": "https://x/a.png"}])
     );
-    assert!(!serde_json::to_string(&b).unwrap().contains("[{\"type\": \"image\"}"));
+    assert!(!serde_json::to_string(&b)
+        .unwrap()
+        .contains("[{\"type\": \"image\"}"));
     // the moonshotai preset admits images, not documents; a reject preset nothing
     let doc = json!({"model": "kimi-k3", "messages": [user("q"),
         {"role": "assistant", "parts": [{"type": "tool_call", "id": "c1", "name": "f", "input": {}}]},
@@ -950,7 +952,10 @@ fn tool_results_carry_media_as_the_documented_array() {
             {"type": "document", "media_type": "application/pdf", "data": "UERG"}]}]}]});
     let err = build("moonshotai-responses", doc, false).unwrap_err();
     assert_eq!(err.class_name(), "UnsupportedFeatureError");
-    assert!(err.message().contains("carries images but not document"), "{err}");
+    assert!(
+        err.message().contains("carries images but not document"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -1013,7 +1018,13 @@ fn store_false_and_user_id_reach_the_wire() {
 
 #[test]
 fn the_codex_backend_payload_and_headers() {
-    let lm = OpenAICodexLM::builder().api_key("tok").build().unwrap();
+    // `openai.py:469-476`: the Codex door needs the ChatGPT account id
+    // (bound here; else the token's claim; else the typed refusal).
+    let lm = OpenAICodexLM::builder()
+        .api_key("tok")
+        .account_id("acct")
+        .build()
+        .unwrap();
     let built = lm
         .build_request(
             &request(json!({"model": "gpt-5-codex", "messages": [user("hi")],
@@ -1033,6 +1044,7 @@ fn the_codex_backend_payload_and_headers() {
     assert_eq!(built.header("originator"), Some("lm15"));
     assert_eq!(built.header("authorization"), Some("Bearer tok"));
     assert_eq!(built.header("content-type"), Some("application/json"));
+    assert_eq!(built.header("chatgpt-account-id"), Some("acct"));
     // A caller's system prompt wins over the prefix.
     let built = lm
         .build_request(

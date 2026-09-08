@@ -1,0 +1,99 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "complete",
+  "sent": {
+    "method": "POST",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    "params": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "$GEMINI_API_KEY"
+    },
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Reply with exactly the two words: hello world"
+            }
+          ]
+        }
+      ],
+      "generationConfig": {
+        "temperature": 0,
+        "maxOutputTokens": 64
+      }
+    }
+  },
+  "status": 200,
+  "response_headers": {
+    "accept-ranges": "none",
+    "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+    "content-type": "application/json; charset=UTF-8",
+    "date": "Tue, 08 Sep 2026 01:15:43 GMT",
+    "server": "scaffolding on HTTPServer2",
+    "server-timing": "gfet4t7; dur=593",
+    "vary": "Origin,Accept-Encoding",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "SAMEORIGIN",
+    "x-gemini-service-tier": "standard",
+    "x-xss-protection": "0"
+  },
+  "body": {
+    "candidates": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "hello world"
+            }
+          ],
+          "role": "model"
+        },
+        "finishReason": "STOP",
+        "index": 0
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 10,
+      "candidatesTokenCount": 2,
+      "totalTokenCount": 44,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 10
+        }
+      ],
+      "thoughtsTokenCount": 32,
+      "serviceTier": "standard"
+    },
+    "modelVersion": "gemini-2.5-flash",
+    "responseId": "vmGfat2CKI21_uMPwqOGuQI"
+  },
+  "lm15": {
+    "response": {
+      "id": "vmGfat2CKI21_uMPwqOGuQI",
+      "model": "gemini-2.5-flash",
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "text",
+            "text": "hello world"
+          }
+        ]
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 2,
+        "total_tokens": 44,
+        "reasoning_tokens": 32
+      }
+    }
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:15:43 GMT"
+}

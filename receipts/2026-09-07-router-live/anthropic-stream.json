@@ -1,0 +1,87 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "stream",
+  "sent": {
+    "method": "POST",
+    "url": "https://api.anthropic.com/v1/messages",
+    "params": {},
+    "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "$ANTHROPIC_API_KEY"
+    },
+    "body": {
+      "model": "claude-haiku-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly the two words: hello world"
+            }
+          ]
+        }
+      ],
+      "stream": true,
+      "max_tokens": 64,
+      "temperature": 0.0
+    }
+  },
+  "status": 200,
+  "response_headers": {
+    "anthropic-organization-id": "705202b1-79ca-4ef0-9604-08f21cdd602f",
+    "anthropic-ratelimit-input-tokens-limit": "10000000",
+    "anthropic-ratelimit-input-tokens-remaining": "10000000",
+    "anthropic-ratelimit-input-tokens-reset": "2026-09-08T01:15:42Z",
+    "anthropic-ratelimit-output-tokens-limit": "2000000",
+    "anthropic-ratelimit-output-tokens-remaining": "2000000",
+    "anthropic-ratelimit-output-tokens-reset": "2026-09-08T01:15:42Z",
+    "anthropic-ratelimit-requests-limit": "20000",
+    "anthropic-ratelimit-requests-remaining": "19999",
+    "anthropic-ratelimit-requests-reset": "2026-09-08T01:15:42Z",
+    "anthropic-ratelimit-tokens-limit": "12000000",
+    "anthropic-ratelimit-tokens-remaining": "12000000",
+    "anthropic-ratelimit-tokens-reset": "2026-09-08T01:15:42Z",
+    "anthropic-workspace-id": "wrkspc_01VxzyaMjxiUw97skFpL6AjK",
+    "cache-control": "no-cache",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a37a1a835ed95933-YUL",
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    "content-type": "text/event-stream; charset=utf-8",
+    "date": "Tue, 08 Sep 2026 01:15:42 GMT",
+    "request-id": "req_011Ceq63sqPXNp7hzoWBp4D9",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "traceresponse": "00-39f0ac89ab5708c6803e4b6805c0049d-5d7c4324804fa8cf-01",
+    "vary": "Accept-Encoding",
+    "x-robots-tag": "none"
+  },
+  "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_011Ceq63tLQMA8aridci7RaF\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":16,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":1,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"}}          }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}              }\n\nevent: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}         }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0        }\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null},\"usage\":{\"input_tokens\":16,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":5}            }\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"             }\n\n",
+  "lm15": {
+    "response": {
+      "id": "msg_011Ceq63tLQMA8aridci7RaF",
+      "model": "claude-haiku-4-5-20251001",
+      "message": {
+        "role": "assistant",
+        "parts": [
+          {
+            "type": "text",
+            "text": "hello world"
+          }
+        ]
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "input_tokens": 16,
+        "output_tokens": 5,
+        "total_tokens": 21,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0
+      }
+    }
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:15:42 GMT"
+}

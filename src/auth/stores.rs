@@ -312,6 +312,17 @@ fn expiry_ms(value: Option<&Value>) -> Expiry {
     }
 }
 
+/// The ChatGPT account id a Codex access token carries
+/// (`https://api.openai.com/auth`.`chatgpt_account_id`; the reference's
+/// `extract_chatgpt_account_id`). `None` for a non-JWT or a token without
+/// the claim. Reads the payload only; never verifies or renders the token.
+pub fn extract_chatgpt_account_id(token: &str) -> Option<String> {
+    jwt_payload(token)
+        .as_ref()
+        .and_then(|p| p.get("https://api.openai.com/auth"))
+        .and_then(|claim| string_field(claim, "chatgpt_account_id"))
+}
+
 fn jwt_payload(token: &str) -> Option<Value> {
     let mut parts = token.split('.');
     let (_header, payload, _sig) = (parts.next()?, parts.next()?, parts.next()?);

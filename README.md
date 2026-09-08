@@ -17,7 +17,8 @@ grade the port against any other commit.
 | 4 — dialects, request side | AUTH-10 policy table, hosts, settings, host rewrites; MAP-5..MAP-8 refusals; **MAP-10 tool-result content** (`src/dialects/content.rs`, the `tool_result_media` knob on the three compat tables); compat presets; the four dialects (`src/dialects/{anthropic,openai_responses,openai_chat,gemini}`) | done — `--direction request` 361 pass / 0 fail / 1 skip (`openai.computer_use`, no canonical_request) at the pin, including the 64 MAP-10 cases (native and raise). The per-dialect sections below state each dialect's deviations |
 | 5 — dialects, response side + stream assembly | MAP-1..MAP-4, MAP-9; `parse_response` / `replay_stream` for the four dialects; the SSE parser; the MAP-3/4 coalescer and the MAP-9 assembler (`src/stream.rs`) | done — `--direction response` 298 pass / 0 fail / 1 skip (`openai.computer_use`, no golden), `--direction stream` 40 pass / 0 fail / 0 skip, including the pinned `StreamAssemblyError` refusal (`openai_chat.tool_call_unnamed`). The "Module 5" section below states the deviations |
 | 5b — the network | `complete` / `stream` over a transport (api-family § The core loop, § Providers, direct); `ResponseStream` | done — `src/transport.rs` (the `Transport` trait, the reqwest `HttpTransport`), `ProviderLM::complete` / `ProviderLM::stream`, `src/response_stream.rs`. `tests/transport_roundtrip.rs` drives the real transport against a loopback HTTP/1.1 server (SSE frames split across chunks, a 429 with `Retry-After`, a stalled body, cancellation by drop). First live traffic: `receipts/2026-09-07-live-smoke/` (one binding per dialect, `complete` and `stream` agree). Not a harness direction: the codec is the contract, the transport is per-language idiom |
-| `LMRouter`, the `blocking` feature | api-family § The core loop, rule 4 | not started |
+| 5c — `LMRouter` | api-family § The core loop; AUTH-1 resolution order; the reference's `lm15.router` | done — `src/router.rs`: prefix / catalog / rule rungs, `resolve` (pure), `lm` (the AUTH-1 chain: explicit entry, stored login, env keys, placeholder), one adapter per provider; stored logins as a per-request `CredentialProvider` (`src/auth/login.rs`); the Codex `chatgpt-account-id` header (a stated skeleton gap, now closed). Live through the router: `receipts/2026-09-07-router-live/`. Differential probe against the reference, 130 comparisons outside the corpus, zero differences: `receipts/2026-09-07-differential/` (`tools/differential.py`) |
+| the `blocking` feature | api-family rule 4 | not started |
 | 6–9 — models, files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
 
 Gates for modules 1–4, from the contract checkout:
@@ -61,26 +62,42 @@ reads the reference's dump).
 
 ```rust
 use futures_util::StreamExt;
-use lm15::{AnthropicLM, Config, Message, Request, ResponseStream};
+use lm15::{Config, LMRouter, Message, Request, ResponseStream};
 
-let lm = AnthropicLM::builder().api_key(std::env::var("ANTHROPIC_API_KEY")?).build()?;
+let router = LMRouter::new();   // keys from the environment (AUTH-1)
 let request = Request {
-    model: "claude-haiku-4-5".into(),
+    model: "groq:openai/gpt-oss-20b".into(),   // or "claude-haiku-4-5", "gpt-4.1-mini"
     messages: vec![Message::user("hi")?],
     config: Config { max_tokens: Some(100), ..Default::default() },
     ..Default::default()
 };
 
 // One call.
-let response = lm.complete(&request).await?;
+let response = router.complete(&request).await?;
 println!("{}", response.text().unwrap_or_default());
 
 // Streamed: text as it arrives, then the same Response `complete` returns.
-let mut rs = ResponseStream::new(lm.stream(&request), &request);
+let mut rs = ResponseStream::new(router.stream(&request), &request);
 while let Some(text) = rs.text_chunks().next().await {
     print!("{}", text?);
 }
 let response = rs.response().await?;
+
+// How was it routed? `resolve` is pure: no network, no files, no secrets.
+println!("{}", router.resolve("grok-4")?);
+// "grok-4" -> provider "xai" (XaiLM); via built-in rule prefix="grok-" — ...;
+// key from explicit api_keys, else the stored subscription OAuth credential, else $XAI_API_KEY.
+
+// Explicit configuration: keys, host settings, a transport, a catalog.
+let router = LMRouter::with_config(
+    lm15::RouterConfig::new()
+        .api_key("anthropic", std::env::var("MY_KEY")?)
+        .setting("bedrock-chat", "region", "us-east-1"),
+);
+
+// The direct adapters remain first-class; the router is the front door.
+let lm = lm15::AnthropicLM::builder().api_key("...").build()?;
+let response = lm.complete(&request).await?;
 ```
 
 Async on tokio (api-family rule 4). `lm.stream(&request)` is a
@@ -208,6 +225,44 @@ Each row names the rule it deviates from (playbooks/port.md rule 8).
 - **`ResponseStream` requires its source to be `Unpin`** (`Box::pin` one
   that is not); pin projection without the `pin-project` crate is
   unsafe code, and every stream the port itself returns is `Unpin`.
+- **Router errors stay inside the ratified vocabulary.** The reference's
+  `UnknownModelError` / `AmbiguousModelError` carry codes
+  (`unknown_model`, `ambiguous_model`, `router`) that
+  `spec/vocabularies.md` § ErrorCode does not list. A port does not add
+  codes: a model string that routes nowhere or ambiguously is a
+  `ConfigurationError`; a provider with no credential is a
+  `NotConfiguredError` (the class the reference's
+  `MissingCredentialError` inherits). Flagged for the contract: either
+  the vocabulary gains the router codes or the reference drops them.
+- **No rung 0 and a data catalog.** The reference's router reads a
+  `provider` attribute off the model value (a `str` subclass shipped by a
+  catalog package) and discovers catalogs from installed packages. Rust
+  strings carry no attributes and there is no package discovery: rung 0
+  does not exist, and rung 2 takes `RouterConfig::catalog(Vec<ModelInfo>)`
+  with the same matching rules (exact id beats alias; more than one
+  provider, or more than one entry of one provider, is an error).
+- **Stored logins are read, never refreshed.** `StoredLogin` re-reads
+  the file on every request (a token the owning CLI refreshed is picked
+  up), but the AUTH-3 write side — the locked, double-checked network
+  refresh — is not implemented. A login AUTH-1 calls usable (expired
+  with a refresh token) is therefore *selected* by the router and then
+  refused at the first request with the typed `AuthError` and the
+  re-login hint (AUTH-6), never a silent fall back to an environment key
+  (AUTH-1, stored-credential-owns-provider). Refresh it with the
+  provider's own tool.
+- **Cloud chains through the router: rung 0 only.** An explicit
+  `api_keys` entry for a cloud-chain provider (`bedrock-*`, `azure*`,
+  `vertex*`) builds the door with its resolved host settings; the deeper
+  rungs are module 3b, and the router answers the same
+  `NotConfiguredError` naming it that `explain_auth` answers (AUTH-7:
+  the doctor and real construction walk the same chain).
+- **The Codex account id is resolved at the first build, not at
+  construction.** The reference reads the ChatGPT account id off a static
+  token when the adapter is constructed and raises then. This port's
+  credential is a provider invoked per request (AUTH-2), so `emit` reads
+  the id bound by the builder or the router (from the stored file), else
+  the token's own claim, else raises `NotConfiguredError` — at the first
+  `build_request`, where the token is in hand.
 - **`serde_json` `preserve_order`** (a feature, not a new dependency at
   the surface; it pulls `indexmap`): a SigV4 signature covers the body
   bytes, and every Bedrock fixture pins the reference's JSON key order
@@ -399,10 +454,6 @@ reference on 2026-09-07 (lm15-python b2709c8). No fixture pins them.
 - Module 3b (cloud credential chains, token exchange, RS256), as above;
   SigV4 alone is in.
 - Module 4 dialects W1–W4 (this branch is the W0 skeleton).
-- `complete` / `stream` over an HTTP transport, and `LMRouter`: the codec
-  is the contract (module 5, done); the transport is per-language idiom
-  (harness/PROTOCOL.md § Concurrency) and is the next module of this port.
-  `StreamDecoder` is the seam it plugs into.
 - AUTH-3/4 write side (locked double-checked refresh, atomic 0600 writes):
   this port reads credentials only.
 - AUTH-9 `login(provider)`: not shipped. The xAI login hint therefore names

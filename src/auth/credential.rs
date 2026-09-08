@@ -327,6 +327,12 @@ impl<T: CredentialProvider + ?Sized> CredentialProvider for Box<T> {
     }
 }
 
+impl<T: CredentialProvider + ?Sized> CredentialProvider for std::sync::Arc<T> {
+    fn credential(&self) -> Result<Credential, AuthError> {
+        (**self).credential()
+    }
+}
+
 /// A fixed credential value. `Debug` is redacted.
 #[derive(Clone)]
 pub struct StaticCredential(Credential);

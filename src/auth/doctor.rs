@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use super::error::AuthError;
 use super::policy::{access_policy, canonical_provider, CredentialPolicy};
 use super::stores::{
-    claude_credentials_path, codex_auth_path, pi_agent_auth_path, read_claude_code_credential,
-    read_codex_cli_credential, read_xai_credential, LocalOAuthCredential,
+    read_claude_code_credential, read_codex_cli_credential, read_xai_credential,
+    LocalOAuthCredential,
 };
 
 /// spec/vocabularies.md `AuthStepState`.
@@ -171,46 +171,15 @@ impl ExplainOptions {
         .filter(|value| !value.is_empty())
     }
 
-    fn home(&self) -> Option<PathBuf> {
-        self.env_value("HOME").map(PathBuf::from)
-    }
-
-    /// AUTH-8: `$LM15_CREDENTIALS_PATH`, else `$XDG_CONFIG_HOME/lm15/credentials.json`,
-    /// else `~/.config/lm15/credentials.json`.
-    fn lm15_store_path(&self) -> Option<PathBuf> {
-        if let Some(path) = self.env_value("LM15_CREDENTIALS_PATH") {
-            return Some(PathBuf::from(path));
-        }
-        let base = match self.env_value("XDG_CONFIG_HOME") {
-            Some(config_home) => PathBuf::from(config_home),
-            None => self.home()?.join(".config"),
-        };
-        Some(base.join("lm15").join("credentials.json"))
-    }
-
-    /// The files an `oauth` / `oauth-unless-explicit` provider reads, in order.
+    /// The files an `oauth` / `oauth-unless-explicit` provider reads, in
+    /// order — the same files the router's [`super::StoredLogin`] reads
+    /// (AUTH-7: the doctor walks exactly the chain real construction walks).
     fn stored_login_paths(&self, provider: &str) -> Vec<PathBuf> {
-        if let Some(path) = &self.credentials_path {
-            return vec![path.clone()];
-        }
-        match provider {
-            "claude-code" => self
-                .home()
-                .map(|h| claude_credentials_path(&h))
-                .into_iter()
-                .collect(),
-            "openai-codex" => self
-                .home()
-                .map(|h| codex_auth_path(&h))
-                .into_iter()
-                .collect(),
-            _ => {
-                let mut paths = Vec::new();
-                paths.extend(self.lm15_store_path());
-                paths.extend(self.home().map(|h| pi_agent_auth_path(&h)));
-                paths
-            }
-        }
+        super::login::stored_login_paths(
+            provider,
+            &|key| self.env_value(key),
+            self.credentials_path.as_deref(),
+        )
     }
 }
 

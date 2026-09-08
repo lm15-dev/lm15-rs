@@ -11,9 +11,9 @@
 //! the same on every door.
 //!
 //! What `emit` does and this dialect does not: the credential header, the
-//! base URL, Azure's host rewrite, `content-type`. The `chatgpt-codex`
-//! backend's `chatgpt-account-id` header needs the credential's account
-//! id, which the build context does not carry (a stated skeleton gap).
+//! base URL, Azure's host rewrite, `content-type`, and the `chatgpt-codex`
+//! backend's `chatgpt-account-id` header (the account id bound to the
+//! adapter, else the token's claim).
 
 mod cache;
 mod input;
@@ -34,7 +34,7 @@ pub use tools::builtin_type;
 
 /// spec/auth.md AUTH-10: the backend value the dialect branches on
 /// (`lm15/providers/openai.py:391` `CODEX_BACKEND`).
-pub const CODEX_BACKEND: &str = "chatgpt-codex";
+pub use crate::wire::CODEX_BACKEND;
 
 /// The dialect value.
 pub struct OpenAIResponses;

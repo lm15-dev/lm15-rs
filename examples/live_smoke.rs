@@ -1,9 +1,11 @@
 // The family error enum is large by design (src/lib.rs); the example tees a body stream of it.
 #![allow(clippy::result_large_err)]
 
-//! Live smoke: `complete` and `stream` against real providers, one
-//! binding per dialect, recording receipts. Env-gated (needs keys);
-//! not a gate (playbooks/port.md § Inputs, item 4).
+//! Live smoke: `complete` and `stream` through `LMRouter` against real
+//! providers, one binding per dialect, recording receipts. Env-gated
+//! (needs keys); not a gate (playbooks/port.md § Inputs, item 4). The
+//! router reads the keys from the environment the way a user's program
+//! does; the model strings are the family's `provider:model` form.
 //!
 //! ```text
 //! cargo run --example live_smoke -- [receipts-dir]
@@ -25,7 +27,9 @@ use serde_json::{json, Value};
 
 use lm15::transport::{BoxFuture, HttpTransport, Transport, TransportResponse};
 use lm15::wire::TransportRequest;
-use lm15::{Canonical, Config, Lm15Error, Message, Request, ResponseStream};
+use lm15::{
+    Canonical, Config, LMRouter, Lm15Error, Message, Request, ResponseStream, RouterConfig,
+};
 
 /// A transport that keeps a copy of what was sent and what came back.
 struct Recording {
@@ -102,26 +106,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(dir) = &out {
         std::fs::create_dir_all(dir)?;
     }
+    // One rule-routed string (no prefix) and three prefixed ones: both
+    // rungs go live.
     let bindings = [
         ("openai", "OPENAI_API_KEY", "gpt-4.1-mini"),
-        ("anthropic", "ANTHROPIC_API_KEY", "claude-haiku-4-5"),
-        ("gemini", "GEMINI_API_KEY", "gemini-2.5-flash"),
-        ("groq", "GROQ_API_KEY", "openai/gpt-oss-20b"),
+        (
+            "anthropic",
+            "ANTHROPIC_API_KEY",
+            "anthropic:claude-haiku-4-5",
+        ),
+        ("gemini", "GEMINI_API_KEY", "gemini:gemini-2.5-flash"),
+        ("groq", "GROQ_API_KEY", "groq:openai/gpt-oss-20b"),
     ];
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let router = LMRouter::with_config(RouterConfig::new().transport(Recording {
+        inner: HttpTransport::new()?,
+        log: Arc::clone(&log),
+    }));
     let mut failures = 0;
     for (provider, env_key, model) in bindings {
-        let Ok(key) = std::env::var(env_key) else {
+        if std::env::var(env_key).is_err() {
             println!("{provider:<10} skipped ({env_key} unset)");
             continue;
-        };
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let lm = lm15::LmBuilder::for_entry(lm15::registry::lookup(provider).unwrap())
-            .api_key(key)
-            .transport(Recording {
-                inner: HttpTransport::new()?,
-                log: Arc::clone(&log),
-            })
-            .build()?;
+        }
+        log.lock().unwrap().clear();
+        let resolution = router.resolve(model)?;
+        assert_eq!(resolution.provider, provider, "{}", resolution.describe());
+        println!("           {}", resolution.describe());
 
         let request = Request {
             model: model.to_string(),
@@ -137,11 +148,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let started = std::time::Instant::now();
-        let complete = lm.complete(&request).await;
+        let complete = router.complete(&request).await;
         let complete_ms = started.elapsed().as_millis();
 
         let started = std::time::Instant::now();
-        let mut rs = ResponseStream::new(lm.stream(&request), &request);
+        let mut rs = ResponseStream::new(router.stream(&request), &request);
         let mut chunks = Vec::new();
         let mut first_chunk_ms = None;
         let mut stream_err = None;

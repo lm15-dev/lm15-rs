@@ -46,48 +46,28 @@ type SharedTransport = Arc<dyn Transport>;
 /// A dialect bound to an access policy, a compat value, a credential
 /// provider, a base URL, host settings and a clock.
 pub struct ProviderLM {
-    provider: String,
-    dialect: DialectId,
-    policy: &'static AccessPolicy,
-    compat: Compat,
+    binding: Arc<Binding>,
     credentials: BoxedCredentials,
-    base_url: String,
-    settings: HostSettings,
     clock: BoxedClock,
     transport: SharedTransport,
 }
 
-impl ProviderLM {
-    /// The canonical provider string of the binding.
-    pub fn provider(&self) -> &str {
-        &self.provider
-    }
+/// The immutable part of a binding: what a `BuildContext` borrows. Shared
+/// with every [`EventStream`] the adapter opens, so a stream owns its
+/// context and outlives the borrow of the adapter.
+struct Binding {
+    provider: String,
+    dialect: DialectId,
+    policy: &'static AccessPolicy,
+    compat: Compat,
+    base_url: String,
+    settings: HostSettings,
+    account_id: Option<String>,
+}
 
-    pub fn dialect(&self) -> DialectId {
-        self.dialect
-    }
-
-    pub fn policy(&self) -> &'static AccessPolicy {
-        self.policy
-    }
-
-    pub fn compat(&self) -> &Compat {
-        &self.compat
-    }
-
-    pub fn base_url(&self) -> &str {
-        &self.base_url
-    }
-
-    /// The resolved host settings (AUTH-10; empty for a public API).
-    pub fn settings(&self) -> &HostSettings {
-        &self.settings
-    }
-
-    /// The model string the dialect sends: `provider:model` loses its
-    /// prefix when it names this binding's provider (either spelling);
-    /// any other string goes out as typed.
-    pub fn wire_model<'a>(&self, model: &'a str) -> &'a str {
+impl Binding {
+    /// The model string the dialect sends (see `ProviderLM::wire_model`).
+    fn wire_model<'a>(&self, model: &'a str) -> &'a str {
         match model.split_once(':') {
             Some((head, rest))
                 if crate::registry::canonical_provider(head) == self.provider
@@ -97,6 +77,53 @@ impl ProviderLM {
             }
             _ => model,
         }
+    }
+
+    fn context<'a>(&'a self, request: &'a Request) -> BuildContext<'a> {
+        BuildContext {
+            provider: &self.provider,
+            policy: self.policy,
+            settings: &self.settings,
+            compat: &self.compat,
+            base_url: &self.base_url,
+            model: self.wire_model(&request.model),
+            account_id: self.account_id.as_deref(),
+        }
+    }
+}
+
+impl ProviderLM {
+    /// The canonical provider string of the binding.
+    pub fn provider(&self) -> &str {
+        &self.binding.provider
+    }
+
+    pub fn dialect(&self) -> DialectId {
+        self.binding.dialect
+    }
+
+    pub fn policy(&self) -> &'static AccessPolicy {
+        self.binding.policy
+    }
+
+    pub fn compat(&self) -> &Compat {
+        &self.binding.compat
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.binding.base_url
+    }
+
+    /// The resolved host settings (AUTH-10; empty for a public API).
+    pub fn settings(&self) -> &HostSettings {
+        &self.binding.settings
+    }
+
+    /// The model string the dialect sends: `provider:model` loses its
+    /// prefix when it names this binding's provider (either spelling);
+    /// any other string goes out as typed.
+    pub fn wire_model<'a>(&self, model: &'a str) -> &'a str {
+        self.binding.wire_model(model)
     }
 
     /// The wire request for `request` (module 4). Refusals (MAP-5..8) are
@@ -111,30 +138,19 @@ impl ProviderLM {
         // have edited after `Request::new`; the dialects assume the
         // invariants (INV-*) hold and never re-check them.
         request.validate().map_err(|err| {
-            let mut meta = ErrorMeta::new(format!("{}: {}", self.provider, err.message));
-            meta.provider = Some(self.provider.clone());
+            let mut meta = ErrorMeta::new(format!("{}: {}", self.provider(), err.message));
+            meta.provider = Some(self.provider().to_string());
             Lm15Error::InvalidRequestError(meta)
         })?;
-        let cx = self.context(request);
+        let cx = self.binding.context(request);
         emit(
-            dialect_for(self.dialect),
+            dialect_for(self.dialect()),
             request,
             stream,
             &cx,
             self.credentials.as_ref(),
             self.clock.as_ref(),
         )
-    }
-
-    fn context<'a>(&'a self, request: &'a Request) -> BuildContext<'a> {
-        BuildContext {
-            provider: &self.provider,
-            policy: self.policy,
-            settings: &self.settings,
-            compat: &self.compat,
-            base_url: &self.base_url,
-            model: self.wire_model(&request.model),
-        }
     }
 
     /// The canonical `Response` of a complete 2xx body (module 5; MAP-1,
@@ -151,22 +167,23 @@ impl ProviderLM {
         if status >= 400 {
             let text = String::from_utf8_lossy(body);
             return Err(
-                crate::errors::normalize_error(&self.provider, status, &text)
+                crate::errors::normalize_error(self.provider(), status, &text)
                     .map_err(|err| Lm15Error::ConfigurationError(ErrorMeta::new(err.message)))?,
             );
         }
-        let cx = self.context(request);
-        dialect_for(self.dialect).parse_response(request, &cx, body)
+        let cx = self.binding.context(request);
+        dialect_for(self.dialect()).parse_response(request, &cx, body)
     }
 
     /// A decoder for one streamed response: feed the SSE bytes as they
     /// arrive and take the canonical events (post-coalesce: one start,
-    /// one final end — MAP-3, MAP-4).
-    pub fn stream_decoder<'a>(&'a self, request: &'a Request) -> StreamDecoder<'a> {
+    /// one final end — MAP-3, MAP-4). Owns a copy of the request and
+    /// shares the binding, so it outlives the borrow of the adapter.
+    pub fn stream_decoder(&self, request: &Request) -> StreamDecoder {
         StreamDecoder {
-            dialect: dialect_for(self.dialect),
-            request,
-            cx: self.context(request),
+            dialect: dialect_for(self.dialect()),
+            binding: Arc::clone(&self.binding),
+            request: request.clone(),
             sse: SseParser::new(),
             coalescer: Some(Coalescer::new(Some(request.model.clone()))),
         }
@@ -220,29 +237,33 @@ impl ProviderLM {
     /// one `Err` item, after which it ends. A provider's in-band error
     /// frame is an `Ok(StreamEvent::Error)`, as the dialect decoded it;
     /// [`crate::ResponseStream`] turns it into the typed error. Dropping
-    /// the stream closes the connection.
-    pub fn stream<'a>(&'a self, request: &'a Request) -> EventStream<'a> {
+    /// the stream closes the connection. The stream owns everything it
+    /// needs (`'static`): it can be spawned, sent, or stored.
+    pub fn stream(&self, request: &Request) -> EventStream {
         let state = match self.build_request(request, true) {
             Ok(built) => {
                 let transport = Arc::clone(&self.transport);
-                let fut: BoxFuture<'a, Result<TransportResponse, Lm15Error>> =
+                let binding = Arc::clone(&self.binding);
+                let fut: BoxFuture<'static, Result<TransportResponse, Lm15Error>> =
                     Box::pin(async move {
                         let response = transport.send(built).await?;
                         if response.status >= 400 {
                             let status = response.status;
                             let headers = response.headers.clone();
                             let body = response.read().await?;
-                            return Err(self.http_error(status, &headers, &body));
+                            return Err(http_error(&binding.provider, status, &headers, &body));
                         }
                         Ok(response)
                     });
-                StreamState::Connecting(fut)
+                StreamState::Connecting {
+                    fut,
+                    decoder: Box::new(self.stream_decoder(request)),
+                }
             }
             Err(err) => StreamState::Failed(err),
         };
         EventStream {
-            lm: self,
-            request,
+            provider: self.provider().to_string(),
             state,
             pending: VecDeque::new(),
         }
@@ -251,37 +272,56 @@ impl ProviderLM {
     /// The typed error of a non-2xx response: the dialect's normalization
     /// over the body, `Retry-After` from the headers filling the gap.
     pub fn http_error(&self, status: u16, headers: &[(String, String)], body: &[u8]) -> Lm15Error {
-        let text = String::from_utf8_lossy(body);
-        let mut error = match crate::errors::normalize_error(&self.provider, status, &text) {
-            Ok(error) => error,
-            Err(err) => Lm15Error::ConfigurationError(ErrorMeta::new(err.message)),
-        };
-        attach_retry_after(&mut error, headers);
-        error
+        http_error(self.provider(), status, headers, body)
     }
 }
 
+fn http_error(provider: &str, status: u16, headers: &[(String, String)], body: &[u8]) -> Lm15Error {
+    let text = String::from_utf8_lossy(body);
+    let mut error = match crate::errors::normalize_error(provider, status, &text) {
+        Ok(error) => error,
+        Err(err) => Lm15Error::ConfigurationError(ErrorMeta::new(err.message)),
+    };
+    attach_retry_after(&mut error, headers);
+    error
+}
+
 /// The stream [`ProviderLM::stream`] returns: connects on first poll,
-/// then decodes body chunks into canonical events.
-pub struct EventStream<'a> {
-    lm: &'a ProviderLM,
-    request: &'a Request,
-    state: StreamState<'a>,
+/// then decodes body chunks into canonical events. Owns its request,
+/// binding and connection; no borrow of the adapter.
+pub struct EventStream {
+    provider: String,
+    state: StreamState,
     pending: VecDeque<StreamEvent>,
 }
 
-enum StreamState<'a> {
+enum StreamState {
     Failed(Lm15Error),
-    Connecting(BoxFuture<'a, Result<TransportResponse, Lm15Error>>),
+    Connecting {
+        fut: BoxFuture<'static, Result<TransportResponse, Lm15Error>>,
+        // Boxed: the decoder (SSE buffer + coalescer) is the fat variant.
+        decoder: Box<StreamDecoder>,
+    },
     Streaming {
         body: BodyStream,
-        // Boxed: the decoder (SSE buffer + coalescer) is the fat variant.
-        decoder: Box<StreamDecoder<'a>>,
+        decoder: Box<StreamDecoder>,
     },
     Done,
 }
 
-impl Stream for EventStream<'_> {
+impl EventStream {
+    /// A stream whose one item is `err` (the router's routing and
+    /// credential failures surface where the provider's would).
+    pub(crate) fn failed(provider: String, err: Lm15Error) -> EventStream {
+        EventStream {
+            provider,
+            state: StreamState::Failed(err),
+            pending: VecDeque::new(),
+        }
+    }
+}
+
+impl Stream for EventStream {
     type Item = Result<StreamEvent, Lm15Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -300,16 +340,21 @@ impl Stream for EventStream<'_> {
                     };
                     return Poll::Ready(Some(Err(err)));
                 }
-                StreamState::Connecting(fut) => match fut.as_mut().poll(cx) {
+                StreamState::Connecting { fut, .. } => match fut.as_mut().poll(cx) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(err)) => {
                         this.state = StreamState::Done;
                         return Poll::Ready(Some(Err(err)));
                     }
                     Poll::Ready(Ok(response)) => {
+                        let StreamState::Connecting { decoder, .. } =
+                            std::mem::replace(&mut this.state, StreamState::Done)
+                        else {
+                            unreachable!()
+                        };
                         this.state = StreamState::Streaming {
                             body: response.into_body(),
-                            decoder: Box::new(this.lm.stream_decoder(this.request)),
+                            decoder,
                         };
                     }
                 },
@@ -340,16 +385,16 @@ impl Stream for EventStream<'_> {
     }
 }
 
-impl fmt::Debug for EventStream<'_> {
+impl fmt::Debug for EventStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let state = match self.state {
             StreamState::Failed(_) => "failed",
-            StreamState::Connecting(_) => "connecting",
+            StreamState::Connecting { .. } => "connecting",
             StreamState::Streaming { .. } => "streaming",
             StreamState::Done => "done",
         };
         f.debug_struct("EventStream")
-            .field("provider", &self.lm.provider)
+            .field("provider", &self.provider)
             .field("state", &state)
             .field("pending", &self.pending.len())
             .finish()
@@ -359,15 +404,15 @@ impl fmt::Debug for EventStream<'_> {
 /// The streaming codec of one response, incremental: SSE bytes in,
 /// coalesced canonical events out. A transport feeds it chunk by chunk;
 /// `finish` at end of body yields the merged end event.
-pub struct StreamDecoder<'a> {
+pub struct StreamDecoder {
     dialect: &'static dyn Dialect,
-    request: &'a Request,
-    cx: BuildContext<'a>,
+    binding: Arc<Binding>,
+    request: Request,
     sse: SseParser,
     coalescer: Option<Coalescer>,
 }
 
-impl StreamDecoder<'_> {
+impl StreamDecoder {
     /// Feed a chunk of the body; the canonical events it completed.
     pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, Lm15Error> {
         let frames = self.sse.feed(chunk)?;
@@ -390,10 +435,11 @@ impl StreamDecoder<'_> {
         let coalescer = self.coalescer.as_mut().ok_or_else(|| {
             Lm15Error::ConfigurationError(ErrorMeta::new("stream already finished"))
         })?;
+        let cx = self.binding.context(&self.request);
         let mut raw = Vec::new();
         for frame in frames {
             self.dialect
-                .parse_stream_event(self.request, &self.cx, frame, &mut raw)?;
+                .parse_stream_event(&self.request, &cx, frame, &mut raw)?;
         }
         let mut out = Vec::with_capacity(raw.len());
         for event in raw {
@@ -407,10 +453,10 @@ impl fmt::Debug for ProviderLM {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // AUTH-5: the credential provider is never rendered.
         f.debug_struct("ProviderLM")
-            .field("provider", &self.provider)
-            .field("dialect", &self.dialect)
-            .field("base_url", &self.base_url)
-            .field("settings", &self.settings)
+            .field("provider", &self.binding.provider)
+            .field("dialect", &self.binding.dialect)
+            .field("base_url", &self.binding.base_url)
+            .field("settings", &self.binding.settings)
             .finish_non_exhaustive()
     }
 }
@@ -428,6 +474,7 @@ pub struct LmBuilder {
     settings: HostSettings,
     clock: Option<BoxedClock>,
     transport: Option<SharedTransport>,
+    account_id: Option<String>,
 }
 
 impl LmBuilder {
@@ -444,6 +491,7 @@ impl LmBuilder {
             settings: HostSettings::new(),
             clock: None,
             transport: None,
+            account_id: None,
         }
     }
 
@@ -506,6 +554,13 @@ impl LmBuilder {
         self
     }
 
+    /// The ChatGPT account id for the Codex door (`chatgpt-account-id`);
+    /// without it the token's own claim is read per request.
+    pub fn account_id(mut self, account_id: impl Into<String>) -> Self {
+        self.account_id = Some(account_id.into());
+        self
+    }
+
     pub fn build(self) -> Result<ProviderLM, Lm15Error> {
         let provider = self.provider;
         let policy = self.policy;
@@ -551,13 +606,16 @@ impl LmBuilder {
         };
 
         Ok(ProviderLM {
-            provider: provider.to_string(),
-            dialect: self.dialect,
-            policy,
-            compat,
+            binding: Arc::new(Binding {
+                provider: provider.to_string(),
+                dialect: self.dialect,
+                policy,
+                compat,
+                base_url,
+                settings,
+                account_id: self.account_id,
+            }),
             credentials,
-            base_url,
-            settings,
             clock: self.clock.unwrap_or_else(|| Box::new(SystemClock)),
             transport,
         })
@@ -684,6 +742,7 @@ named_constructor!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Credential;
     use crate::registry::adapter_for;
     use crate::types::Message;
     use crate::wire::{settings_from, FixedClock};
@@ -777,6 +836,66 @@ mod tests {
         .unwrap();
         assert_eq!(lm.base_url(), "https://r.openai.azure.com/openai/v1");
         assert_eq!(lm.settings()["scope"], "https://ai.azure.com/.default");
+    }
+
+    fn fake_jwt(payload: &str) -> String {
+        fn b64(input: &[u8]) -> String {
+            const ALPHABET: &[u8] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+            let mut out = String::new();
+            for chunk in input.chunks(3) {
+                let mut buf = [0u8; 3];
+                buf[..chunk.len()].copy_from_slice(chunk);
+                let n = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
+                for i in 0..chunk.len() + 1 {
+                    out.push(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                }
+            }
+            out
+        }
+        format!(
+            "{}.{}.sig",
+            b64(b"{\"alg\":\"none\"}"),
+            b64(payload.as_bytes())
+        )
+    }
+
+    #[test]
+    fn codex_door_sends_the_account_id_from_the_binding_or_the_token() {
+        let request = Request::new("gpt-5", vec![Message::user("hi").unwrap()]).unwrap();
+        // From the token's claim, read per request.
+        let token = fake_jwt(
+            r#"{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-claim"},"exp":9999999999}"#,
+        );
+        let lm = OpenAICodexLM::builder()
+            .api_key(Credential::bearer_token(token.clone(), None).unwrap())
+            .build()
+            .unwrap();
+        let built = lm.build_request(&request, false).unwrap();
+        assert_eq!(built.header("chatgpt-account-id"), Some("acct-claim"));
+        assert_eq!(
+            built.header("authorization"),
+            Some(format!("Bearer {token}").as_str())
+        );
+        // The binding's own id wins over the claim.
+        let lm = OpenAICodexLM::builder()
+            .api_key(Credential::bearer_token(token, None).unwrap())
+            .account_id("acct-bound")
+            .build()
+            .unwrap();
+        let built = lm.build_request(&request, false).unwrap();
+        assert_eq!(built.header("chatgpt-account-id"), Some("acct-bound"));
+        // Neither: the typed error with the login hint, and no wire.
+        let lm = OpenAICodexLM::builder().api_key("opaque").build().unwrap();
+        let err = lm.build_request(&request, false).unwrap_err();
+        assert_eq!(err.class_name(), "NotConfiguredError");
+        assert_eq!(err.provider(), Some("openai-codex"));
+        assert!(err.message().contains("account id"), "{err}");
+        assert!(!err.message().contains("opaque"));
+        // Not a Codex door: no header, no requirement.
+        let lm = OpenAILM::builder().api_key("k").build().unwrap();
+        let built = lm.build_request(&request, false).unwrap();
+        assert_eq!(built.header("chatgpt-account-id"), None);
     }
 
     #[test]

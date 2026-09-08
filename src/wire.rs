@@ -28,6 +28,10 @@ use crate::compat::Compat;
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
+
+/// The backend value of the ChatGPT Codex door (spec/auth.md AUTH-10;
+/// `lm15/providers/openai.py:391`).
+pub const CODEX_BACKEND: &str = "chatgpt-codex";
 use crate::types::{Request, Response, StreamEvent};
 
 /// A request ready for a transport. `url` carries no query string; the
@@ -119,6 +123,9 @@ pub struct BuildContext<'a> {
     pub base_url: &'a str,
     /// The model string with a `provider:` prefix already removed.
     pub model: &'a str,
+    /// The ChatGPT account id bound to this adapter (the `chatgpt-codex`
+    /// backend); `None` lets `emit` read it from the token's claim.
+    pub account_id: Option<&'a str>,
 }
 
 /// A wire codec. Implementations are stateless values; everything that
@@ -254,6 +261,38 @@ pub fn emit(
         if !has_header(&headers, &name) {
             headers.push((name, value));
         }
+    }
+    // The `chatgpt-codex` backend (`lm15/providers/openai.py:469-476`,
+    // `:547-548`): the account id bound to the adapter, else the claim in
+    // the token just resolved (read per request, never cached); neither
+    // is the typed not-configured error with the login hint. The
+    // reference raises at construction; this port at the first build,
+    // where the token is in hand (AUTH-2).
+    if cx.policy.backend == CODEX_BACKEND && !has_header(&headers, "chatgpt-account-id") {
+        let from_token = match &credential {
+            Credential::BearerToken { value, .. } | Credential::ApiKey { value } => {
+                crate::auth::extract_chatgpt_account_id(value)
+            }
+            Credential::AwsCredentials { .. } => None,
+        };
+        let account_id = cx
+            .account_id
+            .map(str::to_string)
+            .or(from_token)
+            .ok_or_else(|| {
+                let hint = cx
+                    .policy
+                    .login_hint
+                    .map(|h| format!("; {h}"))
+                    .unwrap_or_default();
+                let mut meta = ErrorMeta::new(format!(
+                    "{}: no ChatGPT account id found in the Codex OAuth token{hint}",
+                    cx.provider
+                ));
+                meta.provider = Some(cx.provider.to_string());
+                Lm15Error::NotConfiguredError(meta)
+            })?;
+        headers.push(("chatgpt-account-id".into(), account_id));
     }
 
     let query_key = match (&credential, scheme) {
@@ -497,6 +536,7 @@ mod tests {
             compat,
             base_url,
             model: "m",
+            account_id: None,
         }
     }
 
