@@ -39,9 +39,18 @@ pub struct OpenAIChat;
 /// The one instance the dialect table points at.
 pub static OPENAI_CHAT: OpenAIChat = OpenAIChat;
 
+pub mod generation;
+
 use crate::dialects::openai_responses::files;
 
 impl Surfaces for OpenAIChat {
+    fn image_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+        generation::image_request(cx, request)
+    }
+    fn image_generation(&self, cx: &BuildContext<'_>, _request: &crate::types::ImageGenerationRequest, _headers: &[(String, String)], body: &[u8]) -> Result<crate::types::ImageGenerationResponse, Lm15Error> {
+        generation::image_response(cx, body)
+    }
+
     fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
         files::upload_request(cx, request)
     }

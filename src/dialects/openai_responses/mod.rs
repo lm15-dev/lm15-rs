@@ -20,6 +20,7 @@ mod input;
 mod payload;
 pub mod batch;
 pub mod files;
+pub mod generation;
 pub mod response;
 mod tools;
 
@@ -47,6 +48,19 @@ pub struct OpenAIResponses;
 pub static OPENAI_RESPONSES: OpenAIResponses = OpenAIResponses;
 
 impl Surfaces for OpenAIResponses {
+    fn image_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+        generation::image_request(cx, request)
+    }
+    fn image_generation(&self, cx: &BuildContext<'_>, _request: &crate::types::ImageGenerationRequest, _headers: &[(String, String)], body: &[u8]) -> Result<crate::types::ImageGenerationResponse, Lm15Error> {
+        generation::image_response(cx, body)
+    }
+    fn speech_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::SpeechGenerationRequest) -> Result<WireRequest, Lm15Error> {
+        Ok(generation::speech_request(cx, request))
+    }
+    fn speech_generation(&self, cx: &BuildContext<'_>, _request: &crate::types::SpeechGenerationRequest, headers: &[(String, String)], body: &[u8]) -> Result<crate::types::SpeechGenerationResponse, Lm15Error> {
+        generation::speech_response(cx, headers, body)
+    }
+
     fn batch_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
         batch::upload_request(self, cx, request).map(Some)
     }

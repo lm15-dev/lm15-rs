@@ -172,6 +172,35 @@ pub fn unsupported(provider: &str, what: &str) -> Lm15Error {
     Lm15Error::UnsupportedFeatureError(meta)
 }
 
+/// The bytes of a media part: inline base64 data, else the file at
+/// `path` read now; a URL or file id is not content.
+pub fn media_bytes(provider: &str, data: Option<&str>, path: Option<&std::path::Path>, what: &str) -> Result<Vec<u8>, Lm15Error> {
+    if let Some(data) = data {
+        return crate::types::base64_decode(data).map_err(|err| {
+            Lm15Error::InvalidRequestError(ErrorMeta::new(format!("{provider}: {what}: {}", err.message)))
+        });
+    }
+    if let Some(path) = path {
+        return std::fs::read(path).map_err(|err| {
+            Lm15Error::ConfigurationError(ErrorMeta::new(format!(
+                "{provider}: {what} at {}: {err}",
+                path.display()
+            )))
+        });
+    }
+    let mut meta = ErrorMeta::new(format!("{provider}: {what} carries no content"));
+    meta.provider = Some(provider.to_string());
+    Err(Lm15Error::UnsupportedFeatureError(meta))
+}
+
+/// The first value of a response header, by case-insensitive name.
+pub fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
 /// A string field, when present and non-empty.
 pub fn str_field(map: &Map<String, Value>, key: &str) -> Option<String> {
     map.get(key)

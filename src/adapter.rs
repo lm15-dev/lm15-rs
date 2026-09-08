@@ -40,7 +40,8 @@ use serde_json::Value;
 
 use crate::types::{
     BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
-    FileUploadRequest, ModelInfo, Request, Response, StreamEvent,
+    FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, ModelInfo, Request,
+    Response, SpeechGenerationRequest, SpeechGenerationResponse, StreamEvent,
 };
 use crate::wire::{
     emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
@@ -585,6 +586,48 @@ impl ProviderLM {
         let built = self.cache_request(&CacheOp::Update { cache_id, ttl_seconds })?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_cache_info(status, &body)
+    }
+
+    // ─── generation: image, speech (module 8) ────────────────────────
+
+    pub fn image_generate_request(&self, request: &ImageGenerationRequest) -> Result<TransportRequest, Lm15Error> {
+        self.require("images")?;
+        let wire = dialect_for(self.dialect()).image_generate_request(&self.binding.surface_context(), request)?;
+        self.surface_request(wire, 300)
+    }
+
+    pub fn parse_image_generation(&self, request: &ImageGenerationRequest, status: u16, headers: &[(String, String)], body: &[u8]) -> Result<ImageGenerationResponse, Lm15Error> {
+        self.require("images")?;
+        if status >= 400 {
+            return Err(self.http_error(status, headers, body));
+        }
+        dialect_for(self.dialect()).image_generation(&self.binding.surface_context(), request, headers, body)
+    }
+
+    pub async fn image_generate(&self, request: &ImageGenerationRequest) -> Result<ImageGenerationResponse, Lm15Error> {
+        let built = self.image_generate_request(request)?;
+        let (status, headers, body) = self.send_surface(built).await?;
+        self.parse_image_generation(request, status, &headers, &body)
+    }
+
+    pub fn speech_generate_request(&self, request: &SpeechGenerationRequest) -> Result<TransportRequest, Lm15Error> {
+        self.require("speech")?;
+        let wire = dialect_for(self.dialect()).speech_generate_request(&self.binding.surface_context(), request)?;
+        self.surface_request(wire, 300)
+    }
+
+    pub fn parse_speech_generation(&self, request: &SpeechGenerationRequest, status: u16, headers: &[(String, String)], body: &[u8]) -> Result<SpeechGenerationResponse, Lm15Error> {
+        self.require("speech")?;
+        if status >= 400 {
+            return Err(self.http_error(status, headers, body));
+        }
+        dialect_for(self.dialect()).speech_generation(&self.binding.surface_context(), request, headers, body)
+    }
+
+    pub async fn speech_generate(&self, request: &SpeechGenerationRequest) -> Result<SpeechGenerationResponse, Lm15Error> {
+        let built = self.speech_generate_request(request)?;
+        let (status, headers, body) = self.send_surface(built).await?;
+        self.parse_speech_generation(request, status, &headers, &body)
     }
 
     /// `_require` (`lm15/providers/base.py:366-377`): the bound access

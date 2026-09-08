@@ -12,7 +12,10 @@ use lm15::cloud::sigv4::{self, AwsKeys, SigningRequest};
 use lm15::errors::{normalize_error, Lm15Error};
 use lm15::serde::{roundtrip, validate};
 use lm15::stream::materialize_response;
-use lm15::types::{BatchRequest, FileUploadRequest, Request, Response, ValidationError};
+use lm15::types::{
+    BatchRequest, FileUploadRequest, ImageGenerationRequest, Request, Response,
+    SpeechGenerationRequest, ValidationError,
+};
 use lm15::wire::{FixedClock, TransportRequest};
 use lm15::{Canonical, HostSettings};
 
@@ -28,6 +31,8 @@ const OPS: &[&str] = &[
     "cache_op_parse",
     "batch_op_parse",
     "file_op_build",
+    "generation_build",
+    "generation_parse",
     "file_op_parse",
     "capabilities",
     "explain_auth",
@@ -391,6 +396,45 @@ fn op_cache_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
     })
 }
 
+fn headers_of(msg: &Map<String, Value>) -> Vec<(String, String)> {
+    msg.get("headers")
+        .and_then(Value::as_object)
+        .map(|h| {
+            h.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn op_generation_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(msg, credential_of(msg)?)?;
+    let request = field(msg, "generation_request")?;
+    let built = match field_str(msg, "kind")?.as_str() {
+        "image" => lm.image_generate_request(&ImageGenerationRequest::from_json(request)?)?,
+        "speech" => lm.speech_generate_request(&SpeechGenerationRequest::from_json(request)?)?,
+        other => return Err(ValidationError::value(format!("unknown kind {other:?}")).into()),
+    };
+    Ok(transport_request_json(&built))
+}
+
+fn op_generation_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let request = field(msg, "generation_request")?;
+    let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+    let headers = headers_of(msg);
+    let body = body_of(msg)?;
+    Ok(match field_str(msg, "kind")?.as_str() {
+        "image" => lm
+            .parse_image_generation(&ImageGenerationRequest::from_json(request)?, status, &headers, &body)?
+            .to_json(),
+        "speech" => lm
+            .parse_speech_generation(&SpeechGenerationRequest::from_json(request)?, status, &headers, &body)?
+            .to_json(),
+        other => return Err(ValidationError::value(format!("unknown kind {other:?}")).into()),
+    })
+}
+
 fn op_build_models_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let lm = surface_adapter(msg, credential_of(msg)?)?;
     Ok(transport_request_json(&lm.models_request()?))
@@ -541,6 +585,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "build_models_request" => op_build_models_request(msg),
         "file_op_build" => op_file_op_build(msg),
         "cache_op_build" => op_cache_op_build(msg),
+        "generation_build" => op_generation_build(msg),
+        "generation_parse" => op_generation_parse(msg),
         "cache_op_parse" => op_cache_op_parse(msg),
         "batch_op_build" => op_batch_op_build(msg),
         "batch_op_parse" => op_batch_op_parse(msg),

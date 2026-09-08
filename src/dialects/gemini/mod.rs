@@ -20,6 +20,7 @@ mod contents;
 pub mod batch;
 pub mod cache;
 pub mod files;
+pub mod generation;
 pub mod response;
 
 use serde_json::{Map, Value};
@@ -243,6 +244,19 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
 }
 
 impl Surfaces for Gemini {
+    fn image_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+        generation::image_request(self, cx, request)
+    }
+    fn image_generation(&self, cx: &BuildContext<'_>, request: &crate::types::ImageGenerationRequest, _headers: &[(String, String)], body: &[u8]) -> Result<crate::types::ImageGenerationResponse, Lm15Error> {
+        generation::image_response(self, cx, request, body)
+    }
+    fn speech_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::SpeechGenerationRequest) -> Result<WireRequest, Lm15Error> {
+        generation::speech_request(self, cx, request)
+    }
+    fn speech_generation(&self, cx: &BuildContext<'_>, request: &crate::types::SpeechGenerationRequest, _headers: &[(String, String)], body: &[u8]) -> Result<crate::types::SpeechGenerationResponse, Lm15Error> {
+        generation::speech_response(self, cx, request, body)
+    }
+
     fn cache_create_request(&self, cx: &BuildContext<'_>, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<WireRequest, Lm15Error> {
         cache::create_request(self, cx, prefix, ttl_seconds, label)
     }

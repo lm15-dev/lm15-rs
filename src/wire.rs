@@ -34,7 +34,8 @@ use crate::sse::SseEvent;
 pub const CODEX_BACKEND: &str = "chatgpt-codex";
 use crate::types::{
     BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
-    FileUploadRequest, ModelInfo, ModelOrigin, Request, Response, StreamEvent,
+    FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, ModelInfo, ModelOrigin,
+    Request, Response, SpeechGenerationRequest, SpeechGenerationResponse, StreamEvent,
 };
 
 /// A request ready for a transport. `url` carries no query string; the
@@ -349,6 +350,26 @@ pub trait Surfaces {
     fn cache_update_request(&self, cx: &BuildContext<'_>, cache_id: &str, ttl_seconds: u64) -> Result<WireRequest, Lm15Error> {
         let _ = (cache_id, ttl_seconds);
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
+    }
+
+    // ─── generation (image, speech; module 8) ───
+    fn image_generate_request(&self, cx: &BuildContext<'_>, request: &ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+        let _ = request;
+        Err(crate::surfaces::unsupported(cx.provider, "image generation"))
+    }
+    /// `headers`: the response headers (a raw media body's type lives in
+    /// `content-type`).
+    fn image_generation(&self, cx: &BuildContext<'_>, request: &ImageGenerationRequest, headers: &[(String, String)], body: &[u8]) -> Result<ImageGenerationResponse, Lm15Error> {
+        let _ = (request, headers, body);
+        Err(crate::surfaces::unsupported(cx.provider, "image generation"))
+    }
+    fn speech_generate_request(&self, cx: &BuildContext<'_>, request: &SpeechGenerationRequest) -> Result<WireRequest, Lm15Error> {
+        let _ = request;
+        Err(crate::surfaces::unsupported(cx.provider, "speech generation"))
+    }
+    fn speech_generation(&self, cx: &BuildContext<'_>, request: &SpeechGenerationRequest, headers: &[(String, String)], body: &[u8]) -> Result<SpeechGenerationResponse, Lm15Error> {
+        let _ = (request, headers, body);
+        Err(crate::surfaces::unsupported(cx.provider, "speech generation"))
     }
 }
 
