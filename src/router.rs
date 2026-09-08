@@ -413,7 +413,7 @@ impl LMRouter {
         if let Some(lm) = lms.get(&resolution.provider) {
             return Ok(Arc::clone(lm));
         }
-        let lm = Arc::new(build_lm(resolution, &self.config)?);
+        let lm = Arc::new(build_lm(&resolution.provider, &self.config)?);
         lms.insert(resolution.provider.clone(), Arc::clone(&lm));
         Ok(lm)
     }
@@ -774,8 +774,25 @@ fn refreshing_login(provider: &str, config: &RouterConfig) -> Result<StoredLogin
     Ok(login.refreshing(transport, lock_dir))
 }
 
-fn build_lm(resolution: &Resolution, config: &RouterConfig) -> Result<ProviderLM, Lm15Error> {
-    let definition = lookup(&resolution.provider).expect("a resolution names a registry entry");
+/// The adapter of `provider` over the AUTH-1 chain against the process
+/// environment: what the family's `OpenAILM()` / `OpenAILM::new()` does
+/// (api-family § Providers, direct). No explicit credential; a stored
+/// login, the declared env keys in order, a keyless server's
+/// placeholder; the shared transport. Anything more (an explicit key, a
+/// base URL, settings, a transport) is the builder.
+pub(crate) fn provider_from_environment(provider: &str) -> Result<ProviderLM, Lm15Error> {
+    let canonical = canonical_provider(provider);
+    if lookup(&canonical).is_none() {
+        return Err(crate::auth::AuthError::UnknownProvider {
+            provider: provider.to_string(),
+        }
+        .into());
+    }
+    build_lm(&canonical, &RouterConfig::default())
+}
+
+fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Error> {
+    let definition = lookup(provider).expect("a resolution names a registry entry");
     let policy = definition.access();
     let provider = definition.id;
     let env = |key: &str| config.env_value(key);

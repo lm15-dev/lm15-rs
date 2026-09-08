@@ -1,0 +1,8048 @@
+{
+ "build": [
+  {
+   "op": "file_op_build",
+   "probe": "upload_pdf_with_unicode_filename",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCnVzZXJfZGF0YQ0KLS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0icsOpc3Vtw6kgMjAyNi5wZGYiDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL3BkZg0KDQolUERGLTEuNCBmYWtlDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCnVzZXJfZGF0YQ0KLS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0icsOpc3Vtw6kgMjAyNi5wZGYiDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL3BkZg0KDQolUERGLTEuNCBmYWtlDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_pdf_with_unicode_filename",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0icsOpc3Vtw6kgMjAyNi5wZGYiDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL3BkZg0KDQolUERGLTEuNCBmYWtlDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0icsOpc3Vtw6kgMjAyNi5wZGYiDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL3BkZg0KDQolUERGLTEuNCBmYWtlDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_pdf_with_unicode_filename",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {},
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6InLDqXN1bcOpIDIwMjYucGRmIn19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vcGRmDQoNCiVQREYtMS40IGZha2UNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {},
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6InLDqXN1bcOpIDIwMjYucGRmIn19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vcGRmDQoNCiVQREYtMS40IGZha2UNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_parameterized_media_type",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCnVzZXJfZGF0YQ0KLS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYS5jc3YiDQpDb250ZW50LVR5cGU6IHRleHQvY3N2OyBjaGFyc2V0PXV0Zi04DQoNCmEsYgoxLDIKDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCnVzZXJfZGF0YQ0KLS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYS5jc3YiDQpDb250ZW50LVR5cGU6IHRleHQvY3N2OyBjaGFyc2V0PXV0Zi04DQoNCmEsYgoxLDIKDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_parameterized_media_type",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYS5jc3YiDQpDb250ZW50LVR5cGU6IHRleHQvY3N2OyBjaGFyc2V0PXV0Zi04DQoNCmEsYgoxLDIKDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYS5jc3YiDQpDb250ZW50LVR5cGU6IHRleHQvY3N2OyBjaGFyc2V0PXV0Zi04DQoNCmEsYgoxLDIKDQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_parameterized_media_type",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {},
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6ImEuY3N2In19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogdGV4dC9jc3Y7IGNoYXJzZXQ9dXRmLTgNCg0KYSxiCjEsMgoNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {},
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6ImEuY3N2In19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogdGV4dC9jc3Y7IGNoYXJzZXQ9dXRmLTgNCg0KYSxiCjEsMgoNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_default_media_type",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCnVzZXJfZGF0YQ0KLS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYmxvYi5iaW4iDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbQ0KDQoAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/DQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCnVzZXJfZGF0YQ0KLS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYmxvYi5iaW4iDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbQ0KDQoAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/DQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_default_media_type",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYmxvYi5iaW4iDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbQ0KDQoAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/DQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImZpbGUiOyBmaWxlbmFtZT0iYmxvYi5iaW4iDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbQ0KDQoAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/DQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_default_media_type",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {},
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6ImJsb2IuYmluIn19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtDQoNCgABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8NCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {},
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6ImJsb2IuYmluIn19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtDQoNCgABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8NCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_with_extensions",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCmFzc2lzdGFudHMNCi0tbG0xNS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJmaWxlIjsgZmlsZW5hbWU9IngudHh0Ig0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluDQoNCngNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/files",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCmFzc2lzdGFudHMNCi0tbG0xNS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJmaWxlIjsgZmlsZW5hbWU9IngudHh0Ig0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluDQoNCngNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_with_extensions",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCmFzc2lzdGFudHMNCi0tbG0xNS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJmaWxlIjsgZmlsZW5hbWU9IngudHh0Ig0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluDQoNCngNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "x-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCmFzc2lzdGFudHMNCi0tbG0xNS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJmaWxlIjsgZmlsZW5hbWU9IngudHh0Ig0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluDQoNCngNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "upload_with_extensions",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {
+      "purpose": "assistants"
+     },
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6IngudHh0In19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogdGV4dC9wbGFpbg0KDQp4DQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+     "params": {
+      "purpose": "assistants"
+     },
+     "headers": {
+      "x-goog-upload-protocol": "multipart",
+      "content-type": "multipart/related; boundary=lm15-BOUNDARY",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb247IGNoYXJzZXQ9VVRGLTgNCg0KeyJmaWxlIjp7ImRpc3BsYXlfbmFtZSI6IngudHh0In19DQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtVHlwZTogdGV4dC9wbGFpbg0KDQp4DQotLWxtMTUtQk9VTkRBUlktLQ0K"
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "get_id_with_reserved_chars",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files/file/with",
+     "params": {
+      "odd": "chars",
+      "x": ""
+     },
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files/file/with?odd=chars&x#1",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": [
+    "/result/params/odd: only in python: \"chars\"",
+    "/result/params/x: only in python: \"\"",
+    "/result/url: python \"https://api.openai.com/v1/files/file/with\" vs rust \"https://api.openai.com/v1/files/file/with?odd=chars&x#1\""
+   ]
+  },
+  {
+   "op": "file_op_build",
+   "probe": "get_id_with_reserved_chars",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files/file/with",
+     "params": {
+      "odd": "chars",
+      "x": ""
+     },
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files/file/with?odd=chars&x#1",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": [
+    "/result/params/odd: only in python: \"chars\"",
+    "/result/params/x: only in python: \"\"",
+    "/result/url: python \"https://api.anthropic.com/v1/files/file/with\" vs rust \"https://api.anthropic.com/v1/files/file/with?odd=chars&x#1\""
+   ]
+  },
+  {
+   "op": "file_op_build",
+   "probe": "get_id_with_reserved_chars",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files/file/with",
+     "params": {
+      "odd": "chars",
+      "x": ""
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files/file/with?odd=chars&x#1",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": [
+    "/result/params/odd: only in python: \"chars\"",
+    "/result/params/x: only in python: \"\"",
+    "/result/url: python \"https://generativelanguage.googleapis.com/v1beta/files/file/with\" vs rust \"https://generativelanguage.googleapis.com/v1beta/files/file/with?odd=chars&x#1\""
+   ]
+  },
+  {
+   "op": "file_op_build",
+   "probe": "delete_id_with_space",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://api.openai.com/v1/files/file 123",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://api.openai.com/v1/files/file 123",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "delete_id_with_space",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://api.anthropic.com/v1/files/file 123",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://api.anthropic.com/v1/files/file 123",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "delete_id_with_space",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files/file 123",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files/file 123",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "download_plain",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files/file-abc/content",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files/file-abc/content",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "download_plain",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files/file-abc/content",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files/file-abc/content",
+     "params": {},
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "download_plain",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files/file-abc:download",
+     "params": {
+      "alt": "media"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files/file-abc:download",
+     "params": {
+      "alt": "media"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_limit_1_no_cursor",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files",
+     "params": {
+      "limit": "1"
+     },
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files",
+     "params": {
+      "limit": "1"
+     },
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_limit_1_no_cursor",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {
+      "limit": "1"
+     },
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {
+      "limit": "1"
+     },
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_limit_1_no_cursor",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files",
+     "params": {
+      "pageSize": "1"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files",
+     "params": {
+      "pageSize": "1"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_with_cursor",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files",
+     "params": {
+      "limit": "50",
+      "after": "page-token/with=chars"
+     },
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files",
+     "params": {
+      "limit": "50",
+      "after": "page-token/with=chars"
+     },
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_with_cursor",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {
+      "limit": "50",
+      "page": "page-token/with=chars"
+     },
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {
+      "limit": "50",
+      "page": "page-token/with=chars"
+     },
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_with_cursor",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files",
+     "params": {
+      "pageSize": "50",
+      "pageToken": "page-token/with=chars"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files",
+     "params": {
+      "pageSize": "50",
+      "pageToken": "page-token/with=chars"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_limit_zero",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files",
+     "params": {
+      "limit": "0"
+     },
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.openai.com/v1/files",
+     "params": {
+      "limit": "0"
+     },
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_limit_zero",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {
+      "limit": "0"
+     },
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://api.anthropic.com/v1/files",
+     "params": {
+      "limit": "0"
+     },
+     "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "list_limit_zero",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files",
+     "params": {
+      "pageSize": "0"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/files",
+     "params": {
+      "pageSize": "0"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "files_on_a_provider_without_the_surface",
+   "provider": "openai_chat",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_build",
+   "probe": "files_on_a_provider_without_the_surface",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "upload_three_entries_with_tools",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/files",
+       "params": {},
+       "headers": {
+        "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null,
+       "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCmJhdGNoDQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0iZmlsZSI7IGZpbGVuYW1lPSJsbTE1LWJhdGNoLmpzb25sIg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29ubA0KDQp7ImN1c3RvbV9pZCI6IjAiLCJtZXRob2QiOiJQT1NUIiwidXJsIjoiL3YxL3Jlc3BvbnNlcyIsImJvZHkiOnsibW9kZWwiOiJtIiwiaW5wdXQiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6W3sidHlwZSI6ImlucHV0X3RleHQiLCJ0ZXh0Ijoib25lIn1dfV0sInN0cmVhbSI6ZmFsc2V9fQp7ImN1c3RvbV9pZCI6IjEiLCJtZXRob2QiOiJQT1NUIiwidXJsIjoiL3YxL3Jlc3BvbnNlcyIsImJvZHkiOnsibW9kZWwiOiJtIiwiaW5wdXQiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6W3sidHlwZSI6ImlucHV0X3RleHQiLCJ0ZXh0IjoidHdvIn1dfV0sInN0cmVhbSI6ZmFsc2UsImluc3RydWN0aW9ucyI6InRlcnNlIiwibWF4X291dHB1dF90b2tlbnMiOjMyLCJ0ZW1wZXJhdHVyZSI6MC4xLCJ0b29scyI6W3sidHlwZSI6ImZ1bmN0aW9uIiwibmFtZSI6ImdldF93ZWF0aGVyIiwiZGVzY3JpcHRpb24iOiJHZXQgdGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5IiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJjaXR5Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbImNpdHkiXX19XX19CnsiY3VzdG9tX2lkIjoiMiIsIm1ldGhvZCI6IlBPU1QiLCJ1cmwiOiIvdjEvcmVzcG9uc2VzIiwiYm9keSI6eyJtb2RlbCI6Im0iLCJpbnB1dCI6W3sicm9sZSI6InVzZXIiLCJjb250ZW50IjpbeyJ0eXBlIjoiaW5wdXRfdGV4dCIsInRleHQiOiJ0aHJlZSJ9XX0seyJyb2xlIjoiYXNzaXN0YW50IiwiY29udGVudCI6W3sidHlwZSI6Im91dHB1dF90ZXh0IiwidGV4dCI6IjMifV19LHsicm9sZSI6InVzZXIiLCJjb250ZW50IjpbeyJ0eXBlIjoiaW5wdXRfdGV4dCIsInRleHQiOiJtb3JlIn1dfV0sInN0cmVhbSI6ZmFsc2V9fQoNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/files",
+       "params": {},
+       "headers": {
+        "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null,
+       "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InB1cnBvc2UiDQoNCmJhdGNoDQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0iZmlsZSI7IGZpbGVuYW1lPSJsbTE1LWJhdGNoLmpzb25sIg0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29ubA0KDQp7ImN1c3RvbV9pZCI6IjAiLCJtZXRob2QiOiJQT1NUIiwidXJsIjoiL3YxL3Jlc3BvbnNlcyIsImJvZHkiOnsibW9kZWwiOiJtIiwiaW5wdXQiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6W3sidHlwZSI6ImlucHV0X3RleHQiLCJ0ZXh0Ijoib25lIn1dfV0sInN0cmVhbSI6ZmFsc2V9fQp7ImN1c3RvbV9pZCI6IjEiLCJtZXRob2QiOiJQT1NUIiwidXJsIjoiL3YxL3Jlc3BvbnNlcyIsImJvZHkiOnsibW9kZWwiOiJtIiwiaW5wdXQiOlt7InJvbGUiOiJ1c2VyIiwiY29udGVudCI6W3sidHlwZSI6ImlucHV0X3RleHQiLCJ0ZXh0IjoidHdvIn1dfV0sInN0cmVhbSI6ZmFsc2UsImluc3RydWN0aW9ucyI6InRlcnNlIiwibWF4X291dHB1dF90b2tlbnMiOjMyLCJ0ZW1wZXJhdHVyZSI6MC4xLCJ0b29scyI6W3sidHlwZSI6ImZ1bmN0aW9uIiwibmFtZSI6ImdldF93ZWF0aGVyIiwiZGVzY3JpcHRpb24iOiJHZXQgdGhlIGN1cnJlbnQgd2VhdGhlciBmb3IgYSBjaXR5IiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJjaXR5Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbImNpdHkiXX19XX19CnsiY3VzdG9tX2lkIjoiMiIsIm1ldGhvZCI6IlBPU1QiLCJ1cmwiOiIvdjEvcmVzcG9uc2VzIiwiYm9keSI6eyJtb2RlbCI6Im0iLCJpbnB1dCI6W3sicm9sZSI6InVzZXIiLCJjb250ZW50IjpbeyJ0eXBlIjoiaW5wdXRfdGV4dCIsInRleHQiOiJ0aHJlZSJ9XX0seyJyb2xlIjoiYXNzaXN0YW50IiwiY29udGVudCI6W3sidHlwZSI6Im91dHB1dF90ZXh0IiwidGV4dCI6IjMifV19LHsicm9sZSI6InVzZXIiLCJjb250ZW50IjpbeyJ0eXBlIjoiaW5wdXRfdGV4dCIsInRleHQiOiJtb3JlIn1dfV0sInN0cmVhbSI6ZmFsc2V9fQoNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "upload_three_entries_with_tools",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "upload_three_entries_with_tools",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_three_entries_with_tools",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "input_file_id": "file-up",
+        "endpoint": "/v1/responses",
+        "completion_window": "24h"
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "input_file_id": "file-up",
+        "endpoint": "/v1/responses",
+        "completion_window": "24h"
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_three_entries_with_tools",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": {
+        "requests": [
+         {
+          "custom_id": "0",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "one"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 1024
+          }
+         },
+         {
+          "custom_id": "1",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "two"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 32,
+           "system": "terse",
+           "temperature": 0.1,
+           "tools": [
+            {
+             "name": "get_weather",
+             "description": "Get the current weather for a city",
+             "input_schema": {
+              "type": "object",
+              "properties": {
+               "city": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "city"
+              ]
+             }
+            }
+           ]
+          }
+         },
+         {
+          "custom_id": "2",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "three"
+              }
+             ]
+            },
+            {
+             "role": "assistant",
+             "content": [
+              {
+               "type": "text",
+               "text": "3"
+              }
+             ]
+            },
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "more"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 1024
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": {
+        "requests": [
+         {
+          "custom_id": "0",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "one"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 1024
+          }
+         },
+         {
+          "custom_id": "1",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "two"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 32,
+           "system": "terse",
+           "temperature": 0.1,
+           "tools": [
+            {
+             "name": "get_weather",
+             "description": "Get the current weather for a city",
+             "input_schema": {
+              "type": "object",
+              "properties": {
+               "city": {
+                "type": "string"
+               }
+              },
+              "required": [
+               "city"
+              ]
+             }
+            }
+           ]
+          }
+         },
+         {
+          "custom_id": "2",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "three"
+              }
+             ]
+            },
+            {
+             "role": "assistant",
+             "content": [
+              {
+               "type": "text",
+               "text": "3"
+              }
+             ]
+            },
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "more"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 1024
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_three_entries_with_tools",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:batchGenerateContent",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "batch": {
+         "inputConfig": {
+          "requests": {
+           "requests": [
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "one"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "0"
+             }
+            },
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "two"
+                 }
+                ]
+               }
+              ],
+              "systemInstruction": {
+               "parts": [
+                {
+                 "text": "terse"
+                }
+               ]
+              },
+              "generationConfig": {
+               "temperature": 0.1,
+               "maxOutputTokens": 32
+              },
+              "tools": [
+               {
+                "functionDeclarations": [
+                 {
+                  "name": "get_weather",
+                  "description": "Get the current weather for a city",
+                  "parameters": {
+                   "type": "object",
+                   "properties": {
+                    "city": {
+                     "type": "string"
+                    }
+                   },
+                   "required": [
+                    "city"
+                   ]
+                  }
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "1"
+             }
+            },
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "three"
+                 }
+                ]
+               },
+               {
+                "role": "model",
+                "parts": [
+                 {
+                  "text": "3"
+                 }
+                ]
+               },
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "more"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "2"
+             }
+            }
+           ]
+          }
+         }
+        }
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:batchGenerateContent",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "batch": {
+         "inputConfig": {
+          "requests": {
+           "requests": [
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "one"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "0"
+             }
+            },
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "two"
+                 }
+                ]
+               }
+              ],
+              "systemInstruction": {
+               "parts": [
+                {
+                 "text": "terse"
+                }
+               ]
+              },
+              "generationConfig": {
+               "temperature": 0.1,
+               "maxOutputTokens": 32
+              },
+              "tools": [
+               {
+                "functionDeclarations": [
+                 {
+                  "name": "get_weather",
+                  "description": "Get the current weather for a city",
+                  "parameters": {
+                   "type": "object",
+                   "properties": {
+                    "city": {
+                     "type": "string"
+                    }
+                   },
+                   "required": [
+                    "city"
+                   ]
+                  }
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "1"
+             }
+            },
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "three"
+                 }
+                ]
+               },
+               {
+                "role": "model",
+                "parts": [
+                 {
+                  "text": "3"
+                 }
+                ]
+               },
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "more"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "2"
+             }
+            }
+           ]
+          }
+         }
+        }
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_labeled",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "input_file_id": "file-up",
+        "endpoint": "/v1/responses",
+        "completion_window": "24h",
+        "metadata": {
+         "label": "nightly-eval"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "input_file_id": "file-up",
+        "endpoint": "/v1/responses",
+        "completion_window": "24h",
+        "metadata": {
+         "label": "nightly-eval"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_labeled",
+   "provider": "anthropic",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_labeled",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:batchGenerateContent",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "batch": {
+         "inputConfig": {
+          "requests": {
+           "requests": [
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "one"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "0"
+             }
+            }
+           ]
+          }
+         },
+         "displayName": "nightly-eval"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:batchGenerateContent",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "batch": {
+         "inputConfig": {
+          "requests": {
+           "requests": [
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "one"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "0"
+             }
+            }
+           ]
+          }
+         },
+         "displayName": "nightly-eval"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_with_extensions",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "input_file_id": "file-up",
+        "endpoint": "/v1/responses",
+        "completion_window": "24h",
+        "note": 1
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "input_file_id": "file-up",
+        "endpoint": "/v1/responses",
+        "completion_window": "24h",
+        "note": 1
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_with_extensions",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": {
+        "requests": [
+         {
+          "custom_id": "0",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "one"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 1024
+          }
+         }
+        ],
+        "completion_window": "24h",
+        "note": 1
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": {
+        "requests": [
+         {
+          "custom_id": "0",
+          "params": {
+           "model": "m",
+           "messages": [
+            {
+             "role": "user",
+             "content": [
+              {
+               "type": "text",
+               "text": "one"
+              }
+             ]
+            }
+           ],
+           "stream": false,
+           "max_tokens": 1024
+          }
+         }
+        ],
+        "completion_window": "24h",
+        "note": 1
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "submit_with_extensions",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:batchGenerateContent",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "batch": {
+         "inputConfig": {
+          "requests": {
+           "requests": [
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "one"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "0"
+             }
+            }
+           ]
+          }
+         }
+        },
+        "completion_window": "24h",
+        "note": 1
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:batchGenerateContent",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "batch": {
+         "inputConfig": {
+          "requests": {
+           "requests": [
+            {
+             "request": {
+              "contents": [
+               {
+                "role": "user",
+                "parts": [
+                 {
+                  "text": "one"
+                 }
+                ]
+               }
+              ]
+             },
+             "metadata": {
+              "key": "0"
+             }
+            }
+           ]
+          }
+         }
+        },
+        "completion_window": "24h",
+        "note": 1
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "status_odd_id",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/batches/batch/odd id",
+       "params": {
+        "x": ""
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/batches/batch/odd id?x",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": [
+    "/result/requests[0]/params/x: only in python: \"\"",
+    "/result/requests[0]/url: python \"https://api.openai.com/v1/batches/batch/odd id\" vs rust \"https://api.openai.com/v1/batches/batch/odd id?x\""
+   ]
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "status_odd_id",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches/batch/odd id",
+       "params": {
+        "x": ""
+       },
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches/batch/odd id?x",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": [
+    "/result/requests[0]/params/x: only in python: \"\"",
+    "/result/requests[0]/url: python \"https://api.anthropic.com/v1/messages/batches/batch/odd id\" vs rust \"https://api.anthropic.com/v1/messages/batches/batch/odd id?x\""
+   ]
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "status_odd_id",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batch/odd id",
+       "params": {
+        "x": ""
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batch/odd id?x",
+       "params": {},
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": [
+    "/result/requests[0]/params/x: only in python: \"\"",
+    "/result/requests[0]/url: python \"https://generativelanguage.googleapis.com/v1beta/batch/odd id\" vs rust \"https://generativelanguage.googleapis.com/v1beta/batch/odd id?x\""
+   ]
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "cancel_plain",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches/batch_1/cancel",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/batches/batch_1/cancel",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "cancel_plain",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.anthropic.com/v1/messages/batches/batch_1/cancel",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.anthropic.com/v1/messages/batches/batch_1/cancel",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "cancel_plain",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batch_1:cancel",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {}
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batch_1:cancel",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {}
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "list_limit_100",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {
+        "limit": "100"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {
+        "limit": "100"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "list_limit_100",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {
+        "limit": "100"
+       },
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {
+        "limit": "100"
+       },
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "list_limit_100",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batches",
+       "params": {
+        "pageSize": "100"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batches",
+       "params": {
+        "pageSize": "100"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "list_limit_1",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {
+        "limit": "1"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/batches",
+       "params": {
+        "limit": "1"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "list_limit_1",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {
+        "limit": "1"
+       },
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches",
+       "params": {
+        "limit": "1"
+       },
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "list_limit_1",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batches",
+       "params": {
+        "pageSize": "1"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/batches",
+       "params": {
+        "pageSize": "1"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "result_fetches_openai_both_files",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/files/file-out/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      },
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/files/file-err/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/files/file-out/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      },
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/files/file-err/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "result_fetches_openai_no_error_file",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/files/file-out/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/files/file-out/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "result_fetches_anthropic_results_url",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches/msgbatch_1/results",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.anthropic.com/v1/messages/batches/msgbatch_1/results",
+       "params": {},
+       "headers": {
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "result_fetches_gemini_inlined",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "batch_on_a_provider_without_the_surface",
+   "provider": "openai_chat",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_build",
+   "probe": "batch_on_a_provider_without_the_surface",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "create_system_tools_ttl_label",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "model": "models/gemini-2.5-flash",
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context "
+         }
+        ]
+       }
+      ],
+      "systemInstruction": {
+       "parts": [
+        {
+         "text": "You are a cache test."
+        }
+       ]
+      },
+      "tools": [
+       {
+        "functionDeclarations": [
+         {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "city": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "city"
+           ]
+          }
+         }
+        ]
+       }
+      ],
+      "ttl": "600s",
+      "displayName": "probe"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "model": "models/gemini-2.5-flash",
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context Context "
+         }
+        ]
+       }
+      ],
+      "systemInstruction": {
+       "parts": [
+        {
+         "text": "You are a cache test."
+        }
+       ]
+      },
+      "tools": [
+       {
+        "functionDeclarations": [
+         {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "city": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "city"
+           ]
+          }
+         }
+        ]
+       }
+      ],
+      "ttl": "600s",
+      "displayName": "probe"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "create_no_ttl_no_label",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "model": "models/gemini-2.5-flash",
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "hello"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "model": "models/gemini-2.5-flash",
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "hello"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "create_multi_turn_prefix",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "model": "models/gemini-2.5-flash",
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a"
+         }
+        ]
+       },
+       {
+        "role": "model",
+        "parts": [
+         {
+          "text": "b"
+         }
+        ]
+       },
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "c"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "model": "models/gemini-2.5-flash",
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a"
+         }
+        ]
+       },
+       {
+        "role": "model",
+        "parts": [
+         {
+          "text": "b"
+         }
+        ]
+       },
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "c"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "get_odd_id",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents/abc-123",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents/abc-123",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "update_ttl_only",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "PATCH",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents/abc",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "ttl": "30s"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "PATCH",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents/abc",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "ttl": "30s"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "list_with_cursor",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {
+      "pageSize": "5",
+      "pageToken": "tok"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "GET",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents",
+     "params": {
+      "pageSize": "5",
+      "pageToken": "tok"
+     },
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "delete_plain",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents/abc",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "DELETE",
+     "url": "https://generativelanguage.googleapis.com/v1beta/cachedContents/abc",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": null
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "cache_on_a_provider_without_the_tier",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "cache_on_a_provider_without_the_tier",
+   "provider": "openai_chat",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "cache_on_a_provider_without_the_tier",
+   "provider": "anthropic",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "cache_op_build",
+   "probe": "cache_on_a_provider_without_the_tier",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_size_only",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "size": "1024x1024"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "size": "1024x1024"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_size_only",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a cat"
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "imageConfig": {
+        "aspectRatio": "1024x1024"
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a cat"
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "imageConfig": {
+        "aspectRatio": "1024x1024"
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_size_only",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_aspect_ratio_size",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "size": "16:9"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "size": "16:9"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_aspect_ratio_size",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a cat"
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "imageConfig": {
+        "aspectRatio": "16:9"
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a cat"
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "imageConfig": {
+        "aspectRatio": "16:9"
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_aspect_ratio_size",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_with_extensions",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "n": 2,
+      "quality": "high"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "n": 2,
+      "quality": "high"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_with_extensions",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a cat"
+         }
+        ]
+       }
+      ],
+      "n": 2,
+      "quality": "high"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "a cat"
+         }
+        ]
+       }
+      ],
+      "n": 2,
+      "quality": "high"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_with_extensions",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "n": 2,
+      "quality": "high"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/generations",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "a cat",
+      "n": 2,
+      "quality": "high"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_url",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_url",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "make it blue"
+         },
+         {
+          "fileData": {
+           "mimeType": "image/png",
+           "fileUri": "https://example.com/in.png"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "make it blue"
+         },
+         {
+          "fileData": {
+           "mimeType": "image/png",
+           "fileUri": "https://example.com/in.png"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_url",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "make it blue",
+      "image": {
+       "url": "https://example.com/in.png"
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "make it blue",
+      "image": {
+       "url": "https://example.com/in.png"
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_bytes",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9Im1vZGVsIg0KDQptDQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0icHJvbXB0Ig0KDQptYWtlIGl0IGJsdWUNCi0tbG0xNS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJpbWFnZVtdIjsgZmlsZW5hbWU9ImltYWdlLTAiDQpDb250ZW50LVR5cGU6IGltYWdlL3BuZw0KDQqJUE5HIGZha2UNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "multipart/form-data; boundary=lm15-BOUNDARY",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": null,
+     "body_b64": "LS1sbTE1LUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9Im1vZGVsIg0KDQptDQotLWxtMTUtQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0icHJvbXB0Ig0KDQptYWtlIGl0IGJsdWUNCi0tbG0xNS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJpbWFnZVtdIjsgZmlsZW5hbWU9ImltYWdlLTAiDQpDb250ZW50LVR5cGU6IGltYWdlL3BuZw0KDQqJUE5HIGZha2UNCi0tbG0xNS1CT1VOREFSWS0tDQo="
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_bytes",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "make it blue"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": "iVBORyBmYWtl"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "make it blue"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": "iVBORyBmYWtl"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_bytes",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "make it blue",
+      "image": {
+       "url": "data:image/png;base64,iVBORyBmYWtl"
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "make it blue",
+      "image": {
+       "url": "data:image/png;base64,iVBORyBmYWtl"
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_file_id",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_file_id",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "make it blue"
+         },
+         {
+          "fileData": {
+           "mimeType": "image/png",
+           "fileUri": "file-img-1"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "make it blue"
+         },
+         {
+          "fileData": {
+           "mimeType": "image/png",
+           "fileUri": "file-img-1"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_from_file_id",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "make it blue",
+      "image": {
+       "file_id": "file-img-1"
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.x.ai/v1/images/edits",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "prompt": "make it blue",
+      "image": {
+       "file_id": "file-img-1"
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_two_inputs",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_two_inputs",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "merge"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": "iVBORyBmYWtl"
+          }
+         },
+         {
+          "fileData": {
+           "mimeType": "image/png",
+           "fileUri": "https://example.com/in.png"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "merge"
+         },
+         {
+          "inlineData": {
+           "mimeType": "image/png",
+           "data": "iVBORyBmYWtl"
+          }
+         },
+         {
+          "fileData": {
+           "mimeType": "image/png",
+           "fileUri": "https://example.com/in.png"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "image_edit_two_inputs",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_voice_format",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/audio/speech",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "input": "Hello there.",
+      "voice": "nova",
+      "response_format": "wav"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/audio/speech",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "input": "Hello there.",
+      "voice": "nova",
+      "response_format": "wav"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_voice_format",
+   "provider": "gemini",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_voice_format",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_voice_only",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/audio/speech",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "input": "Hello.",
+      "voice": "Kore"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/audio/speech",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "input": "Hello.",
+      "voice": "Kore"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_voice_only",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "Hello."
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "responseModalities": [
+        "AUDIO"
+       ],
+       "speechConfig": {
+        "voiceConfig": {
+         "prebuiltVoiceConfig": {
+          "voiceName": "Kore"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "Hello."
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "responseModalities": [
+        "AUDIO"
+       ],
+       "speechConfig": {
+        "voiceConfig": {
+         "prebuiltVoiceConfig": {
+          "voiceName": "Kore"
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_voice_only",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_with_extensions",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/audio/speech",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "input": "Hi.",
+      "speed": 1.2
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://api.openai.com/v1/audio/speech",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "authorization": "Bearer test-key-123"
+     },
+     "body": {
+      "model": "m",
+      "input": "Hi.",
+      "speed": 1.2
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_with_extensions",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "content-type": "application/json",
+      "x-goog-api-key": "test-key-123"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "Hi."
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "responseModalities": [
+        "AUDIO"
+       ]
+      },
+      "speed": 1.2
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "method": "POST",
+     "url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+     "params": {},
+     "headers": {
+      "x-goog-api-key": "test-key-123",
+      "content-type": "application/json"
+     },
+     "body": {
+      "contents": [
+       {
+        "role": "user",
+        "parts": [
+         {
+          "text": "Hi."
+         }
+        ]
+       }
+      ],
+      "generationConfig": {
+       "responseModalities": [
+        "AUDIO"
+       ]
+      },
+      "speed": 1.2
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "speech_with_extensions",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "generation_on_a_provider_without_it",
+   "provider": "anthropic",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_build",
+   "probe": "generation_on_a_provider_without_it",
+   "provider": "openai_chat",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_seconds",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "model": "m",
+        "prompt": "a ball",
+        "seconds": "8"
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "model": "m",
+        "prompt": "a ball",
+        "seconds": "8"
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_seconds",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:predictLongRunning",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "instances": [
+         {
+          "prompt": "a ball"
+         }
+        ],
+        "parameters": {
+         "durationSeconds": 8
+        }
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:predictLongRunning",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "instances": [
+         {
+          "prompt": "a ball"
+         }
+        ],
+        "parameters": {
+         "durationSeconds": 8
+        }
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_seconds",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_image_frame",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_image_frame",
+   "provider": "gemini",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_image_frame",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_extensions",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "model": "m",
+        "prompt": "a ball",
+        "size": "1280x720"
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "model": "m",
+        "prompt": "a ball",
+        "size": "1280x720"
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_extensions",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:predictLongRunning",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "instances": [
+         {
+          "prompt": "a ball"
+         }
+        ],
+        "size": "1280x720"
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/m:predictLongRunning",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": {
+        "instances": [
+         {
+          "prompt": "a ball"
+         }
+        ],
+        "size": "1280x720"
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "submit_with_extensions",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.x.ai/v1/videos/generations",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "model": "m",
+        "prompt": "a ball",
+        "size": "1280x720"
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "POST",
+       "url": "https://api.x.ai/v1/videos/generations",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": {
+        "model": "m",
+        "prompt": "a ball",
+        "size": "1280x720"
+       }
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "status_odd_id",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos/video/odd id",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos/video/odd id",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "status_odd_id",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/video/odd id",
+       "params": {},
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/video/odd id",
+       "params": {},
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "status_odd_id",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.x.ai/v1/videos/video/odd id",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.x.ai/v1/videos/video/odd id",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "list_no_model",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {
+        "limit": "5"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {
+        "limit": "5"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "list_no_model",
+   "provider": "gemini",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "list_no_model",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "list_with_model",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {
+        "limit": "5"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos",
+       "params": {
+        "limit": "5"
+       },
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "list_with_model",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1/operations",
+       "params": {
+        "pageSize": "5"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1/operations",
+       "params": {
+        "pageSize": "5"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "list_with_model",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "result_fetch_openai",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos/video_1/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://api.openai.com/v1/videos/video_1/content",
+       "params": {},
+       "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "result_fetch_gemini_uri",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/files/abc:download",
+       "params": {
+        "alt": "media"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": [
+      {
+       "method": "GET",
+       "url": "https://generativelanguage.googleapis.com/v1beta/files/abc:download",
+       "params": {
+        "alt": "media"
+       },
+       "headers": {
+        "x-goog-api-key": "test-key-123"
+       },
+       "body": null
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "result_fetch_xai_url",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "requests": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "video_on_a_provider_without_it",
+   "provider": "anthropic",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_build",
+   "probe": "video_on_a_provider_without_it",
+   "provider": "openai_chat",
+   "python": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "rust": {
+    "ok": false,
+    "type": "UnsupportedFeatureError",
+    "code": "unsupported_feature"
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "config_voice_formats_no_tools",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "audio"
+        ],
+        "audio": {
+         "output": {
+          "format": {
+           "type": "audio/pcm",
+           "rate": 24000
+          },
+          "voice": "alloy"
+         },
+         "input": {
+          "format": {
+           "type": "audio/pcm",
+           "rate": 16000
+          },
+          "turn_detection": null
+         }
+        }
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_text",
+           "text": "hi"
+          }
+         ]
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "audio"
+        ],
+        "audio": {
+         "output": {
+          "format": {
+           "type": "audio/pcm",
+           "rate": 24000
+          },
+          "voice": "alloy"
+         },
+         "input": {
+          "format": {
+           "type": "audio/pcm",
+           "rate": 16000
+          },
+          "turn_detection": null
+         }
+        }
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_text",
+           "text": "hi"
+          }
+         ]
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "config_voice_formats_no_tools",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "generationConfig": {
+         "responseModalities": [
+          "AUDIO"
+         ],
+         "speechConfig": {
+          "voiceConfig": {
+           "prebuiltVoiceConfig": {
+            "voiceName": "alloy"
+           }
+          }
+         }
+        }
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "clientContent": {
+         "turns": [
+          {
+           "role": "user",
+           "parts": [
+            {
+             "text": "hi"
+            }
+           ]
+          }
+         ],
+         "turnComplete": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "generationConfig": {
+         "responseModalities": [
+          "AUDIO"
+         ],
+         "speechConfig": {
+          "voiceConfig": {
+           "prebuiltVoiceConfig": {
+            "voiceName": "alloy"
+           }
+          }
+         }
+        }
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "clientContent": {
+         "turns": [
+          {
+           "role": "user",
+           "parts": [
+            {
+             "text": "hi"
+            }
+           ]
+          }
+         ],
+         "turnComplete": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "config_system_parts_and_tools",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "instructions": "Be brief.",
+        "output_modalities": [
+         "text"
+        ],
+        "tools": [
+         {
+          "type": "function",
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "city": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "city"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_text",
+           "text": "hello"
+          }
+         ]
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "instructions": "Be brief.",
+        "output_modalities": [
+         "text"
+        ],
+        "tools": [
+         {
+          "type": "function",
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "city": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "city"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_text",
+           "text": "hello"
+          }
+         ]
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "config_system_parts_and_tools",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "systemInstruction": {
+         "parts": [
+          {
+           "text": "Be brief."
+          }
+         ]
+        },
+        "tools": [
+         {
+          "functionDeclarations": [
+           {
+            "name": "get_weather",
+            "description": "Get the current weather for a city",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "city": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "city"
+             ]
+            }
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "clientContent": {
+         "turns": [
+          {
+           "role": "user",
+           "parts": [
+            {
+             "text": "hello"
+            }
+           ]
+          }
+         ],
+         "turnComplete": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "systemInstruction": {
+         "parts": [
+          {
+           "text": "Be brief."
+          }
+         ]
+        },
+        "tools": [
+         {
+          "functionDeclarations": [
+           {
+            "name": "get_weather",
+            "description": "Get the current weather for a city",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "city": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "city"
+             ]
+            }
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "clientContent": {
+         "turns": [
+          {
+           "role": "user",
+           "parts": [
+            {
+             "text": "hello"
+            }
+           ]
+          }
+         ],
+         "turnComplete": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "audio_chunks_then_end",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "input_audio_buffer.append",
+        "audio": "AAE="
+       }
+      ],
+      [
+       {
+        "type": "input_audio_buffer.append",
+        "audio": "AgM="
+       }
+      ],
+      [
+       {
+        "type": "input_audio_buffer.commit"
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "input_audio_buffer.append",
+        "audio": "AAE="
+       }
+      ],
+      [
+       {
+        "type": "input_audio_buffer.append",
+        "audio": "AgM="
+       }
+      ],
+      [
+       {
+        "type": "input_audio_buffer.commit"
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "audio_chunks_then_end",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m"
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "realtimeInput": {
+         "audio": {
+          "mimeType": "audio/pcm;rate=16000",
+          "data": "AAE="
+         }
+        }
+       }
+      ],
+      [
+       {
+        "realtimeInput": {
+         "audio": {
+          "mimeType": "audio/pcm;rate=16000",
+          "data": "AgM="
+         }
+        }
+       }
+      ],
+      [
+       {
+        "realtimeInput": {
+         "audioStreamEnd": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m"
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "realtimeInput": {
+         "audio": {
+          "mimeType": "audio/pcm;rate=16000",
+          "data": "AAE="
+         }
+        }
+       }
+      ],
+      [
+       {
+        "realtimeInput": {
+         "audio": {
+          "mimeType": "audio/pcm;rate=16000",
+          "data": "AgM="
+         }
+        }
+       }
+      ],
+      [
+       {
+        "realtimeInput": {
+         "audioStreamEnd": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "image_event",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_image",
+           "image_url": "data:image/jpeg;base64,/9ggZmFrZQ=="
+          }
+         ]
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_image",
+           "image_url": "data:image/jpeg;base64,/9ggZmFrZQ=="
+          }
+         ]
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "image_event",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m"
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "realtimeInput": {
+         "video": {
+          "mimeType": "image/jpeg",
+          "data": "/9ggZmFrZQ=="
+         }
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m"
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "realtimeInput": {
+         "video": {
+          "mimeType": "image/jpeg",
+          "data": "/9ggZmFrZQ=="
+         }
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "tool_result_then_interrupt",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ],
+        "tools": [
+         {
+          "type": "function",
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "city": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "city"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "function_call_output",
+         "call_id": "call_1",
+         "output": "sunny"
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ],
+      [
+       {
+        "type": "response.cancel"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ],
+        "tools": [
+         {
+          "type": "function",
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+           "type": "object",
+           "properties": {
+            "city": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "city"
+           ]
+          }
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "function_call_output",
+         "call_id": "call_1",
+         "output": "sunny"
+        }
+       },
+       {
+        "type": "response.create"
+       }
+      ],
+      [
+       {
+        "type": "response.cancel"
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "tool_result_then_interrupt",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "tools": [
+         {
+          "functionDeclarations": [
+           {
+            "name": "get_weather",
+            "description": "Get the current weather for a city",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "city": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "city"
+             ]
+            }
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "toolResponse": {
+         "functionResponses": [
+          {
+           "id": "call_1",
+           "response": {
+            "output": [
+             {
+              "text": "sunny"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       }
+      ],
+      [
+       {
+        "clientContent": {
+         "turnComplete": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "tools": [
+         {
+          "functionDeclarations": [
+           {
+            "name": "get_weather",
+            "description": "Get the current weather for a city",
+            "parameters": {
+             "type": "object",
+             "properties": {
+              "city": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "city"
+             ]
+            }
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "toolResponse": {
+         "functionResponses": [
+          {
+           "id": "call_1",
+           "response": {
+            "output": [
+             {
+              "text": "sunny"
+             }
+            ]
+           }
+          }
+         ]
+        }
+       }
+      ],
+      [
+       {
+        "clientContent": {
+         "turnComplete": true
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "turn_not_complete",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_text",
+           "text": "partial"
+          }
+         ]
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ]
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "type": "conversation.item.create",
+        "item": {
+         "type": "message",
+         "role": "user",
+         "content": [
+          {
+           "type": "input_text",
+           "text": "partial"
+          }
+         ]
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "turn_not_complete",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m"
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "clientContent": {
+         "turns": [
+          {
+           "role": "user",
+           "parts": [
+            {
+             "text": "partial"
+            }
+           ]
+          }
+         ],
+         "turnComplete": false
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m"
+       }
+      }
+     ],
+     "client_frames": [
+      [
+       {
+        "clientContent": {
+         "turns": [
+          {
+           "role": "user",
+           "parts": [
+            {
+             "text": "partial"
+            }
+           ]
+          }
+         ],
+         "turnComplete": false
+        }
+       }
+      ]
+     ],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "config_extensions_passthrough",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ],
+        "turn_detection": false,
+        "custom": {
+         "x": 1
+        }
+       }
+      }
+     ],
+     "client_frames": [],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "type": "session.update",
+       "session": {
+        "type": "realtime",
+        "output_modalities": [
+         "text"
+        ],
+        "turn_detection": false,
+        "custom": {
+         "x": 1
+        }
+       }
+      }
+     ],
+     "client_frames": [],
+     "events": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "replay_live",
+   "probe": "config_extensions_passthrough",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "turn_detection": false,
+        "custom": {
+         "x": 1
+        }
+       }
+      }
+     ],
+     "client_frames": [],
+     "events": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "setup_frames": [
+      {
+       "setup": {
+        "model": "models/m",
+        "turn_detection": false,
+        "custom": {
+         "x": 1
+        }
+       }
+      }
+     ],
+     "client_frames": [],
+     "events": []
+    }
+   },
+   "diff": []
+  }
+ ],
+ "parse": [
+  {
+   "op": "file_op_parse",
+   "probe": "openai_info_processing_unknown_status",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "file-1",
+      "filename": "a.txt",
+      "size_bytes": 3,
+      "created_at": "2023-11-14T22:13:20Z",
+      "readiness": "ready",
+      "provider_data": {
+       "object": "file",
+       "id": "file-1",
+       "purpose": "user_data",
+       "filename": "a.txt",
+       "bytes": 3,
+       "created_at": 1700000000,
+       "status": "weird-new-word",
+       "extra": {
+        "k": 1
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "file-1",
+      "filename": "a.txt",
+      "size_bytes": 3,
+      "created_at": "2023-11-14T22:13:20Z",
+      "readiness": "ready",
+      "provider_data": {
+       "object": "file",
+       "id": "file-1",
+       "purpose": "user_data",
+       "filename": "a.txt",
+       "bytes": 3,
+       "created_at": 1700000000,
+       "status": "weird-new-word",
+       "extra": {
+        "k": 1
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "openai_info_missing_bytes_and_created",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "file-1",
+      "filename": "a.txt",
+      "readiness": "ready",
+      "provider_data": {
+       "object": "file",
+       "id": "file-1",
+       "filename": "a.txt"
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "file-1",
+      "filename": "a.txt",
+      "readiness": "ready",
+      "provider_data": {
+       "object": "file",
+       "id": "file-1",
+       "filename": "a.txt"
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "openai_page_empty",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "page": {}
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "page": {}
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "openai_page_has_more_with_cursor",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "page": {
+      "items": [
+       {
+        "id": "f1",
+        "filename": "x",
+        "size_bytes": 1,
+        "created_at": "1970-01-01T00:00:01Z",
+        "readiness": "ready",
+        "provider_data": {
+         "object": "file",
+         "id": "f1",
+         "filename": "x",
+         "bytes": 1,
+         "created_at": 1
+        }
+       }
+      ],
+      "next_cursor": "f1"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "page": {
+      "items": [
+       {
+        "id": "f1",
+        "filename": "x",
+        "size_bytes": 1,
+        "created_at": "1970-01-01T00:00:01Z",
+        "readiness": "ready",
+        "provider_data": {
+         "object": "file",
+         "id": "f1",
+         "filename": "x",
+         "bytes": 1,
+         "created_at": 1
+        }
+       }
+      ],
+      "next_cursor": "f1"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "anthropic_info_downloadable_false",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "file_1",
+      "filename": "a.txt",
+      "media_type": "text/plain",
+      "size_bytes": 3,
+      "created_at": "2026-01-01T00:00:00Z",
+      "readiness": "ready",
+      "downloadable": false,
+      "provider_data": {
+       "type": "file",
+       "id": "file_1",
+       "filename": "a.txt",
+       "mime_type": "text/plain",
+       "size_bytes": 3,
+       "created_at": "2026-01-01T00:00:00Z",
+       "downloadable": false
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "file_1",
+      "filename": "a.txt",
+      "media_type": "text/plain",
+      "size_bytes": 3,
+      "created_at": "2026-01-01T00:00:00Z",
+      "readiness": "ready",
+      "downloadable": false,
+      "provider_data": {
+       "type": "file",
+       "id": "file_1",
+       "filename": "a.txt",
+       "mime_type": "text/plain",
+       "size_bytes": 3,
+       "created_at": "2026-01-01T00:00:00Z",
+       "downloadable": false
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "gemini_info_state_failed",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "files/abc",
+      "filename": "a.txt",
+      "media_type": "text/plain",
+      "size_bytes": 3,
+      "created_at": "2026-01-01T00:00:00Z",
+      "readiness": "failed",
+      "provider_data": {
+       "name": "files/abc",
+       "displayName": "a.txt",
+       "mimeType": "text/plain",
+       "sizeBytes": "3",
+       "createTime": "2026-01-01T00:00:00Z",
+       "state": "FAILED",
+       "error": {
+        "message": "bad"
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "files/abc",
+      "filename": "a.txt",
+      "media_type": "text/plain",
+      "size_bytes": 3,
+      "created_at": "2026-01-01T00:00:00Z",
+      "readiness": "failed",
+      "provider_data": {
+       "name": "files/abc",
+       "displayName": "a.txt",
+       "mimeType": "text/plain",
+       "sizeBytes": "3",
+       "createTime": "2026-01-01T00:00:00Z",
+       "state": "FAILED",
+       "error": {
+        "message": "bad"
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "gemini_info_state_processing",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "files/abc",
+      "media_type": "video/mp4",
+      "size_bytes": 1000,
+      "readiness": "pending",
+      "provider_data": {
+       "name": "files/abc",
+       "mimeType": "video/mp4",
+       "sizeBytes": "1000",
+       "state": "PROCESSING"
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "file": {
+      "id": "files/abc",
+      "media_type": "video/mp4",
+      "size_bytes": 1000,
+      "readiness": "pending",
+      "provider_data": {
+       "name": "files/abc",
+       "mimeType": "video/mp4",
+       "sizeBytes": "1000",
+       "state": "PROCESSING"
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "gemini_page_next_token",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "page": {
+      "items": [
+       {
+        "id": "files/1",
+        "media_type": "text/plain",
+        "size_bytes": 1,
+        "readiness": "ready",
+        "provider_data": {
+         "name": "files/1",
+         "mimeType": "text/plain",
+         "sizeBytes": "1",
+         "state": "ACTIVE"
+        }
+       }
+      ],
+      "next_cursor": "tok"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "page": {
+      "items": [
+       {
+        "id": "files/1",
+        "media_type": "text/plain",
+        "size_bytes": 1,
+        "readiness": "ready",
+        "provider_data": {
+         "name": "files/1",
+         "mimeType": "text/plain",
+         "sizeBytes": "1",
+         "state": "ACTIVE"
+        }
+       }
+      ],
+      "next_cursor": "tok"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "file_op_parse",
+   "probe": "openai_info_404_error",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "InvalidRequestError",
+    "code": "invalid_request"
+   },
+   "rust": {
+    "ok": false,
+    "type": "InvalidRequestError",
+    "code": "invalid_request"
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "openai_job_validating",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "queued",
+      "label": "x",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "validating",
+       "created_at": 1700000000,
+       "metadata": {
+        "label": "x"
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "queued",
+      "label": "x",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "validating",
+       "created_at": 1700000000,
+       "metadata": {
+        "label": "x"
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "openai_job_expired",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "expired",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "expired",
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "expired",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "expired",
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "openai_job_cancelling",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "cancelling",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "cancelling",
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "cancelling",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "cancelling",
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "openai_job_unknown_status",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "queued",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "brand_new",
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batch_1",
+      "status": "queued",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "batch_1",
+       "object": "batch",
+       "status": "brand_new",
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "anthropic_job_canceling",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "msgbatch_1",
+      "status": "cancelling",
+      "created_at": "2026-01-01T00:00:00Z",
+      "provider_data": {
+       "id": "msgbatch_1",
+       "type": "message_batch",
+       "processing_status": "canceling",
+       "created_at": "2026-01-01T00:00:00Z",
+       "request_counts": {
+        "processing": 1,
+        "succeeded": 0,
+        "errored": 0,
+        "canceled": 0,
+        "expired": 0
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "msgbatch_1",
+      "status": "cancelling",
+      "created_at": "2026-01-01T00:00:00Z",
+      "provider_data": {
+       "id": "msgbatch_1",
+       "type": "message_batch",
+       "processing_status": "canceling",
+       "created_at": "2026-01-01T00:00:00Z",
+       "request_counts": {
+        "processing": 1,
+        "succeeded": 0,
+        "errored": 0,
+        "canceled": 0,
+        "expired": 0
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "gemini_job_pending_no_metadata",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batches/1",
+      "status": "queued",
+      "provider_data": {
+       "name": "batches/1",
+       "done": false
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batches/1",
+      "status": "queued",
+      "provider_data": {
+       "name": "batches/1",
+       "done": false
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "gemini_job_error",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batches/1",
+      "status": "failed",
+      "provider_data": {
+       "name": "batches/1",
+       "done": true,
+       "error": {
+        "code": 3,
+        "message": "bad"
+       },
+       "metadata": {
+        "state": "BATCH_STATE_FAILED"
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "batches/1",
+      "status": "failed",
+      "provider_data": {
+       "name": "batches/1",
+       "done": true,
+       "error": {
+        "code": 3,
+        "message": "bad"
+       },
+       "metadata": {
+        "state": "BATCH_STATE_FAILED"
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "openai_list_empty",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "jobs": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "jobs": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "openai_entries_out_of_order_with_error",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "entries": [
+      {
+       "index": 0,
+       "outcome": "succeeded",
+       "response": {
+        "id": "resp_1",
+        "model": "m",
+        "message": {
+         "role": "assistant",
+         "parts": [
+          {
+           "type": "text",
+           "text": "one"
+          }
+         ]
+        },
+        "finish_reason": "stop",
+        "usage": {
+         "input_tokens": 1,
+         "output_tokens": 1,
+         "total_tokens": 2
+        },
+        "provider_data": {
+         "id": "resp_1",
+         "object": "response",
+         "model": "m",
+         "status": "completed",
+         "output": [
+          {
+           "type": "message",
+           "id": "m1",
+           "role": "assistant",
+           "status": "completed",
+           "content": [
+            {
+             "type": "output_text",
+             "text": "one",
+             "annotations": []
+            }
+           ]
+          }
+         ],
+         "usage": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 2
+         }
+        }
+       }
+      },
+      {
+       "index": 1,
+       "outcome": "succeeded",
+       "response": {
+        "id": "resp_2",
+        "model": "m",
+        "message": {
+         "role": "assistant",
+         "parts": [
+          {
+           "type": "text",
+           "text": "two"
+          }
+         ]
+        },
+        "finish_reason": "stop",
+        "usage": {
+         "input_tokens": 1,
+         "output_tokens": 1,
+         "total_tokens": 2
+        },
+        "provider_data": {
+         "id": "resp_2",
+         "object": "response",
+         "model": "m",
+         "status": "completed",
+         "output": [
+          {
+           "type": "message",
+           "id": "m2",
+           "role": "assistant",
+           "status": "completed",
+           "content": [
+            {
+             "type": "output_text",
+             "text": "two",
+             "annotations": []
+            }
+           ]
+          }
+         ],
+         "usage": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 2
+         }
+        }
+       }
+      },
+      {
+       "index": 2,
+       "outcome": "errored",
+       "error": {
+        "code": "rate_limit",
+        "message": "slow down\n\n  To fix:\n    - Wait a moment and retry\n    - Retry with backoff in your application layer (lm15 never retries for you)\n    - Reduce request rate or upgrade your API plan\n",
+        "provider_code": "rate_limit_error"
+       }
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "entries": [
+      {
+       "index": 0,
+       "outcome": "succeeded",
+       "response": {
+        "id": "resp_1",
+        "model": "m",
+        "message": {
+         "role": "assistant",
+         "parts": [
+          {
+           "type": "text",
+           "text": "one"
+          }
+         ]
+        },
+        "finish_reason": "stop",
+        "usage": {
+         "input_tokens": 1,
+         "output_tokens": 1,
+         "total_tokens": 2
+        },
+        "provider_data": {
+         "id": "resp_1",
+         "object": "response",
+         "model": "m",
+         "status": "completed",
+         "output": [
+          {
+           "type": "message",
+           "id": "m1",
+           "role": "assistant",
+           "status": "completed",
+           "content": [
+            {
+             "type": "output_text",
+             "text": "one",
+             "annotations": []
+            }
+           ]
+          }
+         ],
+         "usage": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 2
+         }
+        }
+       }
+      },
+      {
+       "index": 1,
+       "outcome": "succeeded",
+       "response": {
+        "id": "resp_2",
+        "model": "m",
+        "message": {
+         "role": "assistant",
+         "parts": [
+          {
+           "type": "text",
+           "text": "two"
+          }
+         ]
+        },
+        "finish_reason": "stop",
+        "usage": {
+         "input_tokens": 1,
+         "output_tokens": 1,
+         "total_tokens": 2
+        },
+        "provider_data": {
+         "id": "resp_2",
+         "object": "response",
+         "model": "m",
+         "status": "completed",
+         "output": [
+          {
+           "type": "message",
+           "id": "m2",
+           "role": "assistant",
+           "status": "completed",
+           "content": [
+            {
+             "type": "output_text",
+             "text": "two",
+             "annotations": []
+            }
+           ]
+          }
+         ],
+         "usage": {
+          "input_tokens": 1,
+          "output_tokens": 1,
+          "total_tokens": 2
+         }
+        }
+       }
+      },
+      {
+       "index": 2,
+       "outcome": "errored",
+       "error": {
+        "code": "rate_limit",
+        "message": "slow down",
+        "provider_code": "rate_limit_error"
+       }
+      }
+     ]
+    }
+   },
+   "diff": [
+    "/result/entries[2]/error/message: python \"slow down\\n\\n  To fix:\\n    - Wait a moment and retry\\n    - Retry with backoff in your application layer (lm15 never retries for you)\\n    - Reduce request rate or upgrade your API plan\\n\" vs rust \"slow down\""
+   ]
+  },
+  {
+   "op": "batch_op_parse",
+   "probe": "anthropic_entries_expired_and_errored",
+   "provider": "anthropic",
+   "python": {
+    "ok": true,
+    "result": {
+     "entries": [
+      {
+       "index": 0,
+       "outcome": "errored",
+       "error": {
+        "code": "invalid_request",
+        "message": "bad",
+        "provider_code": "invalid_request_error"
+       }
+      },
+      {
+       "index": 1,
+       "outcome": "expired"
+      }
+     ]
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "entries": [
+      {
+       "index": 0,
+       "outcome": "errored",
+       "error": {
+        "code": "invalid_request",
+        "message": "bad",
+        "provider_code": "invalid_request_error"
+       }
+      },
+      {
+       "index": 1,
+       "outcome": "expired"
+      }
+     ]
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "openai_job_in_progress_progress_0",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "video_1",
+      "status": "running",
+      "progress": 0,
+      "created_at": "2023-11-14T22:13:20Z",
+      "model": "sora-2",
+      "provider_data": {
+       "id": "video_1",
+       "object": "video",
+       "status": "in_progress",
+       "progress": 0,
+       "created_at": 1700000000,
+       "model": "sora-2"
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "video_1",
+      "status": "running",
+      "progress": 0,
+      "created_at": "2023-11-14T22:13:20Z",
+      "model": "sora-2",
+      "provider_data": {
+       "id": "video_1",
+       "object": "video",
+       "status": "in_progress",
+       "progress": 0,
+       "created_at": 1700000000,
+       "model": "sora-2"
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "openai_job_failed_with_error",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "video_1",
+      "status": "failed",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "video_1",
+       "object": "video",
+       "status": "failed",
+       "error": {
+        "message": "moderation"
+       },
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "video_1",
+      "status": "failed",
+      "created_at": "2023-11-14T22:13:20Z",
+      "provider_data": {
+       "id": "video_1",
+       "object": "video",
+       "status": "failed",
+       "error": {
+        "message": "moderation"
+       },
+       "created_at": 1700000000
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "openai_job_unknown_status",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "rust": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "gemini_job_not_done_no_metadata",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "operations/1",
+      "status": "running",
+      "provider_data": {
+       "name": "operations/1",
+       "done": false
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "operations/1",
+      "status": "running",
+      "provider_data": {
+       "name": "operations/1",
+       "done": false
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "gemini_job_done_error",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "operations/1",
+      "status": "failed",
+      "provider_data": {
+       "name": "operations/1",
+       "done": true,
+       "error": {
+        "code": 8,
+        "message": "quota"
+       }
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "operations/1",
+      "status": "failed",
+      "provider_data": {
+       "name": "operations/1",
+       "done": true,
+       "error": {
+        "code": 8,
+        "message": "quota"
+       }
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "xai_job_pending_no_id_in_body",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "v1",
+      "status": "running",
+      "provider_data": {
+       "status": "pending"
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "job": {
+      "id": "v1",
+      "status": "running",
+      "provider_data": {
+       "status": "pending"
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "xai_job_unknown_status",
+   "provider": "xai",
+   "python": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "rust": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "xai_part_from_status_body",
+   "provider": "xai",
+   "python": {
+    "ok": true,
+    "result": {
+     "part": {
+      "type": "video",
+      "media_type": "video/mp4",
+      "url": "https://cdn.x.ai/v.mp4"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "part": {
+      "type": "video",
+      "media_type": "video/mp4",
+      "url": "https://cdn.x.ai/v.mp4"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "openai_part_from_fetched_bytes",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "part": {
+      "type": "video",
+      "media_type": "video/mp4",
+      "data": "AAAAGGZ0eXBtcDQy"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "part": {
+      "type": "video",
+      "media_type": "video/mp4",
+      "data": "AAAAGGZ0eXBtcDQy"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "video_op_parse",
+   "probe": "openai_list_empty",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "jobs": []
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "jobs": []
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_parse",
+   "probe": "openai_image_b64_two_images_with_revised_prompt",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "images": [
+      {
+       "type": "image",
+       "media_type": "application/octet-stream",
+       "data": "iVBORyBvbmU="
+      },
+      {
+       "type": "image",
+       "media_type": "application/octet-stream",
+       "data": "iVBORyB0d28="
+      }
+     ],
+     "usage": {
+      "input_tokens": 5,
+      "output_tokens": 10,
+      "total_tokens": 15
+     },
+     "provider_data": {
+      "created": 1700000000,
+      "data": [
+       {
+        "b64_json": "iVBORyBvbmU=",
+        "revised_prompt": "two cats"
+       },
+       {
+        "b64_json": "iVBORyB0d28="
+       }
+      ],
+      "usage": {
+       "input_tokens": 5,
+       "output_tokens": 10,
+       "total_tokens": 15
+      }
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "images": [
+      {
+       "type": "image",
+       "media_type": "application/octet-stream",
+       "data": "iVBORyBvbmU="
+      },
+      {
+       "type": "image",
+       "media_type": "application/octet-stream",
+       "data": "iVBORyB0d28="
+      }
+     ],
+     "usage": {
+      "input_tokens": 5,
+      "output_tokens": 10,
+      "total_tokens": 15
+     },
+     "provider_data": {
+      "created": 1700000000,
+      "data": [
+       {
+        "b64_json": "iVBORyBvbmU=",
+        "revised_prompt": "two cats"
+       },
+       {
+        "b64_json": "iVBORyB0d28="
+       }
+      ],
+      "usage": {
+       "input_tokens": 5,
+       "output_tokens": 10,
+       "total_tokens": 15
+      }
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_parse",
+   "probe": "openai_image_url_delivery",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "images": [
+      {
+       "type": "image",
+       "media_type": "application/octet-stream",
+       "url": "https://cdn.example/a.png"
+      }
+     ],
+     "provider_data": {
+      "created": 1700000000,
+      "data": [
+       {
+        "url": "https://cdn.example/a.png"
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "images": [
+      {
+       "type": "image",
+       "media_type": "application/octet-stream",
+       "url": "https://cdn.example/a.png"
+      }
+     ],
+     "provider_data": {
+      "created": 1700000000,
+      "data": [
+       {
+        "url": "https://cdn.example/a.png"
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_parse",
+   "probe": "gemini_image_text_only_no_image",
+   "provider": "gemini",
+   "python": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "rust": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_parse",
+   "probe": "openai_speech_wav_header",
+   "provider": "openai",
+   "python": {
+    "ok": true,
+    "result": {
+     "audio": {
+      "type": "audio",
+      "media_type": "audio/wav",
+      "data": "UklGRgAAAABXQVZFZm10IA=="
+     },
+     "provider_data": {
+      "content_type": "audio/wav"
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "audio": {
+      "type": "audio",
+      "media_type": "audio/wav",
+      "data": "UklGRgAAAABXQVZFZm10IA=="
+     },
+     "provider_data": {
+      "content_type": "audio/wav"
+     }
+    }
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_parse",
+   "probe": "openai_speech_no_content_type",
+   "provider": "openai",
+   "python": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "rust": {
+    "ok": false,
+    "type": "ProviderError",
+    "code": "provider"
+   },
+   "diff": []
+  },
+  {
+   "op": "generation_parse",
+   "probe": "gemini_speech_inline_l16",
+   "provider": "gemini",
+   "python": {
+    "ok": true,
+    "result": {
+     "audio": {
+      "type": "audio",
+      "media_type": "audio/L16;codec=pcm;rate=24000",
+      "data": "AAE="
+     },
+     "model": "gemini-2.5-flash-preview-tts",
+     "provider_data": {
+      "candidates": [
+       {
+        "content": {
+         "parts": [
+          {
+           "inlineData": {
+            "mimeType": "audio/L16;codec=pcm;rate=24000",
+            "data": "AAE="
+           }
+          }
+         ],
+         "role": "model"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "rust": {
+    "ok": true,
+    "result": {
+     "audio": {
+      "type": "audio",
+      "media_type": "audio/L16;codec=pcm;rate=24000",
+      "data": "AAE="
+     },
+     "model": "gemini-2.5-flash-preview-tts",
+     "provider_data": {
+      "candidates": [
+       {
+        "content": {
+         "parts": [
+          {
+           "inlineData": {
+            "mimeType": "audio/L16;codec=pcm;rate=24000",
+            "data": "AAE="
+           }
+          }
+         ],
+         "role": "model"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "diff": []
+  }
+ ]
+}

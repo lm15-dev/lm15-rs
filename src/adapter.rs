@@ -1558,6 +1558,18 @@ macro_rules! named_constructor {
                 LmBuilder::for_provider($provider)
             }
 
+            /// The adapter with its credential from the environment
+            /// (api-family § Providers, direct: the family's `OpenAILM()`):
+            /// the AUTH-1 chain — a stored login where the policy has
+            /// one, else the declared env keys in order, else a keyless
+            /// server's placeholder — over the shared transport. Nothing
+            /// configured is the typed `NotConfiguredError` naming the
+            /// env keys or the login hint. Use [`Self::builder`] for an
+            /// explicit key, base URL, settings or transport.
+            pub fn new() -> Result<ProviderLM, Lm15Error> {
+                crate::router::provider_from_environment($provider)
+            }
+
             /// The bound access policy (AUTH-10).
             pub fn policy() -> &'static AccessPolicy {
                 lookup($provider)
@@ -1656,6 +1668,28 @@ mod tests {
         assert_eq!(err.provider(), Some("claude-code"));
         let err = OpenAILM::builder().build().unwrap_err();
         assert!(err.message().contains("OPENAI_API_KEY"), "{err}");
+    }
+
+    #[test]
+    fn new_reads_the_environment_like_the_family() {
+        // The process env is the input (the family's `OpenAILM()`); the
+        // hermetic form is the router. A keyless local server needs
+        // nothing and builds with its placeholder; an unknown name is the
+        // typed refusal.
+        let lm = crate::router::provider_from_environment("ollama").unwrap();
+        assert_eq!(lm.provider(), "ollama");
+        let err = crate::router::provider_from_environment("nope").unwrap_err();
+        assert_eq!(err.class_name(), "NotConfiguredError");
+        // A named constructor with no key anywhere is the typed refusal
+        // (this test must not depend on the developer's real environment,
+        // so it asserts only the shape that holds either way).
+        match OpenAILM::new() {
+            Ok(lm) => assert_eq!(lm.provider(), "openai"),
+            Err(err) => {
+                assert_eq!(err.class_name(), "NotConfiguredError");
+                assert!(err.message().contains("OPENAI_API_KEY"), "{err}");
+            }
+        }
     }
 
     #[test]
