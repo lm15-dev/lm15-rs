@@ -36,8 +36,10 @@ use crate::stream::{materialize_response, Coalescer};
 use crate::transport::{
     attach_retry_after, BodyStream, BoxFuture, HttpTransport, Transport, TransportResponse,
 };
-use crate::types::{ModelInfo, Request, Response, StreamEvent};
-use crate::wire::{emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest};
+use crate::types::{FileInfo, FilePage, FileUploadRequest, ModelInfo, Request, Response, StreamEvent};
+use crate::wire::{
+    emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
+};
 
 type BoxedCredentials = Box<dyn CredentialProvider + Send + Sync>;
 type BoxedClock = Box<dyn Clock + Send + Sync>;
@@ -270,6 +272,128 @@ impl ProviderLM {
         dialect_for(self.dialect()).parse_models(&cx, &body)
     }
 
+    // ─── endpoint surfaces (modules 7–8) ─────────────────────────────
+
+    /// A surface wire request through auth and host work (`_emit`).
+    pub fn surface_request(&self, wire: WireRequest, read_timeout: u64) -> Result<TransportRequest, Lm15Error> {
+        let cx = self.binding.surface_context();
+        let mut built = emit_wire(
+            dialect_for(self.dialect()),
+            wire,
+            false,
+            &cx,
+            self.credentials.as_ref(),
+            self.clock.as_ref(),
+        )?;
+        built.read_timeout = Some(std::time::Duration::from_secs(read_timeout));
+        Ok(built)
+    }
+
+    /// Send a surface request; a status of 400 or more is the normalized
+    /// error. Returns the status, headers and body.
+    async fn send_surface(&self, built: TransportRequest) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Lm15Error> {
+        let mut response = self.transport.send(built).await?;
+        let status = response.status;
+        let headers = std::mem::take(&mut response.headers);
+        let body = response.read().await?;
+        if status >= 400 {
+            return Err(self.http_error(status, &headers, &body));
+        }
+        Ok((status, headers, body))
+    }
+
+    /// The wire request of one files-lifecycle op (the shim's `file_op_build`).
+    pub fn file_request(&self, op: &FileOp<'_>) -> Result<TransportRequest, Lm15Error> {
+        self.require("files")?;
+        let cx = self.binding.surface_context();
+        let dialect = dialect_for(self.dialect());
+        let (wire, timeout) = match op {
+            FileOp::Upload(request) => (dialect.file_upload_request(&cx, request)?, 300),
+            FileOp::Get(id) => (dialect.file_get_request(&cx, id)?, 60),
+            FileOp::List { limit, cursor } => (dialect.file_list_request(&cx, *limit, *cursor)?, 60),
+            FileOp::Delete(id) => (dialect.file_delete_request(&cx, id)?, 60),
+            FileOp::Download(id) => (dialect.file_download_request(&cx, id)?, 300),
+        };
+        self.surface_request(wire, timeout)
+    }
+
+    /// A file object body as `FileInfo`; a status of 400 or more is the
+    /// normalized error.
+    pub fn parse_file_info(&self, status: u16, body: &[u8]) -> Result<FileInfo, Lm15Error> {
+        self.require("files")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).file_info(&self.binding.surface_context(), body)
+    }
+
+    pub fn parse_file_page(&self, status: u16, body: &[u8]) -> Result<FilePage, Lm15Error> {
+        self.require("files")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).file_page(&self.binding.surface_context(), body)
+    }
+
+    /// Store a file with the provider; `FileInfo.id` is the reference a
+    /// media part's `file_id` takes. Gemini may answer `pending`:
+    /// `file_wait_ready` covers that.
+    pub async fn file_upload(&self, request: &FileUploadRequest) -> Result<FileInfo, Lm15Error> {
+        let built = self.file_request(&FileOp::Upload(request))?;
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_file_info(status, &body)
+    }
+
+    pub async fn file_get(&self, file_id: &str) -> Result<FileInfo, Lm15Error> {
+        let built = self.file_request(&FileOp::Get(file_id))?;
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_file_info(status, &body)
+    }
+
+    /// One page of this credential's stored files; `cursor` is the
+    /// previous page's `next_cursor`.
+    pub async fn file_list(&self, limit: u64, cursor: Option<&str>) -> Result<FilePage, Lm15Error> {
+        let built = self.file_request(&FileOp::List { limit, cursor })?;
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_file_page(status, &body)
+    }
+
+    /// Delete a stored file. Returning without an error IS the
+    /// confirmation; acknowledgement bodies carry nothing canonical.
+    pub async fn file_delete(&self, file_id: &str) -> Result<(), Lm15Error> {
+        let built = self.file_request(&FileOp::Delete(file_id))?;
+        self.send_surface(built).await.map(|_| ())
+    }
+
+    /// A file's content, when THIS file supports download; a provider's
+    /// refusal is forwarded, never masked.
+    pub async fn file_download(&self, file_id: &str) -> Result<Vec<u8>, Lm15Error> {
+        let built = self.file_request(&FileOp::Download(file_id))?;
+        self.send_surface(built).await.map(|(_, _, body)| body)
+    }
+
+    /// Poll until the file leaves `pending`; the terminal snapshot is
+    /// returned, never raised on (check `readiness`).
+    pub async fn file_wait_ready(
+        &self,
+        file_id: &str,
+        poll_every: std::time::Duration,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<FileInfo, Lm15Error> {
+        let deadline = timeout.map(|t| std::time::Instant::now() + t);
+        let mut info = self.file_get(file_id).await?;
+        while info.readiness == crate::types::FileReadiness::Pending {
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                let mut meta = ErrorMeta::new(format!("file {file_id} still pending after {timeout:?}"));
+                meta.provider = Some(self.provider().to_string());
+                return Err(Lm15Error::TimeoutError(meta));
+            }
+            tokio::time::sleep(poll_every).await;
+            info = self.file_get(file_id).await?;
+        }
+        Ok(info)
+    }
+
     /// `_require` (`lm15/providers/base.py:366-377`): the bound access
     /// path, not the dialect, decides which surfaces exist.
     fn require(&self, surface: &str) -> Result<(), Lm15Error> {
@@ -364,6 +488,16 @@ fn http_error(provider: &str, status: u16, headers: &[(String, String)], body: &
     };
     attach_retry_after(&mut error, headers);
     error
+}
+
+/// One files-lifecycle wire request (the shim's `file_op`).
+#[derive(Debug)]
+pub enum FileOp<'a> {
+    Upload(&'a FileUploadRequest),
+    Get(&'a str),
+    List { limit: u64, cursor: Option<&'a str> },
+    Delete(&'a str),
+    Download(&'a str),
 }
 
 /// The stream [`ProviderLM::stream`] returns: connects on first poll,

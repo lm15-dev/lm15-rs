@@ -44,6 +44,7 @@ pub mod router;
 pub mod serde;
 pub mod sse;
 pub mod stream;
+pub mod surfaces;
 pub mod transport;
 pub mod types;
 pub mod wire;

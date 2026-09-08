@@ -32,7 +32,9 @@ use crate::sse::SseEvent;
 /// The backend value of the ChatGPT Codex door (spec/auth.md AUTH-10;
 /// `lm15/providers/openai.py:391`).
 pub const CODEX_BACKEND: &str = "chatgpt-codex";
-use crate::types::{ModelInfo, ModelOrigin, Request, Response, StreamEvent};
+use crate::types::{
+    FileInfo, FilePage, FileUploadRequest, ModelInfo, ModelOrigin, Request, Response, StreamEvent,
+};
 
 /// A request ready for a transport. `url` carries no query string; the
 /// params are decoded pairs (harness/PROTOCOL.md § Query parameter
@@ -47,19 +49,30 @@ pub struct TransportRequest {
     pub params: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
     pub body: Option<Value>,
+    /// A non-JSON body (a multipart upload), verbatim bytes; the
+    /// `content-type` header names its encoding. At most one of `body`
+    /// and `raw` is set.
+    pub raw: Option<Vec<u8>>,
     /// The idle read timeout for this request (the reference's
     /// per-request `read_timeout`); `None` takes the transport's default.
     pub read_timeout: Option<Duration>,
 }
 
 impl TransportRequest {
-    /// The body bytes a transport sends: compact JSON, UTF-8, keys in
-    /// insertion order (the same bytes the signature covers).
+    /// The body bytes a transport sends: the raw bytes, else compact JSON,
+    /// UTF-8, keys in insertion order (the same bytes the signature covers).
     pub fn body_bytes(&self) -> Vec<u8> {
+        if let Some(raw) = &self.raw {
+            return raw.clone();
+        }
         self.body
             .as_ref()
             .map(|body| serde_json::to_vec(body).expect("a JSON value serializes"))
             .unwrap_or_default()
+    }
+
+    pub fn has_body(&self) -> bool {
+        self.body.is_some() || self.raw.is_some()
     }
 
     /// The first value of a header, by case-insensitive name.
@@ -84,12 +97,16 @@ pub struct WireRequest {
     /// the dialect's rule; never the credential.
     pub headers: Vec<(String, String)>,
     pub body: Option<Value>,
+    /// A non-JSON body (see `TransportRequest::raw`).
+    pub raw: Option<Vec<u8>>,
     /// The endpoint name a host path override is keyed by (AUTH-10
     /// `host.paths`): `messages`, `responses`, `chat/completions`,
     /// `generateContent`.
     pub endpoint: Option<&'static str>,
     /// The wire model, for a host that places it in the path.
     pub model: Option<String>,
+    /// An absolute URL replacing `base_url + path` (the Gemini upload host).
+    pub absolute_url: Option<String>,
 }
 
 impl WireRequest {
@@ -100,9 +117,38 @@ impl WireRequest {
             params: Vec::new(),
             headers: Vec::new(),
             body: Some(body),
+            raw: None,
             endpoint: None,
             model: None,
+            absolute_url: None,
         }
+    }
+
+    /// A request with a verbatim body under `content_type`.
+    pub fn with_raw(
+        method: &str,
+        path: impl Into<String>,
+        content_type: String,
+        raw: Vec<u8>,
+    ) -> WireRequest {
+        WireRequest {
+            method: method.into(),
+            path: path.into(),
+            params: Vec::new(),
+            headers: vec![("content-type".into(), content_type)],
+            body: None,
+            raw: Some(raw),
+            endpoint: None,
+            model: None,
+            absolute_url: None,
+        }
+    }
+
+    /// A request with a JSON body under any method.
+    pub fn json(method: &str, path: impl Into<String>, body: Value) -> WireRequest {
+        let mut wire = WireRequest::post(path, body);
+        wire.method = method.into();
+        wire
     }
 }
 
@@ -131,7 +177,7 @@ pub struct BuildContext<'a> {
 /// A wire codec. Implementations are stateless values; everything that
 /// varies per binding arrives in the [`BuildContext`]. A dialect builds
 /// from a validated `Request` and never re-validates it.
-pub trait Dialect: Sync {
+pub trait Dialect: Sync + Surfaces {
     fn dialect(&self) -> DialectId;
 
     /// The request before auth and host work. Refusals (MAP-5..8,
@@ -192,6 +238,43 @@ pub trait Dialect: Sync {
     }
 }
 
+/// The endpoint-surface hooks (modules 7–8; the reference's pure
+/// `_file_*` / `_batch_*` / `_cache_*` / `_*_generate_*` / `_video_*`
+/// hooks on `BaseProviderLM`). Every default refuses with
+/// `UnsupportedFeatureError`; a dialect implements the ones its wire has.
+/// The adapter's drivers (`ProviderLM::file_upload`, ...) send them.
+pub trait Surfaces {
+    // ─── files ───
+    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+        let _ = request;
+        Err(crate::surfaces::unsupported(cx.provider, "files"))
+    }
+    fn file_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<FileInfo, Lm15Error> {
+        let _ = body;
+        Err(crate::surfaces::unsupported(cx.provider, "files"))
+    }
+    fn file_get_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        let _ = file_id;
+        Err(crate::surfaces::unsupported(cx.provider, "files"))
+    }
+    fn file_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        let _ = (limit, cursor);
+        Err(crate::surfaces::unsupported(cx.provider, "files"))
+    }
+    fn file_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<FilePage, Lm15Error> {
+        let _ = body;
+        Err(crate::surfaces::unsupported(cx.provider, "files"))
+    }
+    fn file_delete_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        let _ = file_id;
+        Err(crate::surfaces::unsupported(cx.provider, "files"))
+    }
+    fn file_download_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        let _ = file_id;
+        Err(crate::surfaces::unsupported(cx.provider, "files"))
+    }
+}
+
 /// `{provider}: model listing not supported` (`lm15/providers/base.py`
 /// `_models_request`, and `_require("models")`).
 pub fn models_unsupported(provider: &str) -> Lm15Error {
@@ -242,8 +325,10 @@ impl WireRequest {
             params: Vec::new(),
             headers: Vec::new(),
             body: None,
+            raw: None,
             endpoint: None,
             model: None,
+            absolute_url: None,
         }
     }
 }
@@ -387,7 +472,11 @@ pub fn emit_wire(
         (Credential::ApiKey { value }, AuthScheme::QueryKey) => Some(value.as_str()),
         _ => None,
     };
-    let url = format!("{}{}", cx.base_url.trim_end_matches('/'), wire.path);
+    let url = match &wire.absolute_url {
+        Some(url) => url.clone(),
+        None => format!("{}{}", cx.base_url.trim_end_matches('/'), wire.path),
+    };
+    let raw = wire.raw;
     let FinishedRequest {
         url,
         mut headers,
@@ -422,6 +511,7 @@ pub fn emit_wire(
             .map(|(k, v)| (k.to_ascii_lowercase(), v))
             .collect(),
         body,
+        raw,
         // Every dialect's `build_request`: `read_timeout=120.0 if stream
         // else 60.0`.
         read_timeout: Some(if stream {
@@ -522,6 +612,7 @@ mod tests {
 
     struct Fake;
 
+    impl Surfaces for Fake {}
     impl Dialect for Fake {
         fn dialect(&self) -> DialectId {
             DialectId::Anthropic
@@ -569,6 +660,7 @@ mod tests {
 
     struct GoogHeader;
 
+    impl Surfaces for GoogHeader {}
     impl Dialect for GoogHeader {
         fn dialect(&self) -> DialectId {
             DialectId::Gemini
@@ -719,6 +811,7 @@ mod tests {
         // cases/bedrock-chat/basic_text.json: the fixture's signature over the
         // fixture's body, key order included.
         struct BedrockBody;
+        impl Surfaces for BedrockBody {}
         impl Dialect for BedrockBody {
             fn dialect(&self) -> DialectId {
                 DialectId::OpenaiChat

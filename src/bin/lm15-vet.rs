@@ -12,7 +12,7 @@ use lm15::cloud::sigv4::{self, AwsKeys, SigningRequest};
 use lm15::errors::{normalize_error, Lm15Error};
 use lm15::serde::{roundtrip, validate};
 use lm15::stream::materialize_response;
-use lm15::types::{Request, Response, ValidationError};
+use lm15::types::{FileUploadRequest, Request, Response, ValidationError};
 use lm15::wire::{FixedClock, TransportRequest};
 use lm15::{Canonical, HostSettings};
 
@@ -23,6 +23,8 @@ const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 const OPS: &[&str] = &[
     "build_request",
     "build_models_request",
+    "file_op_build",
+    "file_op_parse",
     "capabilities",
     "explain_auth",
     "normalize_error",
@@ -195,13 +197,17 @@ fn transport_request_json(request: &TransportRequest) -> Value {
         .iter()
         .map(|(k, v)| (k.to_ascii_lowercase(), Value::String(v.clone())))
         .collect();
-    json!({
+    let mut out = json!({
         "method": request.method,
         "url": request.url,
         "params": params,
         "headers": headers,
         "body": request.body.clone().unwrap_or(Value::Null),
-    })
+    });
+    if let Some(raw) = &request.raw {
+        out["body_b64"] = Value::String(lm15::types::base64_encode(raw));
+    }
+    out
 }
 
 fn op_build_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
@@ -245,6 +251,39 @@ fn surface_adapter(
         builder = builder.account_id("test-account");
     }
     Ok(builder.build()?)
+}
+
+fn op_file_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    use lm15::adapter::FileOp;
+    let lm = surface_adapter(msg, credential_of(msg)?)?;
+    let op = field_str(msg, "file_op")?;
+    let file_id = msg.get("file_id").and_then(Value::as_str).unwrap_or("");
+    let built = match op.as_str() {
+        "upload" => {
+            let request = FileUploadRequest::from_json(field(msg, "upload_request")?)?;
+            lm.file_request(&FileOp::Upload(&request))?
+        }
+        "get" => lm.file_request(&FileOp::Get(file_id))?,
+        "delete" => lm.file_request(&FileOp::Delete(file_id))?,
+        "download" => lm.file_request(&FileOp::Download(file_id))?,
+        "list" => lm.file_request(&FileOp::List {
+            limit: msg.get("limit").and_then(Value::as_u64).unwrap_or(20),
+            cursor: msg.get("cursor").and_then(Value::as_str),
+        })?,
+        other => return Err(ValidationError::value(format!("unknown file_op {other:?}")).into()),
+    };
+    Ok(transport_request_json(&built))
+}
+
+fn op_file_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+    let body = body_of(msg)?;
+    Ok(match field_str(msg, "kind")?.as_str() {
+        "info" => json!({ "file": lm.parse_file_info(status, &body)?.to_json() }),
+        "page" => json!({ "page": lm.parse_file_page(status, &body)?.to_json() }),
+        other => return Err(ValidationError::value(format!("unknown kind {other:?}")).into()),
+    })
 }
 
 fn op_build_models_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
@@ -395,6 +434,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "build_request" => op_build_request(msg),
         "parse_response" => op_parse_response(msg),
         "build_models_request" => op_build_models_request(msg),
+        "file_op_build" => op_file_op_build(msg),
+        "file_op_parse" => op_file_op_parse(msg),
         "parse_models_response" => op_parse_models_response(msg),
         "replay_stream" => op_replay_stream(msg),
         "sigv4_sign" => op_sigv4_sign(msg),

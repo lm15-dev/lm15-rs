@@ -262,7 +262,7 @@ impl HttpTransport {
                 .map_err(|_| invalid(format!("invalid value for header {name}")))?;
             builder = builder.header(name, value);
         }
-        if request.body.is_some() {
+        if request.has_body() {
             builder = builder.body(request.body_bytes());
         }
         builder.build().map_err(reqwest_error)

@@ -12,6 +12,7 @@
 
 mod body;
 mod parts;
+pub mod files;
 pub mod response;
 mod tables;
 
@@ -34,7 +35,7 @@ use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
 use crate::types::{ModelInfo, Request, Response, StreamEvent, Tool};
-use crate::wire::{model_infos_from_entries, BuildContext, Dialect, WireRequest};
+use crate::wire::{Surfaces, model_infos_from_entries, BuildContext, Dialect, WireRequest};
 
 /// The dialect value; stateless (everything per binding is in the
 /// [`BuildContext`]).
@@ -46,6 +47,30 @@ pub static ANTHROPIC: Anthropic = Anthropic;
 
 /// The endpoint name a host path override is keyed by (AUTH-10).
 pub const ENDPOINT: &str = "messages";
+
+impl Surfaces for Anthropic {
+    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+        files::upload_request(cx, request)
+    }
+    fn file_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FileInfo, Lm15Error> {
+        files::file_info_from_body(cx, body)
+    }
+    fn file_get_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::get_request(cx, file_id))
+    }
+    fn file_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        Ok(files::list_request(cx, limit, cursor))
+    }
+    fn file_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FilePage, Lm15Error> {
+        files::page(cx, body)
+    }
+    fn file_delete_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::delete_request(cx, file_id))
+    }
+    fn file_download_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::download_request(cx, file_id))
+    }
+}
 
 impl Dialect for Anthropic {
     fn dialect(&self) -> DialectId {

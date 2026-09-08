@@ -28,7 +28,7 @@ use crate::errors::Lm15Error;
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
 use crate::types::{ModelInfo, Request, Response, StreamEvent, ToolChoiceMode};
-use crate::wire::{
+use crate::wire::{Surfaces, 
     apply_static_headers, model_infos_from_entries, BuildContext, Dialect, WireRequest,
 };
 
@@ -38,6 +38,32 @@ pub struct OpenAIChat;
 
 /// The one instance the dialect table points at.
 pub static OPENAI_CHAT: OpenAIChat = OpenAIChat;
+
+use crate::dialects::openai_responses::files;
+
+impl Surfaces for OpenAIChat {
+    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+        files::upload_request(cx, request)
+    }
+    fn file_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FileInfo, Lm15Error> {
+        files::file_info_from_body(cx, body)
+    }
+    fn file_get_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::get_request(cx, file_id))
+    }
+    fn file_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        Ok(files::list_request(cx, limit, cursor))
+    }
+    fn file_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FilePage, Lm15Error> {
+        files::page(cx, body)
+    }
+    fn file_delete_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::delete_request(cx, file_id))
+    }
+    fn file_download_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::download_request(cx, file_id))
+    }
+}
 
 impl Dialect for OpenAIChat {
     fn dialect(&self) -> DialectId {

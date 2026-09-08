@@ -17,6 +17,7 @@
 
 mod config;
 mod contents;
+pub mod files;
 pub mod response;
 
 use serde_json::{Map, Value};
@@ -25,7 +26,7 @@ use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
 use crate::types::{BuiltinTool, ModelInfo, Request, Response, StreamEvent, Tool};
-use crate::wire::{model_infos_from_entries, BuildContext, Dialect, WireRequest};
+use crate::wire::{Surfaces, model_infos_from_entries, BuildContext, Dialect, WireRequest};
 
 use self::config::{cache_plan, generation_config, tool_config};
 use self::contents::{contents, system_instruction};
@@ -237,6 +238,30 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
         }
     }
     Ok(Value::Object(body))
+}
+
+impl Surfaces for Gemini {
+    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+        files::upload_request(cx, request)
+    }
+    fn file_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FileInfo, Lm15Error> {
+        files::file_info_from_body(cx, body)
+    }
+    fn file_get_request(&self, _cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::get_request(file_id))
+    }
+    fn file_list_request(&self, _cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        Ok(files::list_request(limit, cursor))
+    }
+    fn file_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FilePage, Lm15Error> {
+        files::page(cx, body)
+    }
+    fn file_delete_request(&self, _cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::delete_request(file_id))
+    }
+    fn file_download_request(&self, _cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(files::download_request(file_id))
+    }
 }
 
 impl Dialect for Gemini {

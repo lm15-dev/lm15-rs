@@ -40,6 +40,27 @@ impl Default for FileUploadRequest {
     }
 }
 
+impl FileUploadRequest {
+    /// The bytes to upload: `bytes_data`, else the file at `path`, read
+    /// now (INV-009: lazy read). Neither is a `ConfigurationError`.
+    pub fn content(&self) -> Result<Vec<u8>, crate::errors::Lm15Error> {
+        if let Some(bytes) = &self.bytes_data {
+            return Ok(bytes.clone());
+        }
+        if let Some(path) = &self.path {
+            return std::fs::read(path).map_err(|err| {
+                crate::errors::Lm15Error::ConfigurationError(crate::errors::ErrorMeta::new(format!(
+                    "FileUploadRequest.path {}: {err}",
+                    path.display()
+                )))
+            });
+        }
+        Err(crate::errors::Lm15Error::ConfigurationError(crate::errors::ErrorMeta::new(
+            "FileUploadRequest carries neither bytes_data nor path",
+        )))
+    }
+}
+
 impl fmt::Debug for FileUploadRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FileUploadRequest")
