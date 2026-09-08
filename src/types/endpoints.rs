@@ -49,15 +49,14 @@ impl FileUploadRequest {
         }
         if let Some(path) = &self.path {
             return std::fs::read(path).map_err(|err| {
-                crate::errors::Lm15Error::ConfigurationError(crate::errors::ErrorMeta::new(format!(
-                    "FileUploadRequest.path {}: {err}",
-                    path.display()
-                )))
+                crate::errors::Lm15Error::ConfigurationError(crate::errors::ErrorMeta::new(
+                    format!("FileUploadRequest.path {}: {err}", path.display()),
+                ))
             });
         }
-        Err(crate::errors::Lm15Error::ConfigurationError(crate::errors::ErrorMeta::new(
-            "FileUploadRequest carries neither bytes_data nor path",
-        )))
+        Err(crate::errors::Lm15Error::ConfigurationError(
+            crate::errors::ErrorMeta::new("FileUploadRequest carries neither bytes_data nor path"),
+        ))
     }
 }
 

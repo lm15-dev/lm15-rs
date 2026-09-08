@@ -36,6 +36,7 @@ use crate::types::{
     BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
     FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, ModelInfo, ModelOrigin,
     Request, Response, SpeechGenerationRequest, SpeechGenerationResponse, StreamEvent,
+    VideoGenerationRequest, VideoJobInfo, VideoPart,
 };
 
 /// A request ready for a transport. `url` carries no query string; the
@@ -240,6 +241,9 @@ pub trait Dialect: Sync + Surfaces {
     }
 }
 
+/// A fetched body with its response headers.
+pub type Fetched<'a> = Option<(&'a [(String, String)], &'a [u8])>;
+
 /// The endpoint-surface hooks (modules 7–8; the reference's pure
 /// `_file_*` / `_batch_*` / `_cache_*` / `_*_generate_*` / `_video_*`
 /// hooks on `BaseProviderLM`). Every default refuses with
@@ -247,7 +251,11 @@ pub trait Dialect: Sync + Surfaces {
 /// The adapter's drivers (`ProviderLM::file_upload`, ...) send them.
 pub trait Surfaces {
     // ─── files ───
-    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+    fn file_upload_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &FileUploadRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = request;
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
@@ -255,11 +263,20 @@ pub trait Surfaces {
         let _ = body;
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
-    fn file_get_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_get_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = file_id;
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
-    fn file_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn file_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = (limit, cursor);
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
@@ -267,11 +284,19 @@ pub trait Surfaces {
         let _ = body;
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
-    fn file_delete_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_delete_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = file_id;
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
-    fn file_download_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_download_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = file_id;
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
@@ -279,13 +304,22 @@ pub trait Surfaces {
     // ─── batch ───
     /// The optional pre-submit upload (OpenAI's JSONL file); `None` on a
     /// single-step wire.
-    fn batch_upload_request(&self, cx: &BuildContext<'_>, request: &BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
+    fn batch_upload_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &BatchRequest,
+    ) -> Result<Option<WireRequest>, Lm15Error> {
         let _ = request;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
     /// The submit; `upload_body` is the parsed upload reply when an upload
     /// step preceded.
-    fn batch_submit_request(&self, cx: &BuildContext<'_>, request: &BatchRequest, upload_body: Option<&Map<String, Value>>) -> Result<WireRequest, Lm15Error> {
+    fn batch_submit_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &BatchRequest,
+        upload_body: Option<&Map<String, Value>>,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = (request, upload_body);
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
@@ -293,37 +327,68 @@ pub trait Surfaces {
         let _ = body;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
-    fn batch_status_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn batch_status_request(
+        &self,
+        cx: &BuildContext<'_>,
+        batch_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = batch_id;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
-    fn batch_cancel_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn batch_cancel_request(
+        &self,
+        cx: &BuildContext<'_>,
+        batch_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = batch_id;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
     /// The fetches a terminal status body calls for (zero when results
     /// are inlined).
-    fn batch_result_fetches(&self, cx: &BuildContext<'_>, status_body: &Map<String, Value>) -> Result<Vec<WireRequest>, Lm15Error> {
+    fn batch_result_fetches(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &Map<String, Value>,
+    ) -> Result<Vec<WireRequest>, Lm15Error> {
         let _ = status_body;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
     /// The entries, in SUBMISSION order, from the terminal status body and
     /// the fetched result texts.
-    fn batch_entries(&self, cx: &BuildContext<'_>, status_body: &Map<String, Value>, fetched: &[Vec<u8>]) -> Result<Vec<BatchEntry>, Lm15Error> {
+    fn batch_entries(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &Map<String, Value>,
+        fetched: &[Vec<u8>],
+    ) -> Result<Vec<BatchEntry>, Lm15Error> {
         let _ = (status_body, fetched);
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
-    fn batch_list_request(&self, cx: &BuildContext<'_>, limit: u64) -> Result<WireRequest, Lm15Error> {
+    fn batch_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = limit;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
-    fn batch_jobs(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+    fn batch_jobs(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<BatchJobInfo>, Lm15Error> {
         let _ = body;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
     }
 
     // ─── stored caches (the resource tier of MAP-6) ───
-    fn cache_create_request(&self, cx: &BuildContext<'_>, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn cache_create_request(
+        &self,
+        cx: &BuildContext<'_>,
+        prefix: &Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = (prefix, ttl_seconds, label);
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
@@ -331,11 +396,20 @@ pub trait Surfaces {
         let _ = body;
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
-    fn cache_get_request(&self, cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn cache_get_request(
+        &self,
+        cx: &BuildContext<'_>,
+        cache_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = cache_id;
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
-    fn cache_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn cache_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = (limit, cursor);
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
@@ -343,33 +417,161 @@ pub trait Surfaces {
         let _ = body;
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
-    fn cache_delete_request(&self, cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn cache_delete_request(
+        &self,
+        cx: &BuildContext<'_>,
+        cache_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = cache_id;
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
-    fn cache_update_request(&self, cx: &BuildContext<'_>, cache_id: &str, ttl_seconds: u64) -> Result<WireRequest, Lm15Error> {
+    fn cache_update_request(
+        &self,
+        cx: &BuildContext<'_>,
+        cache_id: &str,
+        ttl_seconds: u64,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = (cache_id, ttl_seconds);
         Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
 
     // ─── generation (image, speech; module 8) ───
-    fn image_generate_request(&self, cx: &BuildContext<'_>, request: &ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+    fn image_generate_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &ImageGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = request;
-        Err(crate::surfaces::unsupported(cx.provider, "image generation"))
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "image generation",
+        ))
     }
     /// `headers`: the response headers (a raw media body's type lives in
     /// `content-type`).
-    fn image_generation(&self, cx: &BuildContext<'_>, request: &ImageGenerationRequest, headers: &[(String, String)], body: &[u8]) -> Result<ImageGenerationResponse, Lm15Error> {
+    fn image_generation(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &ImageGenerationRequest,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<ImageGenerationResponse, Lm15Error> {
         let _ = (request, headers, body);
-        Err(crate::surfaces::unsupported(cx.provider, "image generation"))
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "image generation",
+        ))
     }
-    fn speech_generate_request(&self, cx: &BuildContext<'_>, request: &SpeechGenerationRequest) -> Result<WireRequest, Lm15Error> {
+    fn speech_generate_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &SpeechGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         let _ = request;
-        Err(crate::surfaces::unsupported(cx.provider, "speech generation"))
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "speech generation",
+        ))
     }
-    fn speech_generation(&self, cx: &BuildContext<'_>, request: &SpeechGenerationRequest, headers: &[(String, String)], body: &[u8]) -> Result<SpeechGenerationResponse, Lm15Error> {
+    fn speech_generation(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &SpeechGenerationRequest,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<SpeechGenerationResponse, Lm15Error> {
         let _ = (request, headers, body);
-        Err(crate::surfaces::unsupported(cx.provider, "speech generation"))
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "speech generation",
+        ))
+    }
+
+    // ─── video (job-shaped on every wire; module 8) ───
+    fn video_submit_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &VideoGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
+        let _ = request;
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "video generation",
+        ))
+    }
+    /// `video_id` accompanies bodies that do not echo the id (xAI).
+    fn video_job(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+        video_id: Option<&str>,
+    ) -> Result<VideoJobInfo, Lm15Error> {
+        let _ = (body, video_id);
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "video generation",
+        ))
+    }
+    fn video_status_request(
+        &self,
+        cx: &BuildContext<'_>,
+        video_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
+        let _ = video_id;
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "video generation",
+        ))
+    }
+    /// The content fetch a terminal body calls for; `None` when the body
+    /// carries a public URL.
+    fn video_result_fetch(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &Map<String, Value>,
+    ) -> Result<Option<WireRequest>, Lm15Error> {
+        let _ = status_body;
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "video generation",
+        ))
+    }
+    /// The finished video in the provider's own delivery mode: a URL, or
+    /// the fetched bytes with the type of their `content-type`.
+    fn video_part(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &Map<String, Value>,
+        fetched: Fetched<'_>,
+    ) -> Result<VideoPart, Lm15Error> {
+        let _ = (status_body, fetched);
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "video generation",
+        ))
+    }
+    fn video_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+        model: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
+        let _ = (limit, model);
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "video generation",
+        ))
+    }
+    fn video_jobs(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<VideoJobInfo>, Lm15Error> {
+        let _ = body;
+        Err(crate::surfaces::unsupported(
+            cx.provider,
+            "video generation",
+        ))
     }
 }
 
@@ -377,7 +579,11 @@ pub trait Surfaces {
 /// `provider:` prefix naming this binding (either spelling) is removed.
 pub fn wire_model<'m>(provider: &str, model: &'m str) -> &'m str {
     match model.split_once(':') {
-        Some((head, rest)) if crate::registry::canonical_provider(head) == provider && !rest.is_empty() => rest,
+        Some((head, rest))
+            if crate::registry::canonical_provider(head) == provider && !rest.is_empty() =>
+        {
+            rest
+        }
         _ => model,
     }
 }
@@ -399,8 +605,11 @@ impl<'a> BuildContext<'a> {
 /// a fallback the body always supplies.
 pub fn batch_entry_request(model: Option<&str>) -> Request {
     let name = model.filter(|m| !m.is_empty()).unwrap_or("batch");
-    Request::new(name, vec![crate::types::Message::user("-").expect("a text message")])
-        .expect("a synthetic request validates")
+    Request::new(
+        name,
+        vec![crate::types::Message::user("-").expect("a text message")],
+    )
+    .expect("a synthetic request validates")
 }
 
 /// `{provider}: model listing not supported` (`lm15/providers/base.py`
@@ -600,8 +809,24 @@ pub fn emit_wire(
         (Credential::ApiKey { value }, AuthScheme::QueryKey) => Some(value.as_str()),
         _ => None,
     };
+    // An absolute URL from a provider body (a results_url, a file URI)
+    // may carry a query; the transport request keeps the query as params
+    // (harness/PROTOCOL.md: `url` carries no query string).
+    let mut params = wire.params;
     let url = match &wire.absolute_url {
-        Some(url) => url.clone(),
+        Some(url) => match url.split_once('?') {
+            Some((base, query)) => {
+                params.extend(query.split('&').filter(|p| !p.is_empty()).map(|pair| {
+                    let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                    (
+                        crate::cloud::percent::decode(k),
+                        crate::cloud::percent::decode(v),
+                    )
+                }));
+                base.to_string()
+            }
+            None => url.clone(),
+        },
         None => format!("{}{}", cx.base_url.trim_end_matches('/'), wire.path),
     };
     let raw = wire.raw;
@@ -618,7 +843,7 @@ pub fn emit_wire(
             url,
             headers,
             body: wire.body,
-            params: wire.params,
+            params,
             endpoint: wire.endpoint,
             stream,
             model: wire.model.as_deref(),

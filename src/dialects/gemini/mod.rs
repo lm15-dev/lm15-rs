@@ -15,13 +15,14 @@
 //! the MAP-5..8 rules and the no-silent-drop rule (playbooks/port.md
 //! rule 4); each is an `Lm15Error` raised before any wire.
 
-mod config;
-mod contents;
 pub mod batch;
 pub mod cache;
+mod config;
+mod contents;
 pub mod files;
 pub mod generation;
 pub mod response;
+pub mod video;
 
 use serde_json::{Map, Value};
 
@@ -29,7 +30,7 @@ use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
 use crate::types::{BuiltinTool, ModelInfo, Request, Response, StreamEvent, Tool};
-use crate::wire::{Surfaces, model_infos_from_entries, BuildContext, Dialect, WireRequest};
+use crate::wire::{model_infos_from_entries, BuildContext, Dialect, Surfaces, WireRequest};
 
 use self::config::{cache_plan, generation_config, tool_config};
 use self::contents::{contents, system_instruction};
@@ -244,88 +245,260 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
 }
 
 impl Surfaces for Gemini {
-    fn image_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+    fn video_submit_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::VideoGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
+        video::submit_request(cx, request)
+    }
+    fn video_job(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+        _video_id: Option<&str>,
+    ) -> Result<crate::types::VideoJobInfo, Lm15Error> {
+        video::job_from_body(cx, body)
+    }
+    fn video_status_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        video_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
+        Ok(video::status_request(video_id))
+    }
+    fn video_result_fetch(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &Map<String, Value>,
+    ) -> Result<Option<WireRequest>, Lm15Error> {
+        video::result_fetch(cx, status_body).map(Some)
+    }
+    fn video_part(
+        &self,
+        cx: &BuildContext<'_>,
+        _status_body: &Map<String, Value>,
+        fetched: crate::wire::Fetched<'_>,
+    ) -> Result<crate::types::VideoPart, Lm15Error> {
+        video::part(cx, fetched)
+    }
+    fn video_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+        model: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
+        video::list_request(cx, limit, model)
+    }
+    fn video_jobs(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<crate::types::VideoJobInfo>, Lm15Error> {
+        video::jobs(cx, body)
+    }
+
+    fn image_generate_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::ImageGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         generation::image_request(self, cx, request)
     }
-    fn image_generation(&self, cx: &BuildContext<'_>, request: &crate::types::ImageGenerationRequest, _headers: &[(String, String)], body: &[u8]) -> Result<crate::types::ImageGenerationResponse, Lm15Error> {
+    fn image_generation(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::ImageGenerationRequest,
+        _headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<crate::types::ImageGenerationResponse, Lm15Error> {
         generation::image_response(self, cx, request, body)
     }
-    fn speech_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::SpeechGenerationRequest) -> Result<WireRequest, Lm15Error> {
+    fn speech_generate_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::SpeechGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         generation::speech_request(self, cx, request)
     }
-    fn speech_generation(&self, cx: &BuildContext<'_>, request: &crate::types::SpeechGenerationRequest, _headers: &[(String, String)], body: &[u8]) -> Result<crate::types::SpeechGenerationResponse, Lm15Error> {
+    fn speech_generation(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::SpeechGenerationRequest,
+        _headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<crate::types::SpeechGenerationResponse, Lm15Error> {
         generation::speech_response(self, cx, request, body)
     }
 
-    fn cache_create_request(&self, cx: &BuildContext<'_>, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn cache_create_request(
+        &self,
+        cx: &BuildContext<'_>,
+        prefix: &Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         cache::create_request(self, cx, prefix, ttl_seconds, label)
     }
-    fn cache_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::CacheInfo, Lm15Error> {
+    fn cache_info(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::CacheInfo, Lm15Error> {
         cache::info_from_body(cx, body)
     }
-    fn cache_get_request(&self, _cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn cache_get_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        cache_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(cache::get_request(cache_id))
     }
-    fn cache_list_request(&self, _cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn cache_list_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(cache::list_request(limit, cursor))
     }
-    fn cache_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::CachePage, Lm15Error> {
+    fn cache_page(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::CachePage, Lm15Error> {
         cache::page(cx, body)
     }
-    fn cache_delete_request(&self, _cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn cache_delete_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        cache_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(cache::delete_request(cache_id))
     }
-    fn cache_update_request(&self, _cx: &BuildContext<'_>, cache_id: &str, ttl_seconds: u64) -> Result<WireRequest, Lm15Error> {
+    fn cache_update_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        cache_id: &str,
+        ttl_seconds: u64,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(cache::update_request(cache_id, ttl_seconds))
     }
 
-    fn batch_upload_request(&self, _cx: &BuildContext<'_>, _request: &crate::types::BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
+    fn batch_upload_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        _request: &crate::types::BatchRequest,
+    ) -> Result<Option<WireRequest>, Lm15Error> {
         Ok(None)
     }
-    fn batch_submit_request(&self, cx: &BuildContext<'_>, request: &crate::types::BatchRequest, _upload_body: Option<&Map<String, Value>>) -> Result<WireRequest, Lm15Error> {
+    fn batch_submit_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::BatchRequest,
+        _upload_body: Option<&Map<String, Value>>,
+    ) -> Result<WireRequest, Lm15Error> {
         batch::submit_request(self, cx, request)
     }
-    fn batch_job(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::BatchJobInfo, Lm15Error> {
+    fn batch_job(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::BatchJobInfo, Lm15Error> {
         batch::job_from_body(cx, body)
     }
-    fn batch_status_request(&self, _cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn batch_status_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        batch_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(batch::status_request(batch_id))
     }
-    fn batch_cancel_request(&self, _cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn batch_cancel_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        batch_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(batch::cancel_request(batch_id))
     }
-    fn batch_result_fetches(&self, _cx: &BuildContext<'_>, _status_body: &Map<String, Value>) -> Result<Vec<WireRequest>, Lm15Error> {
+    fn batch_result_fetches(
+        &self,
+        _cx: &BuildContext<'_>,
+        _status_body: &Map<String, Value>,
+    ) -> Result<Vec<WireRequest>, Lm15Error> {
         Ok(Vec::new()) // inlined in the terminal operation
     }
-    fn batch_entries(&self, cx: &BuildContext<'_>, status_body: &Map<String, Value>, _fetched: &[Vec<u8>]) -> Result<Vec<crate::types::BatchEntry>, Lm15Error> {
+    fn batch_entries(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &Map<String, Value>,
+        _fetched: &[Vec<u8>],
+    ) -> Result<Vec<crate::types::BatchEntry>, Lm15Error> {
         batch::entries(self, cx, status_body)
     }
-    fn batch_list_request(&self, _cx: &BuildContext<'_>, limit: u64) -> Result<WireRequest, Lm15Error> {
+    fn batch_list_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        limit: u64,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(batch::list_request(limit))
     }
-    fn batch_jobs(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<Vec<crate::types::BatchJobInfo>, Lm15Error> {
+    fn batch_jobs(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<crate::types::BatchJobInfo>, Lm15Error> {
         batch::jobs(cx, body)
     }
 
-    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+    fn file_upload_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::FileUploadRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         files::upload_request(cx, request)
     }
-    fn file_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FileInfo, Lm15Error> {
+    fn file_info(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::FileInfo, Lm15Error> {
         files::file_info_from_body(cx, body)
     }
-    fn file_get_request(&self, _cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_get_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::get_request(file_id))
     }
-    fn file_list_request(&self, _cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn file_list_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::list_request(limit, cursor))
     }
-    fn file_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FilePage, Lm15Error> {
+    fn file_page(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::FilePage, Lm15Error> {
         files::page(cx, body)
     }
-    fn file_delete_request(&self, _cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_delete_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::delete_request(file_id))
     }
-    fn file_download_request(&self, _cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_download_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::download_request(file_id))
     }
 }

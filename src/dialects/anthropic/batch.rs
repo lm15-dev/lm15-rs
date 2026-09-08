@@ -7,7 +7,9 @@ use serde_json::{json, Map, Value};
 
 use crate::errors::Lm15Error;
 use crate::surfaces::{body_object, iso_utc, provider_error, str_field, unsupported};
-use crate::types::{BatchEntry, BatchJobInfo, BatchOutcome, BatchRequest, BatchStatus, ErrorDetail};
+use crate::types::{
+    BatchEntry, BatchJobInfo, BatchOutcome, BatchRequest, BatchStatus, ErrorDetail,
+};
 use crate::wire::{batch_entry_request, BuildContext, Dialect, WireRequest};
 
 use super::surface_headers;
@@ -34,12 +36,19 @@ pub fn batch_status(data: &Map<String, Value>) -> BatchStatus {
             let n = |key: &str| -> u64 {
                 counts
                     .and_then(|c| c.get(key))
-                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
                     .unwrap_or(0)
             };
             if n("canceled") > 0 && n("succeeded") == 0 && n("errored") == 0 && n("expired") == 0 {
                 BatchStatus::Cancelled
-            } else if n("expired") > 0 && n("succeeded") == 0 && n("errored") == 0 && n("canceled") == 0 {
+            } else if n("expired") > 0
+                && n("succeeded") == 0
+                && n("errored") == 0
+                && n("canceled") == 0
+            {
                 BatchStatus::Expired
             } else {
                 BatchStatus::Completed
@@ -49,7 +58,11 @@ pub fn batch_status(data: &Map<String, Value>) -> BatchStatus {
     }
 }
 
-pub fn submit_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &BatchRequest) -> Result<WireRequest, Lm15Error> {
+pub fn submit_request(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &BatchRequest,
+) -> Result<WireRequest, Lm15Error> {
     if request.label.is_some() {
         let mut err = unsupported(cx.provider, "batch labels are");
         err.meta_mut().message = format!(
@@ -61,7 +74,10 @@ pub fn submit_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &Ba
     }
     let mut requests = Vec::new();
     for (i, nested) in request.requests.iter().enumerate() {
-        let params = dialect.build(nested, false, &cx.for_model(&nested.model))?.body.unwrap_or(Value::Null);
+        let params = dialect
+            .build(nested, false, &cx.for_model(&nested.model))?
+            .body
+            .unwrap_or(Value::Null);
         requests.push(json!({"custom_id": i.to_string(), "params": params}));
     }
     let mut payload = Map::new();
@@ -74,7 +90,10 @@ pub fn submit_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &Ba
     Ok(wire)
 }
 
-pub fn job_info(cx: &BuildContext<'_>, data: &Map<String, Value>) -> Result<BatchJobInfo, Lm15Error> {
+pub fn job_info(
+    cx: &BuildContext<'_>,
+    data: &Map<String, Value>,
+) -> Result<BatchJobInfo, Lm15Error> {
     let id = str_field(data, "id")
         .ok_or_else(|| provider_error(cx.provider, "batch object carries no id".into()))?;
     Ok(BatchJobInfo {
@@ -103,7 +122,10 @@ pub fn cancel_request(cx: &BuildContext<'_>, batch_id: &str) -> WireRequest {
     wire
 }
 
-pub fn result_fetches(cx: &BuildContext<'_>, status_body: &Map<String, Value>) -> Result<Vec<WireRequest>, Lm15Error> {
+pub fn result_fetches(
+    cx: &BuildContext<'_>,
+    status_body: &Map<String, Value>,
+) -> Result<Vec<WireRequest>, Lm15Error> {
     let url = str_field(status_body, "results_url")
         .ok_or_else(|| provider_error(cx.provider, "ended batch carries no results_url".into()))?;
     let mut wire = WireRequest::get("");
@@ -112,7 +134,11 @@ pub fn result_fetches(cx: &BuildContext<'_>, status_body: &Map<String, Value>) -
     Ok(vec![wire])
 }
 
-pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, fetched: &[Vec<u8>]) -> Result<Vec<BatchEntry>, Lm15Error> {
+pub fn entries(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    fetched: &[Vec<u8>],
+) -> Result<Vec<BatchEntry>, Lm15Error> {
     let Some(text) = fetched.first() else {
         return Ok(Vec::new());
     };
@@ -121,8 +147,9 @@ pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, fetched: &[Vec<u8>]
         if line.trim().is_empty() {
             continue;
         }
-        let item: Value = serde_json::from_str(line)
-            .map_err(|err| provider_error(cx.provider, format!("batch result line is not JSON: {err}")))?;
+        let item: Value = serde_json::from_str(line).map_err(|err| {
+            provider_error(cx.provider, format!("batch result line is not JSON: {err}"))
+        })?;
         let index = item
             .get("custom_id")
             .map(|v| match v {
@@ -130,15 +157,26 @@ pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, fetched: &[Vec<u8>]
                 other => other.to_string(),
             })
             .and_then(|s| s.parse::<u64>().ok())
-            .ok_or_else(|| provider_error(cx.provider, "batch result line carries no custom_id".into()))?;
+            .ok_or_else(|| {
+                provider_error(cx.provider, "batch result line carries no custom_id".into())
+            })?;
         let result = item.get("result").and_then(Value::as_object);
-        let rtype = result.and_then(|r| r.get("type")).and_then(Value::as_str).unwrap_or("");
+        let rtype = result
+            .and_then(|r| r.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let entry = match rtype {
             "succeeded" => {
-                let message = result.and_then(|r| r.get("message")).and_then(Value::as_object);
-                let request = batch_entry_request(message.and_then(|m| m.get("model")).and_then(Value::as_str));
-                let bytes = serde_json::to_vec(&message.cloned().unwrap_or_default()).expect("serializes");
-                let response = dialect.parse_response(&request, &cx.for_model(&request.model), &bytes)?;
+                let message = result
+                    .and_then(|r| r.get("message"))
+                    .and_then(Value::as_object);
+                let request = batch_entry_request(
+                    message.and_then(|m| m.get("model")).and_then(Value::as_str),
+                );
+                let bytes =
+                    serde_json::to_vec(&message.cloned().unwrap_or_default()).expect("serializes");
+                let response =
+                    dialect.parse_response(&request, &cx.for_model(&request.model), &bytes)?;
                 BatchEntry {
                     index,
                     outcome: BatchOutcome::Succeeded,
@@ -147,7 +185,10 @@ pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, fetched: &[Vec<u8>]
                 }
             }
             "errored" => {
-                let raw = result.and_then(|r| r.get("error")).cloned().unwrap_or_else(|| json!({}));
+                let raw = result
+                    .and_then(|r| r.get("error"))
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
                 let envelope = match &raw {
                     Value::Object(map) if map.contains_key("error") => raw.clone(),
                     _ => json!({"error": raw}),

@@ -38,21 +38,36 @@ pub fn image_lm_request(request: &ImageGenerationRequest) -> Result<Request, Lm1
     parts.extend(request.images.iter().cloned().map(Part::Image));
     Ok(Request {
         model: request.model.clone(),
-        messages: vec![Message::new(Role::User, parts).map_err(|e| provider_error("gemini", e.message))?],
+        messages: vec![
+            Message::new(Role::User, parts).map_err(|e| provider_error("gemini", e.message))?
+        ],
         config: Config {
-            extensions: if extensions.is_empty() { None } else { Some(extensions) },
+            extensions: if extensions.is_empty() {
+                None
+            } else {
+                Some(extensions)
+            },
             ..Default::default()
         },
         ..Default::default()
     })
 }
 
-pub fn image_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+pub fn image_request(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &ImageGenerationRequest,
+) -> Result<WireRequest, Lm15Error> {
     let lm_request = image_lm_request(request)?;
     dialect.build(&lm_request, false, &cx.for_model(&lm_request.model))
 }
 
-pub fn image_response(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &ImageGenerationRequest, body: &[u8]) -> Result<ImageGenerationResponse, Lm15Error> {
+pub fn image_response(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &ImageGenerationRequest,
+    body: &[u8],
+) -> Result<ImageGenerationResponse, Lm15Error> {
     let lm_request = image_lm_request(request)?;
     let chat = dialect.parse_response(&lm_request, &cx.for_model(&lm_request.model), body)?;
     let images: Vec<_> = chat
@@ -65,7 +80,10 @@ pub fn image_response(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &Im
         })
         .collect();
     if images.is_empty() {
-        return Err(provider_error(cx.provider, "model returned no image parts".into()));
+        return Err(provider_error(
+            cx.provider,
+            "model returned no image parts".into(),
+        ));
     }
     let text: String = chat
         .message
@@ -86,7 +104,10 @@ pub fn image_response(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &Im
     })
 }
 
-pub fn speech_lm_request(cx: &BuildContext<'_>, request: &SpeechGenerationRequest) -> Result<Request, Lm15Error> {
+pub fn speech_lm_request(
+    cx: &BuildContext<'_>,
+    request: &SpeechGenerationRequest,
+) -> Result<Request, Lm15Error> {
     if request.format.is_some() {
         // No wire slot: Gemini TTS always answers PCM (captured
         // audio/L16;codec=pcm;rate=24000). Raising beats dropping.
@@ -112,7 +133,8 @@ pub fn speech_lm_request(cx: &BuildContext<'_>, request: &SpeechGenerationReques
     }
     Ok(Request {
         model: request.model.clone(),
-        messages: vec![Message::user(request.prompt.as_str()).map_err(|e| provider_error("gemini", e.message))?],
+        messages: vec![Message::user(request.prompt.as_str())
+            .map_err(|e| provider_error("gemini", e.message))?],
         config: Config {
             extensions: Some(extensions),
             ..Default::default()
@@ -121,12 +143,21 @@ pub fn speech_lm_request(cx: &BuildContext<'_>, request: &SpeechGenerationReques
     })
 }
 
-pub fn speech_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &SpeechGenerationRequest) -> Result<WireRequest, Lm15Error> {
+pub fn speech_request(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &SpeechGenerationRequest,
+) -> Result<WireRequest, Lm15Error> {
     let lm_request = speech_lm_request(cx, request)?;
     dialect.build(&lm_request, false, &cx.for_model(&lm_request.model))
 }
 
-pub fn speech_response(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &SpeechGenerationRequest, body: &[u8]) -> Result<SpeechGenerationResponse, Lm15Error> {
+pub fn speech_response(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &SpeechGenerationRequest,
+    body: &[u8],
+) -> Result<SpeechGenerationResponse, Lm15Error> {
     let lm_request = speech_lm_request(cx, request)?;
     let chat = dialect.parse_response(&lm_request, &cx.for_model(&lm_request.model), body)?;
     let audio = chat

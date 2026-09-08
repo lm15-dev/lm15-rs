@@ -18,7 +18,10 @@ pub fn json_headers(cx: &BuildContext<'_>) -> Vec<(String, String)> {
     headers
 }
 
-pub fn upload_request(cx: &BuildContext<'_>, request: &FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+pub fn upload_request(
+    cx: &BuildContext<'_>,
+    request: &FileUploadRequest,
+) -> Result<WireRequest, Lm15Error> {
     // `purpose` from extensions (default `user_data`), then the rest as
     // form fields in order.
     let mut fields = Vec::new();
@@ -98,7 +101,10 @@ pub fn page(cx: &BuildContext<'_>, body: &[u8]) -> Result<FilePage, Lm15Error> {
             items.push(file_info(cx, entry)?);
         }
     }
-    let has_more = data.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+    let has_more = data
+        .get("has_more")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let next_cursor = if has_more && !items.is_empty() {
         str_field(&data, "last_id")
     } else {

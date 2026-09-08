@@ -43,7 +43,10 @@ pub struct FilePart<'a> {
 
 /// `multipart_form_body`: text fields, then file parts, CRLF framing.
 /// Returns the `content-type` header value and the body.
-pub fn multipart_form_body(fields: &[(String, String)], files: &[FilePart<'_>]) -> (String, Vec<u8>) {
+pub fn multipart_form_body(
+    fields: &[(String, String)],
+    files: &[FilePart<'_>],
+) -> (String, Vec<u8>) {
     let boundary = boundary();
     let mut body = Vec::new();
     for (name, value) in fields {
@@ -73,7 +76,11 @@ pub fn multipart_form_body(fields: &[(String, String)], files: &[FilePart<'_>]) 
 
 /// `multipart_related_body` (the Gemini media upload): a JSON metadata
 /// part, then one media part.
-pub fn multipart_related_body(metadata: &Value, media_type: &str, data: &[u8]) -> (String, Vec<u8>) {
+pub fn multipart_related_body(
+    metadata: &Value,
+    media_type: &str,
+    data: &[u8],
+) -> (String, Vec<u8>) {
     let boundary = boundary();
     let mut body = Vec::new();
     body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
@@ -152,11 +159,21 @@ pub fn openai_file_readiness(status: Option<&Value>) -> FileReadiness {
 }
 
 /// A provider body that is not a JSON object.
-pub fn body_object(provider: &str, body: &[u8], what: &str) -> Result<Map<String, Value>, Lm15Error> {
+pub fn body_object(
+    provider: &str,
+    body: &[u8],
+    what: &str,
+) -> Result<Map<String, Value>, Lm15Error> {
     match serde_json::from_slice::<Value>(body) {
         Ok(Value::Object(map)) => Ok(map),
-        Ok(_) => Err(provider_error(provider, format!("{what} body is not a JSON object"))),
-        Err(err) => Err(provider_error(provider, format!("{what} body is not JSON: {err}"))),
+        Ok(_) => Err(provider_error(
+            provider,
+            format!("{what} body is not a JSON object"),
+        )),
+        Err(err) => Err(provider_error(
+            provider,
+            format!("{what} body is not JSON: {err}"),
+        )),
     }
 }
 
@@ -174,10 +191,18 @@ pub fn unsupported(provider: &str, what: &str) -> Lm15Error {
 
 /// The bytes of a media part: inline base64 data, else the file at
 /// `path` read now; a URL or file id is not content.
-pub fn media_bytes(provider: &str, data: Option<&str>, path: Option<&std::path::Path>, what: &str) -> Result<Vec<u8>, Lm15Error> {
+pub fn media_bytes(
+    provider: &str,
+    data: Option<&str>,
+    path: Option<&std::path::Path>,
+    what: &str,
+) -> Result<Vec<u8>, Lm15Error> {
     if let Some(data) = data {
         return crate::types::base64_decode(data).map_err(|err| {
-            Lm15Error::InvalidRequestError(ErrorMeta::new(format!("{provider}: {what}: {}", err.message)))
+            Lm15Error::InvalidRequestError(ErrorMeta::new(format!(
+                "{provider}: {what}: {}",
+                err.message
+            )))
         });
     }
     if let Some(path) = path {
@@ -226,8 +251,14 @@ mod tests {
 
     #[test]
     fn iso_utc_folds_epochs_and_iso_strings() {
-        assert_eq!(iso_utc(Some(&json!(1788215944))).as_deref(), Some("2026-08-31T22:39:04Z"));
-        assert_eq!(iso_utc(Some(&json!(1788215944.7))).as_deref(), Some("2026-08-31T22:39:04Z"));
+        assert_eq!(
+            iso_utc(Some(&json!(1788215944))).as_deref(),
+            Some("2026-08-31T22:39:04Z")
+        );
+        assert_eq!(
+            iso_utc(Some(&json!(1788215944.7))).as_deref(),
+            Some("2026-08-31T22:39:04Z")
+        );
         assert_eq!(
             iso_utc(Some(&json!("2026-08-31T22:39:04.123456789Z"))).as_deref(),
             Some("2026-08-31T22:39:04Z")
@@ -257,7 +288,9 @@ mod tests {
                 data: b"hi",
             }],
         );
-        let boundary = content_type.strip_prefix("multipart/form-data; boundary=").unwrap();
+        let boundary = content_type
+            .strip_prefix("multipart/form-data; boundary=")
+            .unwrap();
         assert!(boundary.starts_with("lm15-") && boundary.len() == 5 + 32);
         let text = String::from_utf8(body).unwrap().replace(boundary, "B");
         assert_eq!(
@@ -275,8 +308,11 @@ mod tests {
 
     #[test]
     fn multipart_related_matches_the_reference_framing() {
-        let (content_type, body) =
-            multipart_related_body(&json!({"file": {"display_name": "x"}}), "image/png", b"\x89PNG");
+        let (content_type, body) = multipart_related_body(
+            &json!({"file": {"display_name": "x"}}),
+            "image/png",
+            b"\x89PNG",
+        );
         let boundary = boundary_of(&content_type).to_string();
         let text = String::from_utf8_lossy(&body).replace(&boundary, "B");
         assert_eq!(

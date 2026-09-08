@@ -19,9 +19,18 @@ pub fn cache_resource(cache_id: &str) -> String {
     }
 }
 
-pub fn create_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<WireRequest, Lm15Error> {
+pub fn create_request(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    prefix: &Request,
+    ttl_seconds: Option<u64>,
+    label: Option<&str>,
+) -> Result<WireRequest, Lm15Error> {
     let cx = cx.for_model(&prefix.model);
-    let chat = dialect.build(prefix, false, &cx)?.body.unwrap_or(Value::Null);
+    let chat = dialect
+        .build(prefix, false, &cx)?
+        .body
+        .unwrap_or(Value::Null);
     let mut body = Map::new();
     body.insert("model".into(), Value::String(model_path(cx.model)));
     body.insert(
@@ -41,11 +50,15 @@ pub fn create_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, prefix: &Req
         body.insert("displayName".into(), Value::String(label.to_string()));
     }
     let mut wire = WireRequest::post("/cachedContents", Value::Object(body));
-    wire.headers.push(("Content-Type".into(), "application/json".into()));
+    wire.headers
+        .push(("Content-Type".into(), "application/json".into()));
     Ok(wire)
 }
 
-pub fn cache_info(cx: &BuildContext<'_>, data: &Map<String, Value>) -> Result<CacheInfo, Lm15Error> {
+pub fn cache_info(
+    cx: &BuildContext<'_>,
+    data: &Map<String, Value>,
+) -> Result<CacheInfo, Lm15Error> {
     let id = str_field(data, "name")
         .ok_or_else(|| provider_error(cx.provider, "cache object carries no name".into()))?;
     let model = data
@@ -113,6 +126,7 @@ pub fn update_request(cache_id: &str, ttl_seconds: u64) -> WireRequest {
         format!("/{}", cache_resource(cache_id)),
         json!({"ttl": format!("{ttl_seconds}s")}),
     );
-    wire.headers.push(("Content-Type".into(), "application/json".into()));
+    wire.headers
+        .push(("Content-Type".into(), "application/json".into()));
     wire
 }

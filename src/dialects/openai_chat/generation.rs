@@ -10,7 +10,7 @@ use crate::surfaces::{body_object, media_bytes, provider_error, str_field, unsup
 use crate::types::{ImageGenerationRequest, ImageGenerationResponse, ImagePart, Usage};
 use crate::wire::{apply_static_headers, BuildContext, WireRequest};
 
-fn json_headers(cx: &BuildContext<'_>) -> Vec<(String, String)> {
+pub fn json_headers(cx: &BuildContext<'_>) -> Vec<(String, String)> {
     let mut headers = vec![("content-type".to_string(), "application/json".to_string())];
     apply_static_headers(&mut headers, cx.policy);
     headers
@@ -27,10 +27,15 @@ fn image_input(cx: &BuildContext<'_>, part: &ImagePart) -> Result<Value, Lm15Err
         return Ok(json!({"url": format!("data:{};base64,{data}", part.media_type)}));
     }
     let bytes = media_bytes(cx.provider, None, part.path.as_deref(), "input image")?;
-    Ok(json!({"url": format!("data:{};base64,{}", part.media_type, crate::types::base64_encode(&bytes))}))
+    Ok(
+        json!({"url": format!("data:{};base64,{}", part.media_type, crate::types::base64_encode(&bytes))}),
+    )
 }
 
-pub fn image_request(cx: &BuildContext<'_>, request: &ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+pub fn image_request(
+    cx: &BuildContext<'_>,
+    request: &ImageGenerationRequest,
+) -> Result<WireRequest, Lm15Error> {
     let mut payload = Map::new();
     payload.insert("model".into(), Value::String(request.model.clone()));
     payload.insert("prompt".into(), Value::String(request.prompt.clone()));
@@ -66,12 +71,23 @@ pub fn image_request(cx: &BuildContext<'_>, request: &ImageGenerationRequest) ->
     Ok(wire)
 }
 
-pub fn image_response(cx: &BuildContext<'_>, body: &[u8]) -> Result<ImageGenerationResponse, Lm15Error> {
+pub fn image_response(
+    cx: &BuildContext<'_>,
+    body: &[u8],
+) -> Result<ImageGenerationResponse, Lm15Error> {
     let data = body_object(cx.provider, body, "image")?;
     let mut images = Vec::new();
-    for item in data.get("data").and_then(Value::as_array).into_iter().flatten() {
-        let Some(item) = item.as_object() else { continue };
-        let media_type = str_field(item, "mime_type").unwrap_or_else(|| "application/octet-stream".into());
+    for item in data
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(item) = item.as_object() else {
+            continue;
+        };
+        let media_type =
+            str_field(item, "mime_type").unwrap_or_else(|| "application/octet-stream".into());
         if let Some(b64) = str_field(item, "b64_json") {
             images.push(ImagePart {
                 media_type,
@@ -87,7 +103,10 @@ pub fn image_response(cx: &BuildContext<'_>, body: &[u8]) -> Result<ImageGenerat
         }
     }
     if images.is_empty() {
-        return Err(provider_error(cx.provider, "image response carries no images".into()));
+        return Err(provider_error(
+            cx.provider,
+            "image response carries no images".into(),
+        ));
     }
     // Captured: usage reports cost_in_usd_ticks only — no token counts
     // exist, so Usage stays empty and the figure lives in provider_data.

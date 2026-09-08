@@ -6,7 +6,9 @@ use serde_json::{json, Map, Value};
 
 use crate::errors::Lm15Error;
 use crate::surfaces::{body_object, iso_utc, provider_error, str_field};
-use crate::types::{BatchEntry, BatchJobInfo, BatchOutcome, BatchRequest, BatchStatus, ErrorDetail};
+use crate::types::{
+    BatchEntry, BatchJobInfo, BatchOutcome, BatchRequest, BatchStatus, ErrorDetail,
+};
 use crate::wire::{batch_entry_request, wire_model, BuildContext, Dialect, WireRequest};
 
 use super::model_path;
@@ -40,7 +42,11 @@ pub fn batch_status(data: &Map<String, Value>) -> BatchStatus {
     }
 }
 
-pub fn submit_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &BatchRequest) -> Result<WireRequest, Lm15Error> {
+pub fn submit_request(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &BatchRequest,
+) -> Result<WireRequest, Lm15Error> {
     let model = request
         .model
         .as_deref()
@@ -48,7 +54,10 @@ pub fn submit_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &Ba
         .ok_or_else(|| provider_error(cx.provider, "batch carries no model".into()))?;
     let mut requests = Vec::new();
     for (i, nested) in request.requests.iter().enumerate() {
-        let body = dialect.build(nested, false, &cx.for_model(&nested.model))?.body.unwrap_or(Value::Null);
+        let body = dialect
+            .build(nested, false, &cx.for_model(&nested.model))?
+            .body
+            .unwrap_or(Value::Null);
         requests.push(json!({"request": body, "metadata": {"key": i.to_string()}}));
     }
     let mut batch = Map::new();
@@ -64,13 +73,20 @@ pub fn submit_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &Ba
     if let Some(extensions) = &request.extensions {
         payload.extend(extensions.clone());
     }
-    let path = format!("/{}:batchGenerateContent", model_path(wire_model(cx.provider, model)));
+    let path = format!(
+        "/{}:batchGenerateContent",
+        model_path(wire_model(cx.provider, model))
+    );
     let mut wire = WireRequest::post(path, Value::Object(payload));
-    wire.headers.push(("Content-Type".into(), "application/json".into()));
+    wire.headers
+        .push(("Content-Type".into(), "application/json".into()));
     Ok(wire)
 }
 
-pub fn job_info(cx: &BuildContext<'_>, data: &Map<String, Value>) -> Result<BatchJobInfo, Lm15Error> {
+pub fn job_info(
+    cx: &BuildContext<'_>,
+    data: &Map<String, Value>,
+) -> Result<BatchJobInfo, Lm15Error> {
     let id = str_field(data, "name")
         .ok_or_else(|| provider_error(cx.provider, "batch operation carries no name".into()))?;
     let metadata = data.get("metadata").and_then(Value::as_object);
@@ -93,19 +109,31 @@ pub fn status_request(batch_id: &str) -> WireRequest {
 
 pub fn cancel_request(batch_id: &str) -> WireRequest {
     let mut wire = WireRequest::post(format!("/{batch_id}:cancel"), json!({}));
-    wire.headers.push(("Content-Type".into(), "application/json".into()));
+    wire.headers
+        .push(("Content-Type".into(), "application/json".into()));
     wire
 }
 
-pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, status_body: &Map<String, Value>) -> Result<Vec<BatchEntry>, Lm15Error> {
+pub fn entries(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    status_body: &Map<String, Value>,
+) -> Result<Vec<BatchEntry>, Lm15Error> {
     let response = status_body.get("response").and_then(Value::as_object);
     let mut inlined = response.and_then(|r| r.get("inlinedResponses"));
     if let Some(Value::Object(map)) = inlined {
         inlined = map.get("inlinedResponses");
     }
     let mut entries = Vec::new();
-    for (position, item) in inlined.and_then(Value::as_array).into_iter().flatten().enumerate() {
-        let Some(item) = item.as_object() else { continue };
+    for (position, item) in inlined
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let Some(item) = item.as_object() else {
+            continue;
+        };
         let index = item
             .get("metadata")
             .and_then(Value::as_object)
@@ -120,7 +148,8 @@ pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, status_body: &Map<S
             Some(body) => {
                 let request = batch_entry_request(body.get("modelVersion").and_then(Value::as_str));
                 let bytes = serde_json::to_vec(body).expect("serializes");
-                let parsed = dialect.parse_response(&request, &cx.for_model(&request.model), &bytes)?;
+                let parsed =
+                    dialect.parse_response(&request, &cx.for_model(&request.model), &bytes)?;
                 BatchEntry {
                     index,
                     outcome: BatchOutcome::Succeeded,

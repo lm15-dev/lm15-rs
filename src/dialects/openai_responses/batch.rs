@@ -8,7 +8,9 @@ use crate::errors::Lm15Error;
 use crate::surfaces::{
     body_object, iso_utc, multipart_form_body, provider_error, str_field, FilePart,
 };
-use crate::types::{BatchEntry, BatchJobInfo, BatchOutcome, BatchRequest, BatchStatus, ErrorDetail};
+use crate::types::{
+    BatchEntry, BatchJobInfo, BatchOutcome, BatchRequest, BatchStatus, ErrorDetail,
+};
 use crate::wire::{batch_entry_request, BuildContext, Dialect, WireRequest};
 
 use super::files::json_headers;
@@ -26,10 +28,17 @@ pub fn batch_status(status: &str) -> BatchStatus {
     }
 }
 
-pub fn upload_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &BatchRequest) -> Result<WireRequest, Lm15Error> {
+pub fn upload_request(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &BatchRequest,
+) -> Result<WireRequest, Lm15Error> {
     let mut lines = String::new();
     for (i, nested) in request.requests.iter().enumerate() {
-        let body = dialect.build(nested, false, &cx.for_model(&nested.model))?.body.unwrap_or(Value::Null);
+        let body = dialect
+            .build(nested, false, &cx.for_model(&nested.model))?
+            .body
+            .unwrap_or(Value::Null);
         let line = json!({"custom_id": i.to_string(), "method": "POST", "url": "/v1/responses", "body": body});
         lines.push_str(&serde_json::to_string(&line).expect("a JSON value serializes"));
         lines.push('\n');
@@ -48,20 +57,30 @@ pub fn upload_request(dialect: &dyn Dialect, cx: &BuildContext<'_>, request: &Ba
     Ok(wire)
 }
 
-pub fn submit_request(cx: &BuildContext<'_>, request: &BatchRequest, upload_body: Option<&Map<String, Value>>) -> Result<WireRequest, Lm15Error> {
+pub fn submit_request(
+    cx: &BuildContext<'_>,
+    request: &BatchRequest,
+    upload_body: Option<&Map<String, Value>>,
+) -> Result<WireRequest, Lm15Error> {
     let input_file_id = upload_body
         .and_then(|b| str_field(b, "id"))
-        .ok_or_else(|| provider_error(cx.provider, "batch input file upload returned no id".into()))?;
+        .ok_or_else(|| {
+            provider_error(cx.provider, "batch input file upload returned no id".into())
+        })?;
     let mut extensions = request.extensions.clone().unwrap_or_default();
     let mut payload = Map::new();
     payload.insert("input_file_id".into(), Value::String(input_file_id));
     payload.insert(
         "endpoint".into(),
-        extensions.remove("endpoint").unwrap_or_else(|| json!("/v1/responses")),
+        extensions
+            .remove("endpoint")
+            .unwrap_or_else(|| json!("/v1/responses")),
     );
     payload.insert(
         "completion_window".into(),
-        extensions.remove("completion_window").unwrap_or_else(|| json!("24h")),
+        extensions
+            .remove("completion_window")
+            .unwrap_or_else(|| json!("24h")),
     );
     if let Some(label) = &request.label {
         payload.insert("metadata".into(), json!({"label": label}));
@@ -72,7 +91,10 @@ pub fn submit_request(cx: &BuildContext<'_>, request: &BatchRequest, upload_body
     Ok(wire)
 }
 
-pub fn job_info(cx: &BuildContext<'_>, data: &Map<String, Value>) -> Result<BatchJobInfo, Lm15Error> {
+pub fn job_info(
+    cx: &BuildContext<'_>,
+    data: &Map<String, Value>,
+) -> Result<BatchJobInfo, Lm15Error> {
     let id = str_field(data, "id")
         .ok_or_else(|| provider_error(cx.provider, "batch object carries no id".into()))?;
     let label = data
@@ -117,16 +139,27 @@ pub fn result_fetches(cx: &BuildContext<'_>, status_body: &Map<String, Value>) -
         .collect()
 }
 
-pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, status_body: &Map<String, Value>, fetched: &[Vec<u8>]) -> Result<Vec<BatchEntry>, Lm15Error> {
-    let job_status = batch_status(status_body.get("status").and_then(Value::as_str).unwrap_or(""));
+pub fn entries(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    status_body: &Map<String, Value>,
+    fetched: &[Vec<u8>],
+) -> Result<Vec<BatchEntry>, Lm15Error> {
+    let job_status = batch_status(
+        status_body
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    );
     let mut found: std::collections::BTreeMap<u64, BatchEntry> = std::collections::BTreeMap::new();
     for text in fetched {
         for line in String::from_utf8_lossy(text).lines() {
             if line.trim().is_empty() {
                 continue;
             }
-            let item: Value = serde_json::from_str(line)
-                .map_err(|err| provider_error(cx.provider, format!("batch output line is not JSON: {err}")))?;
+            let item: Value = serde_json::from_str(line).map_err(|err| {
+                provider_error(cx.provider, format!("batch output line is not JSON: {err}"))
+            })?;
             let index = item
                 .get("custom_id")
                 .map(|v| match v {
@@ -134,18 +167,23 @@ pub fn entries(dialect: &dyn Dialect, cx: &BuildContext<'_>, status_body: &Map<S
                     other => other.to_string(),
                 })
                 .and_then(|s| s.parse::<u64>().ok())
-                .ok_or_else(|| provider_error(cx.provider, "batch output line carries no custom_id".into()))?;
+                .ok_or_else(|| {
+                    provider_error(cx.provider, "batch output line carries no custom_id".into())
+                })?;
             let response_obj = item.get("response").and_then(Value::as_object);
             let status_code = response_obj
                 .and_then(|r| r.get("status_code"))
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as u16;
-            let body_obj = response_obj.and_then(|r| r.get("body")).and_then(Value::as_object);
+            let body_obj = response_obj
+                .and_then(|r| r.get("body"))
+                .and_then(Value::as_object);
             let entry = match body_obj {
                 Some(body) if status_code == 200 && !body.is_empty() => {
                     let request = batch_entry_request(body.get("model").and_then(Value::as_str));
                     let bytes = serde_json::to_vec(body).expect("a JSON value serializes");
-                    let response = dialect.parse_response(&request, &cx.for_model(&request.model), &bytes)?;
+                    let response =
+                        dialect.parse_response(&request, &cx.for_model(&request.model), &bytes)?;
                     BatchEntry {
                         index,
                         outcome: BatchOutcome::Succeeded,

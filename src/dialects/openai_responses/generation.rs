@@ -28,7 +28,10 @@ fn extension_string(value: &Value) -> String {
     }
 }
 
-pub fn image_request(cx: &BuildContext<'_>, request: &ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+pub fn image_request(
+    cx: &BuildContext<'_>,
+    request: &ImageGenerationRequest,
+) -> Result<WireRequest, Lm15Error> {
     if request.images.is_empty() {
         let mut payload = Map::new();
         payload.insert("model".into(), Value::String(request.model.clone()));
@@ -76,7 +79,14 @@ pub fn image_request(cx: &BuildContext<'_>, request: &ImageGenerationRequest) ->
     let datas = request
         .images
         .iter()
-        .map(|part| media_bytes(cx.provider, part.data.as_deref(), part.path.as_deref(), "input image"))
+        .map(|part| {
+            media_bytes(
+                cx.provider,
+                part.data.as_deref(),
+                part.path.as_deref(),
+                "input image",
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let names: Vec<(String, String)> = request
         .images
@@ -108,13 +118,25 @@ pub fn image_request(cx: &BuildContext<'_>, request: &ImageGenerationRequest) ->
     Ok(wire)
 }
 
-pub fn image_response(cx: &BuildContext<'_>, body: &[u8]) -> Result<ImageGenerationResponse, Lm15Error> {
+pub fn image_response(
+    cx: &BuildContext<'_>,
+    body: &[u8],
+) -> Result<ImageGenerationResponse, Lm15Error> {
     let data = body_object(cx.provider, body, "image")?;
     let media_type = str_field(&data, "output_format").map(|f| format!("image/{f}"));
     let mut images = Vec::new();
-    for item in data.get("data").and_then(Value::as_array).into_iter().flatten() {
-        let Some(item) = item.as_object() else { continue };
-        let media = media_type.clone().unwrap_or_else(|| "application/octet-stream".into());
+    for item in data
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(item) = item.as_object() else {
+            continue;
+        };
+        let media = media_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".into());
         if let Some(b64) = str_field(item, "b64_json") {
             images.push(ImagePart {
                 media_type: media,
@@ -131,9 +153,15 @@ pub fn image_response(cx: &BuildContext<'_>, body: &[u8]) -> Result<ImageGenerat
     }
     let usage_obj = data.get("usage").and_then(Value::as_object);
     let usage = Usage {
-        input_tokens: usage_obj.and_then(|u| u.get("input_tokens")).and_then(Value::as_u64),
-        output_tokens: usage_obj.and_then(|u| u.get("output_tokens")).and_then(Value::as_u64),
-        total_tokens: usage_obj.and_then(|u| u.get("total_tokens")).and_then(Value::as_u64),
+        input_tokens: usage_obj
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(Value::as_u64),
+        output_tokens: usage_obj
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(Value::as_u64),
+        total_tokens: usage_obj
+            .and_then(|u| u.get("total_tokens"))
+            .and_then(Value::as_u64),
         ..Default::default()
     };
     // Captured: the images response carries no id and no model echo.
@@ -165,11 +193,20 @@ pub fn speech_request(cx: &BuildContext<'_>, request: &SpeechGenerationRequest) 
     wire
 }
 
-pub fn speech_response(cx: &BuildContext<'_>, headers: &[(String, String)], body: &[u8]) -> Result<SpeechGenerationResponse, Lm15Error> {
+pub fn speech_response(
+    cx: &BuildContext<'_>,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Result<SpeechGenerationResponse, Lm15Error> {
     let content_type = header(headers, "content-type")
         .map(|v| v.split(';').next().unwrap_or("").trim().to_string())
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| provider_error(cx.provider, "speech response carries no content-type".into()))?;
+        .ok_or_else(|| {
+            provider_error(
+                cx.provider,
+                "speech response carries no content-type".into(),
+            )
+        })?;
     let audio = AudioPart {
         media_type: content_type.clone(),
         data: Some(crate::types::base64_encode(body)),

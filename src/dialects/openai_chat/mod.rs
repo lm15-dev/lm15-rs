@@ -28,8 +28,8 @@ use crate::errors::Lm15Error;
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
 use crate::types::{ModelInfo, Request, Response, StreamEvent, ToolChoiceMode};
-use crate::wire::{Surfaces, 
-    apply_static_headers, model_infos_from_entries, BuildContext, Dialect, WireRequest,
+use crate::wire::{
+    apply_static_headers, model_infos_from_entries, BuildContext, Dialect, Surfaces, WireRequest,
 };
 
 /// The dialect value.
@@ -40,36 +40,122 @@ pub struct OpenAIChat;
 pub static OPENAI_CHAT: OpenAIChat = OpenAIChat;
 
 pub mod generation;
+pub mod video;
 
 use crate::dialects::openai_responses::files;
 
 impl Surfaces for OpenAIChat {
-    fn image_generate_request(&self, cx: &BuildContext<'_>, request: &crate::types::ImageGenerationRequest) -> Result<WireRequest, Lm15Error> {
+    fn video_submit_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::VideoGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
+        video::submit_request(cx, request)
+    }
+    fn video_job(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+        video_id: Option<&str>,
+    ) -> Result<crate::types::VideoJobInfo, Lm15Error> {
+        video::job_from_body(cx, body, video_id)
+    }
+    fn video_status_request(
+        &self,
+        cx: &BuildContext<'_>,
+        video_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
+        Ok(video::status_request(cx, video_id))
+    }
+    fn video_result_fetch(
+        &self,
+        _cx: &BuildContext<'_>,
+        _status_body: &serde_json::Map<String, Value>,
+    ) -> Result<Option<WireRequest>, Lm15Error> {
+        Ok(None) // the terminal body carries a public URL
+    }
+    fn video_part(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &serde_json::Map<String, Value>,
+        _fetched: crate::wire::Fetched<'_>,
+    ) -> Result<crate::types::VideoPart, Lm15Error> {
+        video::part(cx, status_body)
+    }
+    fn video_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        _limit: u64,
+        _model: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
+        Err(video::list_unsupported(cx))
+    }
+
+    fn image_generate_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::ImageGenerationRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         generation::image_request(cx, request)
     }
-    fn image_generation(&self, cx: &BuildContext<'_>, _request: &crate::types::ImageGenerationRequest, _headers: &[(String, String)], body: &[u8]) -> Result<crate::types::ImageGenerationResponse, Lm15Error> {
+    fn image_generation(
+        &self,
+        cx: &BuildContext<'_>,
+        _request: &crate::types::ImageGenerationRequest,
+        _headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<crate::types::ImageGenerationResponse, Lm15Error> {
         generation::image_response(cx, body)
     }
 
-    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+    fn file_upload_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::FileUploadRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         files::upload_request(cx, request)
     }
-    fn file_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FileInfo, Lm15Error> {
+    fn file_info(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::FileInfo, Lm15Error> {
         files::file_info_from_body(cx, body)
     }
-    fn file_get_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_get_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::get_request(cx, file_id))
     }
-    fn file_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn file_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::list_request(cx, limit, cursor))
     }
-    fn file_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FilePage, Lm15Error> {
+    fn file_page(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::FilePage, Lm15Error> {
         files::page(cx, body)
     }
-    fn file_delete_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_delete_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::delete_request(cx, file_id))
     }
-    fn file_download_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_download_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::download_request(cx, file_id))
     }
 }

@@ -4,7 +4,9 @@
 use serde_json::{Map, Value};
 
 use crate::errors::Lm15Error;
-use crate::surfaces::{body_object, iso_utc, multipart_form_body, provider_error, str_field, FilePart};
+use crate::surfaces::{
+    body_object, iso_utc, multipart_form_body, provider_error, str_field, FilePart,
+};
 use crate::types::{FileInfo, FilePage, FileReadiness, FileUploadRequest};
 use crate::wire::{BuildContext, WireRequest};
 
@@ -16,7 +18,10 @@ fn json_headers(cx: &BuildContext<'_>) -> Vec<(String, String)> {
     headers
 }
 
-pub fn upload_request(cx: &BuildContext<'_>, request: &FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+pub fn upload_request(
+    cx: &BuildContext<'_>,
+    request: &FileUploadRequest,
+) -> Result<WireRequest, Lm15Error> {
     let fields: Vec<(String, String)> = request
         .extensions
         .iter()

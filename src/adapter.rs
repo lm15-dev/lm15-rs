@@ -42,6 +42,7 @@ use crate::types::{
     BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
     FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, ModelInfo, Request,
     Response, SpeechGenerationRequest, SpeechGenerationResponse, StreamEvent,
+    VideoGenerationRequest, VideoJobInfo, VideoPart,
 };
 use crate::wire::{
     emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
@@ -281,7 +282,11 @@ impl ProviderLM {
     // ─── endpoint surfaces (modules 7–8) ─────────────────────────────
 
     /// A surface wire request through auth and host work (`_emit`).
-    pub fn surface_request(&self, wire: WireRequest, read_timeout: u64) -> Result<TransportRequest, Lm15Error> {
+    pub fn surface_request(
+        &self,
+        wire: WireRequest,
+        read_timeout: u64,
+    ) -> Result<TransportRequest, Lm15Error> {
         let cx = self.binding.surface_context();
         let mut built = emit_wire(
             dialect_for(self.dialect()),
@@ -297,7 +302,10 @@ impl ProviderLM {
 
     /// Send a surface request; a status of 400 or more is the normalized
     /// error. Returns the status, headers and body.
-    async fn send_surface(&self, built: TransportRequest) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Lm15Error> {
+    async fn send_surface(
+        &self,
+        built: TransportRequest,
+    ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Lm15Error> {
         let mut response = self.transport.send(built).await?;
         let status = response.status;
         let headers = std::mem::take(&mut response.headers);
@@ -316,7 +324,9 @@ impl ProviderLM {
         let (wire, timeout) = match op {
             FileOp::Upload(request) => (dialect.file_upload_request(&cx, request)?, 300),
             FileOp::Get(id) => (dialect.file_get_request(&cx, id)?, 60),
-            FileOp::List { limit, cursor } => (dialect.file_list_request(&cx, *limit, *cursor)?, 60),
+            FileOp::List { limit, cursor } => {
+                (dialect.file_list_request(&cx, *limit, *cursor)?, 60)
+            }
             FileOp::Delete(id) => (dialect.file_delete_request(&cx, id)?, 60),
             FileOp::Download(id) => (dialect.file_download_request(&cx, id)?, 300),
         };
@@ -390,7 +400,8 @@ impl ProviderLM {
         let mut info = self.file_get(file_id).await?;
         while info.readiness == crate::types::FileReadiness::Pending {
             if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-                let mut meta = ErrorMeta::new(format!("file {file_id} still pending after {timeout:?}"));
+                let mut meta =
+                    ErrorMeta::new(format!("file {file_id} still pending after {timeout:?}"));
                 meta.provider = Some(self.provider().to_string());
                 return Err(Lm15Error::TimeoutError(meta));
             }
@@ -405,7 +416,10 @@ impl ProviderLM {
     /// The wire requests of one batch action (the shim's `batch_op_build`):
     /// ALWAYS a list — `upload` is empty on a single-step wire,
     /// `result_fetches` is empty when results are inlined.
-    pub fn batch_requests(&self, action: &BatchAction<'_>) -> Result<Vec<TransportRequest>, Lm15Error> {
+    pub fn batch_requests(
+        &self,
+        action: &BatchAction<'_>,
+    ) -> Result<Vec<TransportRequest>, Lm15Error> {
         self.require("batches")?;
         let cx = self.binding.surface_context();
         let dialect = dialect_for(self.dialect());
@@ -415,8 +429,14 @@ impl ProviderLM {
                 .into_iter()
                 .map(|w| (w, 300))
                 .collect(),
-            BatchAction::Submit { request, upload_body } => {
-                vec![(dialect.batch_submit_request(&cx, request, *upload_body)?, 120)]
+            BatchAction::Submit {
+                request,
+                upload_body,
+            } => {
+                vec![(
+                    dialect.batch_submit_request(&cx, request, *upload_body)?,
+                    120,
+                )]
             }
             BatchAction::Status(id) => vec![(dialect.batch_status_request(&cx, id)?, 60)],
             BatchAction::Cancel(id) => vec![(dialect.batch_cancel_request(&cx, id)?, 60)],
@@ -441,7 +461,11 @@ impl ProviderLM {
         dialect_for(self.dialect()).batch_job(&self.binding.surface_context(), body)
     }
 
-    pub fn parse_batch_jobs(&self, status: u16, body: &[u8]) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+    pub fn parse_batch_jobs(
+        &self,
+        status: u16,
+        body: &[u8],
+    ) -> Result<Vec<BatchJobInfo>, Lm15Error> {
         self.require("batches")?;
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
@@ -451,9 +475,17 @@ impl ProviderLM {
 
     /// The entries of a terminal batch, in submission order, from its
     /// status body and the fetched result texts.
-    pub fn parse_batch_entries(&self, status_body: &serde_json::Map<String, Value>, fetched: &[Vec<u8>]) -> Result<Vec<BatchEntry>, Lm15Error> {
+    pub fn parse_batch_entries(
+        &self,
+        status_body: &serde_json::Map<String, Value>,
+        fetched: &[Vec<u8>],
+    ) -> Result<Vec<BatchEntry>, Lm15Error> {
         self.require("batches")?;
-        dialect_for(self.dialect()).batch_entries(&self.binding.surface_context(), status_body, fetched)
+        dialect_for(self.dialect()).batch_entries(
+            &self.binding.surface_context(),
+            status_body,
+            fetched,
+        )
     }
 
     /// Submit a batch: the optional upload step, then the submit.
@@ -466,7 +498,11 @@ impl ProviderLM {
         let mut upload_body = None;
         for built in self.batch_requests(&BatchAction::Upload(request))? {
             let (_, _, body) = self.send_surface(built).await?;
-            upload_body = Some(crate::surfaces::body_object(self.provider(), &body, "batch upload")?);
+            upload_body = Some(crate::surfaces::body_object(
+                self.provider(),
+                &body,
+                "batch upload",
+            )?);
         }
         let built = self
             .batch_requests(&BatchAction::Submit {
@@ -479,13 +515,17 @@ impl ProviderLM {
     }
 
     pub async fn batch_status(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
-        let built = self.batch_requests(&BatchAction::Status(batch_id))?.remove(0);
+        let built = self
+            .batch_requests(&BatchAction::Status(batch_id))?
+            .remove(0);
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_batch_job(status, &body)
     }
 
     pub async fn batch_cancel(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
-        let built = self.batch_requests(&BatchAction::Cancel(batch_id))?.remove(0);
+        let built = self
+            .batch_requests(&BatchAction::Cancel(batch_id))?
+            .remove(0);
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_batch_job(status, &body)
     }
@@ -494,7 +534,9 @@ impl ProviderLM {
     /// terminal body calls for. A batch still running is an
     /// `InvalidRequestError`, never partial entries.
     pub async fn batch_results(&self, batch_id: &str) -> Result<Vec<BatchEntry>, Lm15Error> {
-        let built = self.batch_requests(&BatchAction::Status(batch_id))?.remove(0);
+        let built = self
+            .batch_requests(&BatchAction::Status(batch_id))?
+            .remove(0);
         let (status, _, body) = self.send_surface(built).await?;
         let job = self.parse_batch_job(status, &body)?;
         if !job.status.is_terminal() {
@@ -528,15 +570,26 @@ impl ProviderLM {
         let cx = self.binding.surface_context();
         let dialect = dialect_for(self.dialect());
         let (wire, timeout) = match op {
-            CacheOp::Create { prefix, ttl_seconds, label } => {
-                (dialect.cache_create_request(&cx, prefix, *ttl_seconds, *label)?, 120)
-            }
+            CacheOp::Create {
+                prefix,
+                ttl_seconds,
+                label,
+            } => (
+                dialect.cache_create_request(&cx, prefix, *ttl_seconds, *label)?,
+                120,
+            ),
             CacheOp::Get(id) => (dialect.cache_get_request(&cx, id)?, 60),
-            CacheOp::List { limit, cursor } => (dialect.cache_list_request(&cx, *limit, *cursor)?, 60),
-            CacheOp::Delete(id) => (dialect.cache_delete_request(&cx, id)?, 60),
-            CacheOp::Update { cache_id, ttl_seconds } => {
-                (dialect.cache_update_request(&cx, cache_id, *ttl_seconds)?, 60)
+            CacheOp::List { limit, cursor } => {
+                (dialect.cache_list_request(&cx, *limit, *cursor)?, 60)
             }
+            CacheOp::Delete(id) => (dialect.cache_delete_request(&cx, id)?, 60),
+            CacheOp::Update {
+                cache_id,
+                ttl_seconds,
+            } => (
+                dialect.cache_update_request(&cx, cache_id, *ttl_seconds)?,
+                60,
+            ),
         };
         self.surface_request(wire, timeout)
     }
@@ -559,8 +612,17 @@ impl ProviderLM {
 
     /// Store a prefix (model, system, tools, messages) as a provider-side
     /// cache object; `CacheInfo.id` is what `CacheConfig.resource` names.
-    pub async fn cache_create(&self, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<CacheInfo, Lm15Error> {
-        let built = self.cache_request(&CacheOp::Create { prefix, ttl_seconds, label })?;
+    pub async fn cache_create(
+        &self,
+        prefix: &Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&str>,
+    ) -> Result<CacheInfo, Lm15Error> {
+        let built = self.cache_request(&CacheOp::Create {
+            prefix,
+            ttl_seconds,
+            label,
+        })?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_cache_info(status, &body)
     }
@@ -571,7 +633,11 @@ impl ProviderLM {
         self.parse_cache_info(status, &body)
     }
 
-    pub async fn cache_list(&self, limit: u64, cursor: Option<&str>) -> Result<CachePage, Lm15Error> {
+    pub async fn cache_list(
+        &self,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<CachePage, Lm15Error> {
         let built = self.cache_request(&CacheOp::List { limit, cursor })?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_cache_page(status, &body)
@@ -582,52 +648,231 @@ impl ProviderLM {
         self.send_surface(built).await.map(|_| ())
     }
 
-    pub async fn cache_update(&self, cache_id: &str, ttl_seconds: u64) -> Result<CacheInfo, Lm15Error> {
-        let built = self.cache_request(&CacheOp::Update { cache_id, ttl_seconds })?;
+    pub async fn cache_update(
+        &self,
+        cache_id: &str,
+        ttl_seconds: u64,
+    ) -> Result<CacheInfo, Lm15Error> {
+        let built = self.cache_request(&CacheOp::Update {
+            cache_id,
+            ttl_seconds,
+        })?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_cache_info(status, &body)
     }
 
     // ─── generation: image, speech (module 8) ────────────────────────
 
-    pub fn image_generate_request(&self, request: &ImageGenerationRequest) -> Result<TransportRequest, Lm15Error> {
+    pub fn image_generate_request(
+        &self,
+        request: &ImageGenerationRequest,
+    ) -> Result<TransportRequest, Lm15Error> {
         self.require("images")?;
-        let wire = dialect_for(self.dialect()).image_generate_request(&self.binding.surface_context(), request)?;
+        let wire = dialect_for(self.dialect())
+            .image_generate_request(&self.binding.surface_context(), request)?;
         self.surface_request(wire, 300)
     }
 
-    pub fn parse_image_generation(&self, request: &ImageGenerationRequest, status: u16, headers: &[(String, String)], body: &[u8]) -> Result<ImageGenerationResponse, Lm15Error> {
+    pub fn parse_image_generation(
+        &self,
+        request: &ImageGenerationRequest,
+        status: u16,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<ImageGenerationResponse, Lm15Error> {
         self.require("images")?;
         if status >= 400 {
             return Err(self.http_error(status, headers, body));
         }
-        dialect_for(self.dialect()).image_generation(&self.binding.surface_context(), request, headers, body)
+        dialect_for(self.dialect()).image_generation(
+            &self.binding.surface_context(),
+            request,
+            headers,
+            body,
+        )
     }
 
-    pub async fn image_generate(&self, request: &ImageGenerationRequest) -> Result<ImageGenerationResponse, Lm15Error> {
+    pub async fn image_generate(
+        &self,
+        request: &ImageGenerationRequest,
+    ) -> Result<ImageGenerationResponse, Lm15Error> {
         let built = self.image_generate_request(request)?;
         let (status, headers, body) = self.send_surface(built).await?;
         self.parse_image_generation(request, status, &headers, &body)
     }
 
-    pub fn speech_generate_request(&self, request: &SpeechGenerationRequest) -> Result<TransportRequest, Lm15Error> {
+    pub fn speech_generate_request(
+        &self,
+        request: &SpeechGenerationRequest,
+    ) -> Result<TransportRequest, Lm15Error> {
         self.require("speech")?;
-        let wire = dialect_for(self.dialect()).speech_generate_request(&self.binding.surface_context(), request)?;
+        let wire = dialect_for(self.dialect())
+            .speech_generate_request(&self.binding.surface_context(), request)?;
         self.surface_request(wire, 300)
     }
 
-    pub fn parse_speech_generation(&self, request: &SpeechGenerationRequest, status: u16, headers: &[(String, String)], body: &[u8]) -> Result<SpeechGenerationResponse, Lm15Error> {
+    pub fn parse_speech_generation(
+        &self,
+        request: &SpeechGenerationRequest,
+        status: u16,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<SpeechGenerationResponse, Lm15Error> {
         self.require("speech")?;
         if status >= 400 {
             return Err(self.http_error(status, headers, body));
         }
-        dialect_for(self.dialect()).speech_generation(&self.binding.surface_context(), request, headers, body)
+        dialect_for(self.dialect()).speech_generation(
+            &self.binding.surface_context(),
+            request,
+            headers,
+            body,
+        )
     }
 
-    pub async fn speech_generate(&self, request: &SpeechGenerationRequest) -> Result<SpeechGenerationResponse, Lm15Error> {
+    pub async fn speech_generate(
+        &self,
+        request: &SpeechGenerationRequest,
+    ) -> Result<SpeechGenerationResponse, Lm15Error> {
         let built = self.speech_generate_request(request)?;
         let (status, headers, body) = self.send_surface(built).await?;
         self.parse_speech_generation(request, status, &headers, &body)
+    }
+
+    // ─── video (job-shaped; module 8b) ───────────────────────────────
+
+    /// The wire requests of one video action: ALWAYS a list —
+    /// `result_fetch` is empty when the terminal body carries a URL.
+    pub fn video_requests(
+        &self,
+        action: &VideoAction<'_>,
+    ) -> Result<Vec<TransportRequest>, Lm15Error> {
+        self.require("video")?;
+        let cx = self.binding.surface_context();
+        let dialect = dialect_for(self.dialect());
+        let wires: Vec<(WireRequest, u64)> = match action {
+            VideoAction::Submit(request) => {
+                vec![(dialect.video_submit_request(&cx, request)?, 120)]
+            }
+            VideoAction::Status(id) => vec![(dialect.video_status_request(&cx, id)?, 60)],
+            VideoAction::ResultFetch(status_body) => dialect
+                .video_result_fetch(&cx, status_body)?
+                .into_iter()
+                .map(|w| (w, 600))
+                .collect(),
+            VideoAction::List { limit, model } => {
+                vec![(dialect.video_list_request(&cx, *limit, *model)?, 60)]
+            }
+        };
+        wires
+            .into_iter()
+            .map(|(wire, timeout)| self.surface_request(wire, timeout))
+            .collect()
+    }
+
+    pub fn parse_video_job(
+        &self,
+        status: u16,
+        body: &[u8],
+        video_id: Option<&str>,
+    ) -> Result<VideoJobInfo, Lm15Error> {
+        self.require("video")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).video_job(&self.binding.surface_context(), body, video_id)
+    }
+
+    pub fn parse_video_jobs(
+        &self,
+        status: u16,
+        body: &[u8],
+    ) -> Result<Vec<VideoJobInfo>, Lm15Error> {
+        self.require("video")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).video_jobs(&self.binding.surface_context(), body)
+    }
+
+    /// The finished video of a terminal status body, with the fetched
+    /// content when the wire needs a fetch.
+    pub fn parse_video_part(
+        &self,
+        status_body: &serde_json::Map<String, Value>,
+        fetched: crate::wire::Fetched<'_>,
+    ) -> Result<VideoPart, Lm15Error> {
+        self.require("video")?;
+        dialect_for(self.dialect()).video_part(
+            &self.binding.surface_context(),
+            status_body,
+            fetched,
+        )
+    }
+
+    pub async fn video_submit(
+        &self,
+        request: &VideoGenerationRequest,
+    ) -> Result<VideoJobInfo, Lm15Error> {
+        let built = self
+            .video_requests(&VideoAction::Submit(request))?
+            .remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_video_job(status, &body, None)
+    }
+
+    pub async fn video_status(&self, video_id: &str) -> Result<VideoJobInfo, Lm15Error> {
+        let built = self
+            .video_requests(&VideoAction::Status(video_id))?
+            .remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_video_job(status, &body, Some(video_id))
+    }
+
+    /// The finished video: the status, then the content fetch the
+    /// terminal body calls for. A job still running is an
+    /// `InvalidRequestError`; a failed one is the provider's error.
+    pub async fn video_result(&self, video_id: &str) -> Result<VideoPart, Lm15Error> {
+        let built = self
+            .video_requests(&VideoAction::Status(video_id))?
+            .remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        let job = self.parse_video_job(status, &body, Some(video_id))?;
+        if job.status != crate::types::VideoStatus::Completed {
+            let mut meta = ErrorMeta::new(format!(
+                "{}: video {video_id} is {} — the result exists once the job completed",
+                self.provider(),
+                job.status.as_str()
+            ));
+            meta.provider = Some(self.provider().to_string());
+            return Err(if job.status.is_terminal() {
+                Lm15Error::ProviderError(meta)
+            } else {
+                Lm15Error::InvalidRequestError(meta)
+            });
+        }
+        let status_body = crate::surfaces::body_object(self.provider(), &body, "video")?;
+        let mut fetched = None;
+        for built in self.video_requests(&VideoAction::ResultFetch(&status_body))? {
+            let (_, headers, content) = self.send_surface(built).await?;
+            fetched = Some((headers, content));
+        }
+        self.parse_video_part(
+            &status_body,
+            fetched.as_ref().map(|(h, c)| (h.as_slice(), c.as_slice())),
+        )
+    }
+
+    pub async fn video_list(
+        &self,
+        limit: u64,
+        model: Option<&str>,
+    ) -> Result<Vec<VideoJobInfo>, Lm15Error> {
+        let built = self
+            .video_requests(&VideoAction::List { limit, model })?
+            .remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_video_jobs(status, &body)
     }
 
     /// `_require` (`lm15/providers/base.py:366-377`): the bound access
@@ -745,9 +990,24 @@ pub enum CacheOp<'a> {
         label: Option<&'a str>,
     },
     Get(&'a str),
-    List { limit: u64, cursor: Option<&'a str> },
+    List {
+        limit: u64,
+        cursor: Option<&'a str>,
+    },
     Delete(&'a str),
-    Update { cache_id: &'a str, ttl_seconds: u64 },
+    Update {
+        cache_id: &'a str,
+        ttl_seconds: u64,
+    },
+}
+
+/// One video action (the shim's `action`).
+#[derive(Debug)]
+pub enum VideoAction<'a> {
+    Submit(&'a VideoGenerationRequest),
+    Status(&'a str),
+    ResultFetch(&'a serde_json::Map<String, Value>),
+    List { limit: u64, model: Option<&'a str> },
 }
 
 /// One batch action (the shim's `action`).

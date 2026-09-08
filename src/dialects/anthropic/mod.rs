@@ -10,10 +10,10 @@
 //! the reference's key order. Refusals (MAP-5..8) are `Lm15Error` values
 //! raised before any wire, with the provider string of the binding.
 
-mod body;
-mod parts;
 pub mod batch;
+mod body;
 pub mod files;
+mod parts;
 pub mod response;
 mod tables;
 
@@ -36,7 +36,7 @@ use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
 use crate::types::{ModelInfo, Request, Response, StreamEvent, Tool};
-use crate::wire::{Surfaces, model_infos_from_entries, BuildContext, Dialect, WireRequest};
+use crate::wire::{model_infos_from_entries, BuildContext, Dialect, Surfaces, WireRequest};
 
 /// The dialect value; stateless (everything per binding is in the
 /// [`BuildContext`]).
@@ -50,53 +50,120 @@ pub static ANTHROPIC: Anthropic = Anthropic;
 pub const ENDPOINT: &str = "messages";
 
 impl Surfaces for Anthropic {
-    fn batch_upload_request(&self, _cx: &BuildContext<'_>, _request: &crate::types::BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
+    fn batch_upload_request(
+        &self,
+        _cx: &BuildContext<'_>,
+        _request: &crate::types::BatchRequest,
+    ) -> Result<Option<WireRequest>, Lm15Error> {
         Ok(None)
     }
-    fn batch_submit_request(&self, cx: &BuildContext<'_>, request: &crate::types::BatchRequest, _upload_body: Option<&serde_json::Map<String, Value>>) -> Result<WireRequest, Lm15Error> {
+    fn batch_submit_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::BatchRequest,
+        _upload_body: Option<&serde_json::Map<String, Value>>,
+    ) -> Result<WireRequest, Lm15Error> {
         batch::submit_request(self, cx, request)
     }
-    fn batch_job(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::BatchJobInfo, Lm15Error> {
+    fn batch_job(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::BatchJobInfo, Lm15Error> {
         batch::job_from_body(cx, body)
     }
-    fn batch_status_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn batch_status_request(
+        &self,
+        cx: &BuildContext<'_>,
+        batch_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(batch::status_request(cx, batch_id))
     }
-    fn batch_cancel_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn batch_cancel_request(
+        &self,
+        cx: &BuildContext<'_>,
+        batch_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(batch::cancel_request(cx, batch_id))
     }
-    fn batch_result_fetches(&self, cx: &BuildContext<'_>, status_body: &serde_json::Map<String, Value>) -> Result<Vec<WireRequest>, Lm15Error> {
+    fn batch_result_fetches(
+        &self,
+        cx: &BuildContext<'_>,
+        status_body: &serde_json::Map<String, Value>,
+    ) -> Result<Vec<WireRequest>, Lm15Error> {
         batch::result_fetches(cx, status_body)
     }
-    fn batch_entries(&self, cx: &BuildContext<'_>, _status_body: &serde_json::Map<String, Value>, fetched: &[Vec<u8>]) -> Result<Vec<crate::types::BatchEntry>, Lm15Error> {
+    fn batch_entries(
+        &self,
+        cx: &BuildContext<'_>,
+        _status_body: &serde_json::Map<String, Value>,
+        fetched: &[Vec<u8>],
+    ) -> Result<Vec<crate::types::BatchEntry>, Lm15Error> {
         batch::entries(self, cx, fetched)
     }
-    fn batch_list_request(&self, cx: &BuildContext<'_>, limit: u64) -> Result<WireRequest, Lm15Error> {
+    fn batch_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(batch::list_request(cx, limit))
     }
-    fn batch_jobs(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<Vec<crate::types::BatchJobInfo>, Lm15Error> {
+    fn batch_jobs(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<crate::types::BatchJobInfo>, Lm15Error> {
         batch::jobs(cx, body)
     }
 
-    fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+    fn file_upload_request(
+        &self,
+        cx: &BuildContext<'_>,
+        request: &crate::types::FileUploadRequest,
+    ) -> Result<WireRequest, Lm15Error> {
         files::upload_request(cx, request)
     }
-    fn file_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FileInfo, Lm15Error> {
+    fn file_info(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::FileInfo, Lm15Error> {
         files::file_info_from_body(cx, body)
     }
-    fn file_get_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_get_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::get_request(cx, file_id))
     }
-    fn file_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+    fn file_list_request(
+        &self,
+        cx: &BuildContext<'_>,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::list_request(cx, limit, cursor))
     }
-    fn file_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::FilePage, Lm15Error> {
+    fn file_page(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<crate::types::FilePage, Lm15Error> {
         files::page(cx, body)
     }
-    fn file_delete_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_delete_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::delete_request(cx, file_id))
     }
-    fn file_download_request(&self, cx: &BuildContext<'_>, file_id: &str) -> Result<WireRequest, Lm15Error> {
+    fn file_download_request(
+        &self,
+        cx: &BuildContext<'_>,
+        file_id: &str,
+    ) -> Result<WireRequest, Lm15Error> {
         Ok(files::download_request(cx, file_id))
     }
 }

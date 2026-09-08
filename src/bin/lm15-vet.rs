@@ -14,7 +14,7 @@ use lm15::serde::{roundtrip, validate};
 use lm15::stream::materialize_response;
 use lm15::types::{
     BatchRequest, FileUploadRequest, ImageGenerationRequest, Request, Response,
-    SpeechGenerationRequest, ValidationError,
+    SpeechGenerationRequest, ValidationError, VideoGenerationRequest,
 };
 use lm15::wire::{FixedClock, TransportRequest};
 use lm15::{Canonical, HostSettings};
@@ -43,6 +43,8 @@ const OPS: &[&str] = &[
     "serde_roundtrip",
     "sigv4_sign",
     "validate",
+    "video_op_build",
+    "video_op_parse",
 ];
 
 enum Failure {
@@ -285,7 +287,10 @@ fn op_file_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
 }
 
 fn op_file_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
-    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let lm = surface_adapter(
+        msg,
+        Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?,
+    )?;
     let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
     let body = body_of(msg)?;
     Ok(match field_str(msg, "kind")?.as_str() {
@@ -331,11 +336,16 @@ fn op_batch_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
 }
 
 fn op_batch_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
-    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let lm = surface_adapter(
+        msg,
+        Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?,
+    )?;
     let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
     Ok(match field_str(msg, "kind")?.as_str() {
         "job" => json!({ "job": lm.parse_batch_job(status, &body_of(msg)?)?.to_json() }),
-        "list" => json!({ "jobs": lm.parse_batch_jobs(status, &body_of(msg)?)?.iter().map(|j| j.to_json()).collect::<Vec<_>>() }),
+        "list" => {
+            json!({ "jobs": lm.parse_batch_jobs(status, &body_of(msg)?)?.iter().map(|j| j.to_json()).collect::<Vec<_>>() })
+        }
         "entries" => {
             let status_body = msg
                 .get("status_body")
@@ -386,7 +396,10 @@ fn op_cache_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
 }
 
 fn op_cache_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
-    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let lm = surface_adapter(
+        msg,
+        Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?,
+    )?;
     let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
     let body = body_of(msg)?;
     Ok(match field_str(msg, "kind")?.as_str() {
@@ -401,7 +414,14 @@ fn headers_of(msg: &Map<String, Value>) -> Vec<(String, String)> {
         .and_then(Value::as_object)
         .map(|h| {
             h.iter()
-                .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        v.as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| v.to_string()),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -419,18 +439,87 @@ fn op_generation_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
 }
 
 fn op_generation_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
-    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let lm = surface_adapter(
+        msg,
+        Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?,
+    )?;
     let request = field(msg, "generation_request")?;
     let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
     let headers = headers_of(msg);
     let body = body_of(msg)?;
     Ok(match field_str(msg, "kind")?.as_str() {
         "image" => lm
-            .parse_image_generation(&ImageGenerationRequest::from_json(request)?, status, &headers, &body)?
+            .parse_image_generation(
+                &ImageGenerationRequest::from_json(request)?,
+                status,
+                &headers,
+                &body,
+            )?
             .to_json(),
         "speech" => lm
-            .parse_speech_generation(&SpeechGenerationRequest::from_json(request)?, status, &headers, &body)?
+            .parse_speech_generation(
+                &SpeechGenerationRequest::from_json(request)?,
+                status,
+                &headers,
+                &body,
+            )?
             .to_json(),
+        other => return Err(ValidationError::value(format!("unknown kind {other:?}")).into()),
+    })
+}
+
+fn op_video_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    use lm15::adapter::VideoAction;
+    let lm = surface_adapter(msg, credential_of(msg)?)?;
+    let video_id = msg.get("video_id").and_then(Value::as_str).unwrap_or("");
+    let built = match field_str(msg, "action")?.as_str() {
+        "submit" => {
+            let request = VideoGenerationRequest::from_json(field(msg, "video_request")?)?;
+            lm.video_requests(&VideoAction::Submit(&request))?
+        }
+        "status" => lm.video_requests(&VideoAction::Status(video_id))?,
+        "result_fetch" => lm.video_requests(&VideoAction::ResultFetch(
+            msg.get("status_body")
+                .and_then(Value::as_object)
+                .ok_or_else(|| ValidationError::value("status_body is required"))?,
+        ))?,
+        "list" => lm.video_requests(&VideoAction::List {
+            limit: msg.get("limit").and_then(Value::as_u64).unwrap_or(20),
+            model: msg.get("model").and_then(Value::as_str),
+        })?,
+        other => return Err(ValidationError::value(format!("unknown action {other:?}")).into()),
+    };
+    Ok(json!({ "requests": built.iter().map(transport_request_json).collect::<Vec<_>>() }))
+}
+
+fn op_video_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(
+        msg,
+        Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?,
+    )?;
+    let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+    let video_id = msg.get("video_id").and_then(Value::as_str);
+    Ok(match field_str(msg, "kind")?.as_str() {
+        "job" => json!({ "job": lm.parse_video_job(status, &body_of(msg)?, video_id)?.to_json() }),
+        "list" => {
+            json!({ "jobs": lm.parse_video_jobs(status, &body_of(msg)?)?.iter().map(|j| j.to_json()).collect::<Vec<_>>() })
+        }
+        "part" => {
+            let status_body = msg
+                .get("status_body")
+                .and_then(Value::as_object)
+                .ok_or_else(|| ValidationError::value("status_body is required"))?;
+            let fetched = match msg.get("fetched_b64").and_then(Value::as_str) {
+                Some(b64) => Some(lm15::types::base64_decode(b64).map_err(Failure::from)?),
+                None => None,
+            };
+            let headers = headers_of(msg);
+            let part = lm.parse_video_part(
+                status_body,
+                fetched.as_ref().map(|f| (headers.as_slice(), f.as_slice())),
+            )?;
+            json!({ "part": lm15::types::Part::Video(part).to_json() })
+        }
         other => return Err(ValidationError::value(format!("unknown kind {other:?}")).into()),
     })
 }
@@ -586,6 +675,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "file_op_build" => op_file_op_build(msg),
         "cache_op_build" => op_cache_op_build(msg),
         "generation_build" => op_generation_build(msg),
+        "video_op_build" => op_video_op_build(msg),
+        "video_op_parse" => op_video_op_parse(msg),
         "generation_parse" => op_generation_parse(msg),
         "cache_op_parse" => op_cache_op_parse(msg),
         "batch_op_build" => op_batch_op_build(msg),

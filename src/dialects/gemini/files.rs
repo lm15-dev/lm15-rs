@@ -5,7 +5,9 @@
 use serde_json::{json, Map, Value};
 
 use crate::errors::Lm15Error;
-use crate::surfaces::{body_object, iso_utc, multipart_related_body, provider_error, str_field, u64_field};
+use crate::surfaces::{
+    body_object, iso_utc, multipart_related_body, provider_error, str_field, u64_field,
+};
 use crate::types::{FileInfo, FilePage, FileReadiness, FileUploadRequest};
 use crate::wire::{full_url, BuildContext, WireRequest};
 
@@ -31,13 +33,19 @@ pub fn file_resource(file_id: &str) -> String {
 /// through the same host.
 pub fn upload_base_url(base_url: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    match base.find("://").and_then(|i| base[i + 3..].find('/').map(|j| i + 3 + j)) {
+    match base
+        .find("://")
+        .and_then(|i| base[i + 3..].find('/').map(|j| i + 3 + j))
+    {
         Some(path_start) => format!("{}/upload{}", &base[..path_start], &base[path_start..]),
         None => format!("{base}/upload"),
     }
 }
 
-pub fn upload_request(cx: &BuildContext<'_>, request: &FileUploadRequest) -> Result<WireRequest, Lm15Error> {
+pub fn upload_request(
+    cx: &BuildContext<'_>,
+    request: &FileUploadRequest,
+) -> Result<WireRequest, Lm15Error> {
     let data = request.content()?;
     let (content_type, body) = multipart_related_body(
         &json!({"file": {"display_name": request.filename}}),
@@ -60,7 +68,10 @@ pub fn upload_request(cx: &BuildContext<'_>, request: &FileUploadRequest) -> Res
             )
         })
         .collect();
-    wire.absolute_url = Some(full_url(&format!("{}/files", upload_base_url(cx.base_url)), &params));
+    wire.absolute_url = Some(full_url(
+        &format!("{}/files", upload_base_url(cx.base_url)),
+        &params,
+    ));
     wire.headers = vec![
         ("x-goog-upload-protocol".into(), "multipart".into()),
         ("content-type".into(), content_type),
