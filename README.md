@@ -19,7 +19,8 @@ grade the port against any other commit.
 | 5b — the network | `complete` / `stream` over a transport (api-family § The core loop, § Providers, direct); `ResponseStream` | done — `src/transport.rs` (the `Transport` trait, the reqwest `HttpTransport`), `ProviderLM::complete` / `ProviderLM::stream`, `src/response_stream.rs`. `tests/transport_roundtrip.rs` drives the real transport against a loopback HTTP/1.1 server (SSE frames split across chunks, a 429 with `Retry-After`, a stalled body, cancellation by drop). First live traffic: `receipts/2026-09-07-live-smoke/` (one binding per dialect, `complete` and `stream` agree). Not a harness direction: the codec is the contract, the transport is per-language idiom |
 | 5c — `LMRouter` | api-family § The core loop; AUTH-1 resolution order; the reference's `lm15.router` | done — `src/router.rs`: prefix / catalog / rule rungs, `resolve` (pure), `lm` (the AUTH-1 chain: explicit entry, stored login, env keys, placeholder), one adapter per provider; stored logins as a per-request `CredentialProvider` (`src/auth/login.rs`); the Codex `chatgpt-account-id` header (a stated skeleton gap, now closed). Live through the router: `receipts/2026-09-07-router-live/`. Differential probe against the reference, 130 comparisons outside the corpus, zero differences: `receipts/2026-09-07-differential/` (`tools/differential.py`) |
 | the `blocking` feature | api-family rule 4 | done — `lm15::blocking::{LMRouter, ProviderLM, ResponseStream, EventStream}`, the same names over one library-owned runtime thread (the `reqwest::blocking` design); `tests/blocking_roundtrip.rs` drives it from a plain thread against a loopback server. Calling it from inside an async runtime panics with a message naming the async API (stated below) |
-| 6 — model listing | `changes/2026-08-31-list-models-provisional.md`; `--direction models` | done — `ProviderLM::list_models` / `models_request` / `parse_models`, the four dialects' GETs and mappings copied as data; `--direction models` 33 pass / **1 fail** / 0 skip: `openai_chat.models[parse]` pins `provider: "openai_chat"`, the reference adapter's legacy self-name, against the canonical `openai-chat` every other fixture and the support matrix use — a contract finding, not absorbed: `findings/2026-09-07-openai-chat-provider-spelling.md`. Live: `receipts/2026-09-07-models-live/` |
+| 5c — `--direction router` | `changes/2026-09-08-router-error-codes.md`; `router/resolution.json` | done — 22 / 0: the three rungs and their precedence, the underscore alias as input only, `UnknownModelError` / `AmbiguousModelError` with the pinned payload (`model`, `providers`) |
+| 6 — model listing | `changes/2026-08-31-list-models-provisional.md`; `--direction models` | done — `ProviderLM::list_models` / `models_request` / `parse_models`, the four dialects' GETs and mappings copied as data; `--direction models` 34 / 0 (the `openai_chat.models[parse]` provider-spelling finding, `findings/2026-09-07-openai-chat-provider-spelling.md`, was ratified for the contract on 2026-09-08: the golden now pins `openai-chat`; no port change). Live: `receipts/2026-09-07-models-live/` |
 | 7 — files, batch, cache | `--direction files`, `batch`, `cache` | done — `wire::Surfaces` hooks per dialect (`src/dialects/*/{files,batch}.rs`, `src/dialects/gemini/cache.rs`), the multipart encoders of `src/surfaces.rs` byte for byte; files 39 / 0, batch 35 / 0, cache 9 / 0. Live: `receipts/2026-09-08-surfaces-live/` |
 | 8 — generation (image, speech) and video | `--direction generation`, `video` | done — `src/dialects/*/{generation,video}.rs`; generation 20 / 0, video 24 / 0 |
 | 9 — live | `--direction live` | done — the codec in `src/dialects/{openai_responses,gemini}/live.rs` (24 / 0), the session in `src/live.rs` over tokio-tungstenite; `tests/live_roundtrip.rs` replays the pinned Realtime transcript through a loopback socket; one live text turn each against OpenAI Realtime and Gemini Live (`receipts/2026-09-08-surfaces-live/`) |
@@ -36,7 +37,8 @@ python3 harness/check.py --shim rust --direction token     # 34 pass / 9 fail (m
 python3 harness/check.py --shim rust --direction request
 python3 harness/check.py --shim rust --direction response
 python3 harness/check.py --shim rust --direction stream
-python3 harness/check.py --shim rust --direction models    # 33 pass / 1 fail (the openai_chat spelling finding), stated above
+python3 harness/check.py --shim rust --direction models
+python3 harness/check.py --shim rust --direction router
 python3 harness/check.py --shim rust --direction token
 python3 harness/check.py --shim rust --direction files
 python3 harness/check.py --shim rust --direction batch
@@ -257,15 +259,15 @@ Each row names the rule it deviates from (playbooks/port.md rule 8).
 - **`ResponseStream` requires its source to be `Unpin`** (`Box::pin` one
   that is not); pin projection without the `pin-project` crate is
   unsafe code, and every stream the port itself returns is `Unpin`.
-- **Router errors stay inside the ratified vocabulary.** The reference's
-  `UnknownModelError` / `AmbiguousModelError` carry codes
-  (`unknown_model`, `ambiguous_model`, `router`) that
-  `spec/vocabularies.md` § ErrorCode does not list. A port does not add
-  codes: a model string that routes nowhere or ambiguously is a
-  `ConfigurationError`; a provider with no credential is a
-  `NotConfiguredError` (the class the reference's
-  `MissingCredentialError` inherits). Flagged for the contract: either
-  the vocabulary gains the router codes or the reference drops them.
+- **Router errors are vocabulary entries** (ratified 2026-09-08,
+  `changes/2026-09-08-router-error-codes.md`, closing the finding this
+  port raised): `Lm15Error::UnknownModelError` (`unknown_model`, carries
+  `model`) and `Lm15Error::AmbiguousModelError` (`ambiguous_model`,
+  carries `model` and `providers`), both under `ConfigurationError`; a
+  provider with no credential stays `NotConfiguredError`. There is no
+  router-wide class or code (the reference's `RouterError` / `router`
+  were dropped by the same entry). `err.model()` and
+  `err.candidate_providers()` read the payload.
 - **No rung 0 and a data catalog.** The reference's router reads a
   `provider` attribute off the model value (a `str` subclass shipped by a
   catalog package) and discovers catalogs from installed packages. Rust
@@ -387,9 +389,10 @@ Each row names the rule it deviates from (playbooks/port.md rule 8).
   normalized to `Z`), which is what the reference emits
   (`lm15/credentials.py` `format_rfc3339`). Reason: no date crate.
 - **`openai_chat` alias**: the provider table names the OpenAI Chat
-  Completions door `openai-chat` (the registry id in `lm15/registry.py`);
-  `lm15/access.py` spells the same policy `openai_chat`.
-  `lm15::registry::canonical_provider` maps the underscore alias.
+  Completions door `openai-chat`; `lm15::registry::canonical_provider`
+  maps the underscore alias as input only (spec/vocabularies.md § Open
+  string namespaces, 2026-09-08: `openai_chat` is the `api_family` — the
+  wire — never a provider value).
 - **`ProviderLM` is one struct; the `*LM` names are constructors**
   (api-family § Providers, direct: `OpenAILM::new()` etc.). `AnthropicLM`,
   `OpenAILM`, `OpenAIChatLM`, `GeminiLM`, `XaiLM`, `ClaudeCodeLM` and

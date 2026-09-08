@@ -41,6 +41,7 @@ const OPS: &[&str] = &[
     "parse_models_response",
     "replay_live",
     "replay_stream",
+    "resolve_model",
     "serde_roundtrip",
     "sigv4_sign",
     "token_exchange_build",
@@ -100,6 +101,36 @@ fn op_validate(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let kind = field_str(msg, "kind")?;
     let normalized = validate(&kind, field(msg, "value")?)?;
     Ok(json!({ "ok": true, "normalized": normalized }))
+}
+
+fn op_resolve_model(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    // PROTOCOL.md resolve_model: the router's pure `resolve` over
+    // harness-supplied inputs only — the env map (never the process env)
+    // and, when given, an explicit catalog of canonical ModelInfo values.
+    let model = field_str(msg, "model")?;
+    let mut config = lm15::router::RouterConfig::new();
+    let mut env: Vec<(String, String)> = Vec::new();
+    if let Some(map) = msg.get("env").and_then(Value::as_object) {
+        for (k, v) in map {
+            if let Some(s) = v.as_str() {
+                env.push((k.clone(), s.to_string()));
+            }
+        }
+    }
+    config = config.env(env);
+    if let Some(entries) = msg.get("catalog").and_then(Value::as_array) {
+        let mut catalog = Vec::with_capacity(entries.len());
+        for entry in entries {
+            catalog.push(lm15::types::ModelInfo::from_json(entry)?);
+        }
+        config = config.catalog(catalog);
+    }
+    let resolution = lm15::router::LMRouter::with_config(config).resolve(&model)?;
+    Ok(json!({
+        "provider": resolution.provider,
+        "model": resolution.model,
+        "source": resolution.source.as_str(),
+    }))
 }
 
 fn op_normalize_error(msg: &Map<String, Value>) -> Result<Value, Failure> {
@@ -789,6 +820,7 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "validate" => op_validate(msg),
         "normalize_error" => op_normalize_error(msg),
         "explain_auth" => op_explain_auth(msg),
+        "resolve_model" => op_resolve_model(msg),
         "build_request" => op_build_request(msg),
         "parse_response" => op_parse_response(msg),
         "build_models_request" => op_build_models_request(msg),
@@ -825,6 +857,13 @@ fn lm15_error_json(err: &Lm15Error, extra: Map<String, Value>) -> Value {
     if let Some(partial) = err.partial() {
         error["partial_response"] =
             Value::Object(response_result(partial))["canonical_response"].clone();
+    }
+    // The payload spec/vocabularies.md pins for the router codes.
+    if let Some(model) = err.model() {
+        error["model"] = Value::String(model.to_string());
+    }
+    if let Some(providers) = err.candidate_providers() {
+        error["providers"] = json!(providers);
     }
     for (key, value) in extra {
         error[key] = value;

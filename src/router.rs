@@ -25,13 +25,14 @@
 //! declared policy (AUTH-1) — the stored login, the declared env keys in
 //! order, a keyless local server's placeholder key.
 //!
-//! Errors stay inside the ratified vocabulary (spec/vocabularies.md): a
-//! model string that routes nowhere, or ambiguously, is a
-//! `ConfigurationError`; a provider with no credential is a
-//! `NotConfiguredError` (the class the reference's
-//! `MissingCredentialError` inherits). The reference's `unknown_model` /
-//! `ambiguous_model` codes are not in the vocabulary; a port does not add
-//! codes.
+//! Errors are the ratified vocabulary (spec/vocabularies.md, 2026-09-08):
+//! a model string that routes nowhere is `UnknownModelError`
+//! (`unknown_model`, carrying `model`); one the catalog offers under more
+//! than one provider is `AmbiguousModelError` (`ambiguous_model`, carrying
+//! `model` and `providers`); a provider with no credential is a
+//! `NotConfiguredError` (the class the reference's `MissingCredentialError`
+//! inherits). All three sit under `ConfigurationError`. There is no
+//! router-wide class or code. Pinned by `--direction router`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -465,8 +466,16 @@ fn routed(request: &Request, resolution: &Resolution) -> Request {
 
 // ─── resolution ──────────────────────────────────────────────────────
 
-fn configuration_error(message: String) -> Lm15Error {
-    Lm15Error::ConfigurationError(ErrorMeta::new(message))
+fn unknown_model(message: String, model: &str) -> Lm15Error {
+    Lm15Error::unknown_model(message, model)
+}
+
+fn ambiguous_model(message: String, model: &str, providers: &[&str]) -> Lm15Error {
+    Lm15Error::ambiguous_model(
+        message,
+        model,
+        providers.iter().map(|p| p.to_string()).collect(),
+    )
 }
 
 fn known_providers() -> String {
@@ -534,8 +543,9 @@ fn env_key_for(definition: &ProviderDefinition, config: &RouterConfig) -> Option
 
 fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> {
     if model.is_empty() {
-        return Err(configuration_error(
+        return Err(unknown_model(
             "model must be a non-empty string".into(),
+            model,
         ));
     }
 
@@ -575,12 +585,16 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
                 .map(|p| format!("\"{p}:{model}\""))
                 .collect::<Vec<_>>()
                 .join(" or ");
-            return Err(configuration_error(format!(
-                "model {model:?} is offered by multiple providers: {}. Fix: use the explicit \
-                 form, e.g. model {:?} — options: {options}.",
-                providers.join(", "),
-                format!("{}:{model}", providers[0]),
-            )));
+            return Err(ambiguous_model(
+                format!(
+                    "model {model:?} is offered by multiple providers: {}. Fix: use the explicit \
+                     form, e.g. model {:?} — options: {options}.",
+                    providers.join(", "),
+                    format!("{}:{model}", providers[0]),
+                ),
+                model,
+                &providers,
+            ));
         }
         if !matches.is_empty() {
             // An exact id beats an alias; an alias never shadows an entry
@@ -594,22 +608,29 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
                     .map(|i| i.id.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
-                return Err(configuration_error(format!(
-                    "model {model:?} matches multiple catalog entries ({ids}) under provider \
-                     {:?}. Fix: request a canonical id directly.",
-                    narrowed[0].provider
-                )));
+                return Err(ambiguous_model(
+                    format!(
+                        "model {model:?} matches multiple catalog entries ({ids}) under provider \
+                         {:?}. Fix: request a canonical id directly.",
+                        narrowed[0].provider
+                    ),
+                    model,
+                    &providers,
+                ));
             }
             let info = narrowed[0];
             let Some(definition) = lookup(&info.provider) else {
-                return Err(configuration_error(format!(
-                    "model {model:?} resolved in the catalog to provider {:?}, but lm15 has no \
-                     adapter or compat preset for it. Known providers: {}. Construct a \
-                     provider adapter directly (OpenAIChatLM with a base_url) for an \
-                     OpenAI-compatible server.",
-                    info.provider,
-                    known_providers()
-                )));
+                return Err(unknown_model(
+                    format!(
+                        "model {model:?} resolved in the catalog to provider {:?}, but lm15 has no \
+                         adapter or compat preset for it. Known providers: {}. Construct a \
+                         provider adapter directly (OpenAIChatLM with a base_url) for an \
+                         OpenAI-compatible server.",
+                        info.provider,
+                        known_providers()
+                    ),
+                    model,
+                ));
             };
             let wire_model = if info.id == model {
                 model.to_string()
@@ -632,11 +653,14 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
     for rule in &config.rules {
         if model.starts_with(rule.prefix) {
             let Some(definition) = lookup(rule.provider) else {
-                return Err(configuration_error(format!(
-                    "rule {rule:?} names provider {:?}, which has no adapter. Known providers: {}.",
-                    rule.provider,
-                    known_providers()
-                )));
+                return Err(unknown_model(
+                    format!(
+                        "rule {rule:?} names provider {:?}, which has no adapter. Known providers: {}.",
+                        rule.provider,
+                        known_providers()
+                    ),
+                    model,
+                ));
             };
             return Ok(resolution(
                 model,
@@ -664,17 +688,20 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
     if config.catalog.is_empty() {
         hints.push("Or pass a model catalog: RouterConfig::new().catalog(models).".into());
     }
-    Err(configuration_error(format!(
-        "could not route model {model:?}: no provider prefix, {}, and none of the {} built-in \
-         rules matched. {}",
-        if config.catalog.is_empty() {
-            "no catalog supplied"
-        } else {
-            "no catalog match"
-        },
-        config.rules.len(),
-        hints.join(" ")
-    )))
+    Err(unknown_model(
+        format!(
+            "could not route model {model:?}: no provider prefix, {}, and none of the {} built-in \
+             rules matched. {}",
+            if config.catalog.is_empty() {
+                "no catalog supplied"
+            } else {
+                "no catalog match"
+            },
+            config.rules.len(),
+            hints.join(" ")
+        ),
+        model,
+    ))
 }
 
 /// A registry provider within edit distance of `head` (the reference's
@@ -851,7 +878,8 @@ mod tests {
         assert_eq!(r.env_key, Some("GROQ_API_KEY"));
         // An empty remainder is not a prefix route.
         let err = router.resolve("openai:").unwrap_err();
-        assert_eq!(err.class_name(), "ConfigurationError");
+        assert_eq!(err.class_name(), "UnknownModelError");
+        assert_eq!(err.model(), Some("openai:"));
         // An unknown head is a bare model id: rules still apply.
         let r = router.resolve("gpt-4.1:custom").unwrap();
         assert_eq!(r.source, RouteSource::Rule);
@@ -887,7 +915,10 @@ mod tests {
     fn unroutable_strings_explain_themselves() {
         let router = LMRouter::with_config(hermetic(&[]));
         let err = router.resolve("").unwrap_err();
-        assert_eq!(err.class_name(), "ConfigurationError");
+        assert_eq!(err.class_name(), "UnknownModelError");
+        assert_eq!(err.code().as_str(), "unknown_model");
+        assert!(err.is_a(crate::errors::ErrorClass::ConfigurationError));
+        assert!(!err.is_a(crate::errors::ErrorClass::NotConfiguredError));
         let err = router.resolve("llama-3").unwrap_err();
         assert!(err.message().contains("could not route"), "{err}");
         assert!(err.message().contains("no catalog supplied"), "{err}");
@@ -934,8 +965,16 @@ mod tests {
         assert_eq!(r.model, "deepseek-chat");
         let err = router.resolve("shared").unwrap_err();
         assert!(err.message().contains("multiple providers"), "{err}");
+        assert_eq!(err.class_name(), "AmbiguousModelError");
+        assert_eq!(err.code().as_str(), "ambiguous_model");
+        assert_eq!(err.model(), Some("shared"));
+        assert_eq!(
+            err.candidate_providers(),
+            Some(&["groq".to_string(), "deepseek".to_string()][..])
+        );
         let err = router.resolve("nowhere-1").unwrap_err();
         assert!(err.message().contains("no adapter"), "{err}");
+        assert_eq!(err.class_name(), "UnknownModelError");
         // A prefix still beats the catalog.
         assert_eq!(
             router.resolve("openai:shared").unwrap().source,

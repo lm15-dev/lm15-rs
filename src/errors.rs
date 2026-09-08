@@ -10,7 +10,9 @@
 //! ├── TransportError
 //! ├── StreamAssemblyError
 //! ├── ConfigurationError
-//! │   └── NotConfiguredError
+//! │   ├── NotConfiguredError
+//! │   ├── UnknownModelError      (the router: a model string that routes nowhere)
+//! │   └── AmbiguousModelError    (the router: a catalog match under more than one provider)
 //! ├── CapabilityError
 //! │   └── UnsupportedFeatureError
 //! └── ProviderError
@@ -44,6 +46,8 @@ pub enum ErrorCode {
     UnsupportedModel,
     UnsupportedFeature,
     NotConfigured,
+    UnknownModel,
+    AmbiguousModel,
     Transport,
     StreamAssembly,
     Provider,
@@ -61,6 +65,8 @@ impl ErrorCode {
         ErrorCode::UnsupportedModel,
         ErrorCode::UnsupportedFeature,
         ErrorCode::NotConfigured,
+        ErrorCode::UnknownModel,
+        ErrorCode::AmbiguousModel,
         ErrorCode::Transport,
         ErrorCode::StreamAssembly,
         ErrorCode::Provider,
@@ -78,6 +84,8 @@ impl ErrorCode {
             ErrorCode::UnsupportedModel => "unsupported_model",
             ErrorCode::UnsupportedFeature => "unsupported_feature",
             ErrorCode::NotConfigured => "not_configured",
+            ErrorCode::UnknownModel => "unknown_model",
+            ErrorCode::AmbiguousModel => "ambiguous_model",
             ErrorCode::Transport => "transport",
             ErrorCode::StreamAssembly => "stream_assembly",
             ErrorCode::Provider => "provider",
@@ -105,6 +113,8 @@ impl ErrorCode {
             ErrorCode::UnsupportedModel => ErrorClass::UnsupportedModelError,
             ErrorCode::UnsupportedFeature => ErrorClass::UnsupportedFeatureError,
             ErrorCode::NotConfigured => ErrorClass::NotConfiguredError,
+            ErrorCode::UnknownModel => ErrorClass::UnknownModelError,
+            ErrorCode::AmbiguousModel => ErrorClass::AmbiguousModelError,
             ErrorCode::Transport => ErrorClass::TransportError,
             ErrorCode::StreamAssembly => ErrorClass::StreamAssemblyError,
             ErrorCode::Provider => ErrorClass::ProviderError,
@@ -126,6 +136,8 @@ pub enum ErrorClass {
     StreamAssemblyError,
     ConfigurationError,
     NotConfiguredError,
+    UnknownModelError,
+    AmbiguousModelError,
     CapabilityError,
     UnsupportedFeatureError,
     ProviderError,
@@ -147,6 +159,8 @@ impl ErrorClass {
             ErrorClass::StreamAssemblyError => "StreamAssemblyError",
             ErrorClass::ConfigurationError => "ConfigurationError",
             ErrorClass::NotConfiguredError => "NotConfiguredError",
+            ErrorClass::UnknownModelError => "UnknownModelError",
+            ErrorClass::AmbiguousModelError => "AmbiguousModelError",
             ErrorClass::CapabilityError => "CapabilityError",
             ErrorClass::UnsupportedFeatureError => "UnsupportedFeatureError",
             ErrorClass::ProviderError => "ProviderError",
@@ -170,7 +184,9 @@ impl ErrorClass {
             | ErrorClass::ConfigurationError
             | ErrorClass::CapabilityError
             | ErrorClass::ProviderError => ErrorClass::LM15Error,
-            ErrorClass::NotConfiguredError => ErrorClass::ConfigurationError,
+            ErrorClass::NotConfiguredError
+            | ErrorClass::UnknownModelError
+            | ErrorClass::AmbiguousModelError => ErrorClass::ConfigurationError,
             ErrorClass::UnsupportedFeatureError => ErrorClass::CapabilityError,
             ErrorClass::AuthError
             | ErrorClass::BillingError
@@ -214,6 +230,8 @@ impl ErrorClass {
             ErrorClass::NotConfiguredError | ErrorClass::ConfigurationError => {
                 ErrorCode::NotConfigured
             }
+            ErrorClass::UnknownModelError => ErrorCode::UnknownModel,
+            ErrorClass::AmbiguousModelError => ErrorCode::AmbiguousModel,
             ErrorClass::TransportError => ErrorCode::Transport,
             ErrorClass::StreamAssemblyError => ErrorCode::StreamAssembly,
             ErrorClass::ProviderError | ErrorClass::LM15Error => ErrorCode::Provider,
@@ -250,6 +268,28 @@ pub struct StreamAssembly {
     pub part_index: Option<u64>,
 }
 
+/// The router found no provider for a model string (`unknown_model`):
+/// no routable prefix, no catalog match, no rule. Local and pre-network —
+/// a provider's own "no such model" reply is `UnsupportedModelError`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnknownModel {
+    pub meta: ErrorMeta,
+    /// The string as requested.
+    pub model: String,
+}
+
+/// The catalog matched a model string under more than one provider, or
+/// under more than one entry of one provider (`ambiguous_model`). The fix
+/// is an explicit `provider:` prefix.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AmbiguousModel {
+    pub meta: ErrorMeta,
+    /// The string as requested.
+    pub model: String,
+    /// Every candidate provider, catalog order, deduplicated.
+    pub providers: Vec<String>,
+}
+
 /// The lm15 error: one variant per class, same names as the family.
 // Every class name ends in `Error` by contract (api-family: "variants,
 // same names"), so the variant-name lint does not apply.
@@ -260,6 +300,8 @@ pub enum Lm15Error {
     StreamAssemblyError(StreamAssembly),
     ConfigurationError(ErrorMeta),
     NotConfiguredError(ErrorMeta),
+    UnknownModelError(UnknownModel),
+    AmbiguousModelError(AmbiguousModel),
     CapabilityError(ErrorMeta),
     UnsupportedFeatureError(ErrorMeta),
     ProviderError(ErrorMeta),
@@ -286,6 +328,15 @@ impl Lm15Error {
             }),
             ErrorClass::ConfigurationError => Lm15Error::ConfigurationError(meta),
             ErrorClass::NotConfiguredError => Lm15Error::NotConfiguredError(meta),
+            ErrorClass::UnknownModelError => Lm15Error::UnknownModelError(UnknownModel {
+                meta,
+                model: String::new(),
+            }),
+            ErrorClass::AmbiguousModelError => Lm15Error::AmbiguousModelError(AmbiguousModel {
+                meta,
+                model: String::new(),
+                providers: Vec::new(),
+            }),
             ErrorClass::CapabilityError => Lm15Error::CapabilityError(meta),
             ErrorClass::UnsupportedFeatureError => Lm15Error::UnsupportedFeatureError(meta),
             ErrorClass::ProviderError | ErrorClass::LM15Error => Lm15Error::ProviderError(meta),
@@ -306,6 +357,8 @@ impl Lm15Error {
             Lm15Error::StreamAssemblyError(_) => ErrorClass::StreamAssemblyError,
             Lm15Error::ConfigurationError(_) => ErrorClass::ConfigurationError,
             Lm15Error::NotConfiguredError(_) => ErrorClass::NotConfiguredError,
+            Lm15Error::UnknownModelError(_) => ErrorClass::UnknownModelError,
+            Lm15Error::AmbiguousModelError(_) => ErrorClass::AmbiguousModelError,
             Lm15Error::CapabilityError(_) => ErrorClass::CapabilityError,
             Lm15Error::UnsupportedFeatureError(_) => ErrorClass::UnsupportedFeatureError,
             Lm15Error::ProviderError(_) => ErrorClass::ProviderError,
@@ -349,6 +402,8 @@ impl Lm15Error {
     pub fn meta(&self) -> &ErrorMeta {
         match self {
             Lm15Error::StreamAssemblyError(s) => &s.meta,
+            Lm15Error::UnknownModelError(u) => &u.meta,
+            Lm15Error::AmbiguousModelError(a) => &a.meta,
             Lm15Error::TransportError(m)
             | Lm15Error::ConfigurationError(m)
             | Lm15Error::NotConfiguredError(m)
@@ -369,6 +424,8 @@ impl Lm15Error {
     pub fn meta_mut(&mut self) -> &mut ErrorMeta {
         match self {
             Lm15Error::StreamAssemblyError(s) => &mut s.meta,
+            Lm15Error::UnknownModelError(u) => &mut u.meta,
+            Lm15Error::AmbiguousModelError(a) => &mut a.meta,
             Lm15Error::TransportError(m)
             | Lm15Error::ConfigurationError(m)
             | Lm15Error::NotConfiguredError(m)
@@ -417,6 +474,43 @@ impl Lm15Error {
             Lm15Error::StreamAssemblyError(s) => s.partial.as_deref(),
             _ => None,
         }
+    }
+
+    /// `UnknownModelError.model` / `AmbiguousModelError.model`: the model
+    /// string as requested.
+    pub fn model(&self) -> Option<&str> {
+        match self {
+            Lm15Error::UnknownModelError(u) => Some(&u.model),
+            Lm15Error::AmbiguousModelError(a) => Some(&a.model),
+            _ => None,
+        }
+    }
+
+    /// `AmbiguousModelError.providers`: every candidate provider.
+    pub fn candidate_providers(&self) -> Option<&[String]> {
+        match self {
+            Lm15Error::AmbiguousModelError(a) => Some(&a.providers),
+            _ => None,
+        }
+    }
+
+    pub fn unknown_model(message: impl Into<String>, model: impl Into<String>) -> Lm15Error {
+        Lm15Error::UnknownModelError(UnknownModel {
+            meta: ErrorMeta::new(message),
+            model: model.into(),
+        })
+    }
+
+    pub fn ambiguous_model(
+        message: impl Into<String>,
+        model: impl Into<String>,
+        providers: Vec<String>,
+    ) -> Lm15Error {
+        Lm15Error::AmbiguousModelError(AmbiguousModel {
+            meta: ErrorMeta::new(message),
+            model: model.into(),
+            providers,
+        })
     }
 
     pub fn unsupported_feature(message: impl Into<String>) -> Lm15Error {
@@ -880,6 +974,11 @@ mod tests {
         assert_eq!(UnsupportedModelError.parent(), Some(InvalidRequestError));
         assert_eq!(InvalidRequestError.parent(), Some(ProviderError));
         assert_eq!(NotConfiguredError.parent(), Some(ConfigurationError));
+        assert_eq!(UnknownModelError.parent(), Some(ConfigurationError));
+        assert_eq!(AmbiguousModelError.parent(), Some(ConfigurationError));
+        assert!(!UnknownModelError.is_a(NotConfiguredError));
+        assert_eq!(UnknownModelError.code(), ErrorCode::UnknownModel);
+        assert_eq!(AmbiguousModelError.code(), ErrorCode::AmbiguousModel);
         assert_eq!(UnsupportedFeatureError.parent(), Some(CapabilityError));
         assert_eq!(TransportError.parent(), Some(LM15Error));
         assert_eq!(StreamAssemblyError.parent(), Some(LM15Error));
@@ -891,6 +990,8 @@ mod tests {
             StreamAssemblyError,
             ConfigurationError,
             NotConfiguredError,
+            UnknownModelError,
+            AmbiguousModelError,
             CapabilityError,
             UnsupportedFeatureError,
             ProviderError,

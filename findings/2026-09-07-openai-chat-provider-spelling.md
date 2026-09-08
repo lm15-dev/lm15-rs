@@ -1,5 +1,13 @@
 # Finding: `goldens/openai_chat/models.json` pins the provider as `openai_chat`; the canonical id is `openai-chat`
 
+Status: RESOLVED 2026-09-08 — ratified for the contract as proposed
+(`lm15-contract/changes/2026-09-08-openai-chat-provider-spelling.md`): the
+golden pins `openai-chat`, the reference adapter's `provider` field and
+access policy say `openai-chat`, and `spec/vocabularies.md` § Open string
+namespaces states the rule (provider strings hyphenated; the underscore is
+an input alias; `api_family` is the underscore-spelled wire name).
+`--direction models` is 34 / 0 for this port with no port change.
+
 Found by: `harness/check.py --shim rust --direction models` at pin
 `4ebdf7d059aabf7799aa89af3055c623fdab630a` — 33 pass, 1 fail:
 `openai_chat.models[parse]`, `$.models[0].provider` expected `"openai_chat"`,
