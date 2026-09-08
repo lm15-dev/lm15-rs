@@ -262,6 +262,12 @@ fn text_part(text: &str, signature: Option<String>, thought: bool) -> Value {
 }
 
 /// One canonical part on the wire (`_part`, `lm15/providers/gemini.py:564-602`).
+/// One prompt part for a live turn (no request-level thought signatures).
+pub(crate) fn live_part(part: &Part, cx: &BuildContext<'_>) -> Result<Value, Lm15Error> {
+    let request = crate::wire::batch_entry_request(None);
+    self::part(part, &request, cx)
+}
+
 fn part(part: &Part, request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error> {
     Ok(match part {
         Part::Text(t) => text_part(&t.text, thought_signature(part, cx)?, false),

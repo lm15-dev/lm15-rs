@@ -5,7 +5,7 @@
 //! malformed `%` literally.
 
 /// `quote(text, safe)`.
-pub(crate) fn encode(text: &str, safe: &[u8]) -> String {
+pub fn encode(text: &str, safe: &[u8]) -> String {
     encode_bytes(text.as_bytes(), safe)
 }
 

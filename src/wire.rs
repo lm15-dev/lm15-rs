@@ -34,9 +34,10 @@ use crate::sse::SseEvent;
 pub const CODEX_BACKEND: &str = "chatgpt-codex";
 use crate::types::{
     BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
-    FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, ModelInfo, ModelOrigin,
-    Request, Response, SpeechGenerationRequest, SpeechGenerationResponse, StreamEvent,
-    VideoGenerationRequest, VideoJobInfo, VideoPart,
+    FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, LiveClientEvent,
+    LiveConfig, LiveServerEvent, ModelInfo, ModelOrigin, Request, Response,
+    SpeechGenerationRequest, SpeechGenerationResponse, StreamEvent, VideoGenerationRequest,
+    VideoJobInfo, VideoPart,
 };
 
 /// A request ready for a transport. `url` carries no query string; the
@@ -572,6 +573,53 @@ pub trait Surfaces {
             cx.provider,
             "video generation",
         ))
+    }
+
+    // ─── live (the websocket codec; module 9) ───
+    /// The websocket URL and headers of a session (the credential header
+    /// or query key comes from the adapter, as for HTTP).
+    fn live_url(
+        &self,
+        cx: &BuildContext<'_>,
+        config: &LiveConfig,
+    ) -> Result<(String, Vec<(String, String)>), Lm15Error> {
+        let _ = config;
+        Err(crate::surfaces::unsupported(cx.provider, "live"))
+    }
+    /// The frames sent at connect time, in order.
+    fn live_setup_frames(
+        &self,
+        cx: &BuildContext<'_>,
+        config: &LiveConfig,
+    ) -> Result<Vec<Value>, Lm15Error> {
+        let _ = config;
+        Err(crate::surfaces::unsupported(cx.provider, "live"))
+    }
+    /// The wire frames of one client event (the grouping is contract).
+    fn live_encode(
+        &self,
+        cx: &BuildContext<'_>,
+        config: &LiveConfig,
+        event: &LiveClientEvent,
+    ) -> Result<Vec<Value>, Lm15Error> {
+        let _ = (config, event);
+        Err(crate::surfaces::unsupported(cx.provider, "live"))
+    }
+    /// The canonical events of one server frame; an empty list means the
+    /// frame is housekeeping, deliberately ignored.
+    fn live_decode(
+        &self,
+        cx: &BuildContext<'_>,
+        frame: &[u8],
+    ) -> Result<Vec<LiveServerEvent>, Lm15Error> {
+        let _ = frame;
+        Err(crate::surfaces::unsupported(cx.provider, "live"))
+    }
+    /// Whether a server frame received during setup completes it (Gemini
+    /// `setupComplete`); an error frame is the typed error.
+    fn live_setup_complete(&self, cx: &BuildContext<'_>, frame: &[u8]) -> Result<bool, Lm15Error> {
+        let _ = (cx, frame);
+        Ok(true)
     }
 }
 

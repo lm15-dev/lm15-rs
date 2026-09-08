@@ -269,7 +269,7 @@ fn citation_text(citation: &CitationPart) -> Option<String> {
 /// path-addressed part is read and inlined (the Anthropic dialect's
 /// precedent, `common.py:234`); the reference's Responses path sends an
 /// empty `input_text` instead — a silent drop, refused here.
-fn part_to_input(provider: &str, part: &Part) -> Result<Value, Lm15Error> {
+pub(crate) fn part_to_input(provider: &str, part: &Part) -> Result<Value, Lm15Error> {
     Ok(match part {
         Part::Text(text) => json!({"type": "input_text", "text": text.text}),
         Part::Image(image) => image_input(provider, image)?,

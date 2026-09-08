@@ -36,6 +36,9 @@ httpdate = "1"
 # (aws-lc-rs), never a second RSA implementation. Also SHA-1 for the
 # Entra x5t thumbprint (a legacy digest used only as a certificate id).
 aws-lc-rs = "1"
+# Live sessions (module 9): the websocket under the codec, over the same
+# rustls provider and the OS trust store.
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 
 [features]
 default = []
@@ -44,6 +47,7 @@ default = []
 blocking = ["tokio/rt-multi-thread"]
 
 [dev-dependencies]
+tokio-tungstenite = "0.30"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "test-util"] }
 
 [[bin]]

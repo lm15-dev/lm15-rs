@@ -40,9 +40,9 @@ use serde_json::Value;
 
 use crate::types::{
     BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
-    FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, ModelInfo, Request,
-    Response, SpeechGenerationRequest, SpeechGenerationResponse, StreamEvent,
-    VideoGenerationRequest, VideoJobInfo, VideoPart,
+    FileUploadRequest, ImageGenerationRequest, ImageGenerationResponse, LiveClientEvent,
+    LiveConfig, LiveServerEvent, ModelInfo, Request, Response, SpeechGenerationRequest,
+    SpeechGenerationResponse, StreamEvent, VideoGenerationRequest, VideoJobInfo, VideoPart,
 };
 use crate::wire::{
     emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
@@ -899,6 +899,28 @@ impl ProviderLM {
         self.parse_video_jobs(status, &body)
     }
 
+    // ─── live: the websocket codec (module 9) ───────────────────────
+
+    /// The codec of a live session: setup frames, client events to wire
+    /// frames, server frames to canonical events — pure, no socket (the
+    /// shim's `replay_live`; `live()` drives a socket with it).
+    pub fn live_codec(&self, config: &LiveConfig) -> Result<LiveCodec, Lm15Error> {
+        self.require("live")?;
+        Ok(LiveCodec {
+            binding: Arc::clone(&self.binding),
+            config: config.clone().normalized(),
+        })
+    }
+
+    /// Open a live session: connect the socket, send the setup frames,
+    /// wait for the wire's acknowledgement where it has one.
+    pub async fn live(&self, config: &LiveConfig) -> Result<crate::live::LiveSession, Lm15Error> {
+        self.ready().await?;
+        let codec = self.live_codec(config)?;
+        let credential = self.credentials.credential().map_err(Lm15Error::from)?;
+        crate::live::LiveSession::connect(codec, credential).await
+    }
+
     /// `_require` (`lm15/providers/base.py:366-377`): the bound access
     /// path, not the dialect, decides which surfaces exist.
     fn require(&self, surface: &str) -> Result<(), Lm15Error> {
@@ -1053,6 +1075,57 @@ pub enum CacheOp<'a> {
         cache_id: &'a str,
         ttl_seconds: u64,
     },
+}
+
+/// The pure live codec of one session (the contract's `replay_live`):
+/// `setup_frames`, `encode`, `decode`. Session mechanics are
+/// [`crate::live`]'s.
+#[derive(Clone)]
+pub struct LiveCodec {
+    binding: Arc<Binding>,
+    config: LiveConfig,
+}
+
+impl LiveCodec {
+    pub fn config(&self) -> &LiveConfig {
+        &self.config
+    }
+
+    /// The websocket URL and static headers (the credential is added by
+    /// the session).
+    pub fn url(&self) -> Result<(String, Vec<(String, String)>), Lm15Error> {
+        dialect_for(self.binding.dialect).live_url(&self.binding.surface_context(), &self.config)
+    }
+
+    pub fn setup_frames(&self) -> Result<Vec<Value>, Lm15Error> {
+        dialect_for(self.binding.dialect)
+            .live_setup_frames(&self.binding.surface_context(), &self.config)
+    }
+
+    pub fn encode(&self, event: &LiveClientEvent) -> Result<Vec<Value>, Lm15Error> {
+        dialect_for(self.binding.dialect).live_encode(
+            &self.binding.surface_context(),
+            &self.config,
+            event,
+        )
+    }
+
+    pub fn decode(&self, frame: &[u8]) -> Result<Vec<LiveServerEvent>, Lm15Error> {
+        dialect_for(self.binding.dialect).live_decode(&self.binding.surface_context(), frame)
+    }
+
+    pub fn setup_complete(&self, frame: &[u8]) -> Result<bool, Lm15Error> {
+        dialect_for(self.binding.dialect)
+            .live_setup_complete(&self.binding.surface_context(), frame)
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.binding.provider
+    }
+
+    pub fn policy(&self) -> &'static AccessPolicy {
+        self.binding.policy
+    }
 }
 
 /// One video action (the shim's `action`).

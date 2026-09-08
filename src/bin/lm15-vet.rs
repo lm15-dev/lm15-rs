@@ -13,8 +13,8 @@ use lm15::errors::{normalize_error, Lm15Error};
 use lm15::serde::{roundtrip, validate};
 use lm15::stream::materialize_response;
 use lm15::types::{
-    BatchRequest, FileUploadRequest, ImageGenerationRequest, Request, Response,
-    SpeechGenerationRequest, ValidationError, VideoGenerationRequest,
+    BatchRequest, FileUploadRequest, ImageGenerationRequest, LiveClientEvent, LiveConfig, Request,
+    Response, SpeechGenerationRequest, ValidationError, VideoGenerationRequest,
 };
 use lm15::wire::{FixedClock, TransportRequest};
 use lm15::{Canonical, HostSettings};
@@ -39,6 +39,7 @@ const OPS: &[&str] = &[
     "normalize_error",
     "parse_response",
     "parse_models_response",
+    "replay_live",
     "replay_stream",
     "serde_roundtrip",
     "sigv4_sign",
@@ -610,6 +611,39 @@ fn op_token_exchange_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
     Ok(json!({ "ok": true, "credential": credential.to_json() }))
 }
 
+fn op_replay_live(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(
+        msg,
+        Credential::api_key("vet-replay-only").map_err(Lm15Error::from)?,
+    )?;
+    let config = LiveConfig::from_json(field(msg, "live_config")?)?;
+    let codec = lm.live_codec(&config)?;
+    let setup_frames = codec.setup_frames()?;
+    let mut client_frames = Vec::new();
+    for event in msg
+        .get("client_events")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let event = LiveClientEvent::from_json(event)?;
+        client_frames.push(Value::Array(codec.encode(&event)?));
+    }
+    let mut events = Vec::new();
+    for frame in msg
+        .get("server_frames_b64")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let bytes =
+            lm15::types::base64_decode(frame.as_str().unwrap_or("")).map_err(Failure::from)?;
+        let decoded = codec.decode(&bytes)?;
+        events.push(Value::Array(decoded.iter().map(|e| e.to_json()).collect()));
+    }
+    Ok(json!({ "setup_frames": setup_frames, "client_frames": client_frames, "events": events }))
+}
+
 fn op_build_models_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let lm = surface_adapter(msg, credential_of(msg)?)?;
     Ok(transport_request_json(&lm.models_request()?))
@@ -762,6 +796,7 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "cache_op_build" => op_cache_op_build(msg),
         "generation_build" => op_generation_build(msg),
         "video_op_build" => op_video_op_build(msg),
+        "replay_live" => op_replay_live(msg),
         "token_exchange_build" => op_token_exchange_build(msg),
         "token_exchange_parse" => op_token_exchange_parse(msg),
         "video_op_parse" => op_video_op_parse(msg),

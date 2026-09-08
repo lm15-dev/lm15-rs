@@ -21,6 +21,7 @@ mod config;
 mod contents;
 pub mod files;
 pub mod generation;
+pub mod live;
 pub mod response;
 pub mod video;
 
@@ -245,6 +246,39 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
 }
 
 impl Surfaces for Gemini {
+    fn live_url(
+        &self,
+        cx: &BuildContext<'_>,
+        _config: &crate::types::LiveConfig,
+    ) -> Result<(String, Vec<(String, String)>), Lm15Error> {
+        Ok((live::url(cx), Vec::new()))
+    }
+    fn live_setup_frames(
+        &self,
+        cx: &BuildContext<'_>,
+        config: &crate::types::LiveConfig,
+    ) -> Result<Vec<Value>, Lm15Error> {
+        Ok(vec![live::setup_frame(cx, config)?])
+    }
+    fn live_encode(
+        &self,
+        cx: &BuildContext<'_>,
+        config: &crate::types::LiveConfig,
+        event: &crate::types::LiveClientEvent,
+    ) -> Result<Vec<Value>, Lm15Error> {
+        live::encode(cx, config, event)
+    }
+    fn live_decode(
+        &self,
+        cx: &BuildContext<'_>,
+        frame: &[u8],
+    ) -> Result<Vec<crate::types::LiveServerEvent>, Lm15Error> {
+        Ok(live::decode(cx, frame))
+    }
+    fn live_setup_complete(&self, cx: &BuildContext<'_>, frame: &[u8]) -> Result<bool, Lm15Error> {
+        live::setup_complete(cx, frame)
+    }
+
     fn video_submit_request(
         &self,
         cx: &BuildContext<'_>,
