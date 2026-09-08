@@ -160,6 +160,12 @@ pub struct ExplainOptions {
     pub env: Option<HashMap<String, String>>,
     pub api_key_providers: Vec<String>,
     pub credentials_path: Option<PathBuf>,
+    /// Cloud chains: a filesystem overlay (`{path: content}`) the walk
+    /// reads instead of the real one (the harness's sandbox HOME).
+    pub files: Option<HashMap<String, String>>,
+    /// Cloud doors: the caller's host settings (AUTH-10); env and the
+    /// cloud profile fill the rest for the report.
+    pub settings: Option<crate::cloud::hosts::HostSettings>,
 }
 
 impl ExplainOptions {
@@ -195,10 +201,7 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
     let canonical = policy.provider.to_string();
 
     if policy.credential_policy.is_cloud_chain() {
-        return Err(AuthError::NotImplemented {
-            provider: canonical,
-            policy: policy.credential_policy,
-        });
+        return explain_cloud(policy, &canonical, options);
     }
 
     if policy.credential_policy == CredentialPolicy::OAuth {
@@ -285,6 +288,65 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
         steps,
         configured: selected,
         settings: Vec::new(),
+    })
+}
+
+/// The cloud-chain walk (module 3b): `cloud::chains::explain` over an
+/// offline context built from the options, plus the resolved host
+/// settings (explicit, env, the cloud profile, defaults) for the report.
+fn explain_cloud(
+    policy: &'static crate::auth::AccessPolicy,
+    canonical: &str,
+    options: &ExplainOptions,
+) -> Result<Report, AuthError> {
+    use crate::cloud::chains::{self, ChainContext};
+    let env: std::collections::BTreeMap<String, String> = match &options.env {
+        Some(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        None => std::env::vars().collect(),
+    };
+    let mut ctx = ChainContext::offline(env.clone(), crate::auth::time_now());
+    if let Some(files) = &options.files {
+        ctx = ctx.with_files(files.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+    }
+    let explicit = options
+        .api_key_providers
+        .iter()
+        .any(|name| canonical_provider(name) == canonical);
+    let mut settings = Vec::new();
+    if let Some(host) = &policy.host {
+        let given = options.settings.clone().unwrap_or_default();
+        let mut resolved =
+            crate::cloud::hosts::resolve_settings(Some(host), &given, Some(&env), canonical)
+                .unwrap_or_else(|_| given.clone());
+        for setting in host.settings {
+            if resolved.get(setting.name).is_none_or(String::is_empty) {
+                if let Some(value) = chains::profile_setting(policy, &ctx, setting.name) {
+                    resolved.insert(setting.name.to_string(), value);
+                }
+            }
+        }
+        settings = resolved.into_iter().collect();
+        ctx.settings = settings.iter().cloned().collect();
+    }
+    let (steps, configured) = chains::explain(policy, &ctx, explicit)?;
+    Ok(Report {
+        provider: canonical.to_string(),
+        steps: steps
+            .into_iter()
+            .map(|s| Step {
+                kind: s.kind,
+                source: s.source,
+                detail: s.detail,
+                state: match s.state {
+                    "selected" => StepState::Selected,
+                    "shadowed" => StepState::Shadowed,
+                    "unprobed" => StepState::Unprobed,
+                    _ => StepState::Absent,
+                },
+            })
+            .collect(),
+        configured,
+        settings,
     })
 }
 
@@ -385,17 +447,41 @@ mod tests {
     }
 
     #[test]
-    fn cloud_chain_providers_answer_not_implemented_naming_module_3b() {
-        for provider in ["bedrock-chat", "azure", "vertex-anthropic"] {
-            let error =
-                explain_auth(provider, &hermetic(&[("AWS_REGION", "us-east-1")])).unwrap_err();
-            assert!(
-                matches!(error, AuthError::NotImplemented { .. }),
-                "{provider}: {error:?}"
-            );
-            assert_eq!(error.class_name(), "NotConfiguredError");
-            assert!(error.to_string().contains("module 3b"), "{error}");
-        }
+    fn cloud_chain_providers_walk_their_chain_offline() {
+        // Module 3b: the walk is the cloud SDK's order; nothing configured
+        // and the metadata rungs disabled is "not configured", with every
+        // rung reported.
+        let report = explain_auth(
+            "bedrock-chat",
+            &hermetic(&[
+                ("AWS_REGION", "us-east-1"),
+                ("AWS_EC2_METADATA_DISABLED", "true"),
+                ("HOME", "/nonexistent"),
+            ]),
+        )
+        .unwrap();
+        assert!(!report.configured, "{}", report.describe());
+        assert_eq!(report.steps[1].kind, "env:AWS_BEARER_TOKEN_BEDROCK");
+        assert_eq!(report.steps.last().unwrap().kind, "imds");
+        assert!(report
+            .settings
+            .iter()
+            .any(|(k, v)| k == "region" && v == "us-east-1"));
+        // A static key pair is selected; IMDS behind it is shadowed.
+        let report = explain_auth(
+            "bedrock-chat",
+            &hermetic(&[
+                ("AWS_REGION", "us-east-1"),
+                ("AWS_ACCESS_KEY_ID", "AKID"),
+                ("AWS_SECRET_ACCESS_KEY", "SECRET-SENTINEL-DO-NOT-PRINT"),
+                ("HOME", "/nonexistent"),
+            ]),
+        )
+        .unwrap();
+        assert!(report.configured);
+        assert_eq!(report.selected().unwrap().kind, "env:AWS_ACCESS_KEY_ID");
+        assert_eq!(report.steps.last().unwrap().state, StepState::Shadowed);
+        assert!(!report.describe().contains("SENTINEL"));
         // vertex-express is a hosted door with the ordinary key chain (core).
         assert!(explain_auth("vertex-express", &hermetic(&[])).is_ok());
     }

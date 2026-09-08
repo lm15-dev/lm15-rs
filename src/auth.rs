@@ -53,3 +53,8 @@ pub use stores::{
     OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT,
 };
 pub use time::{format_rfc3339, parse_rfc3339};
+
+/// The wall clock as Unix seconds.
+pub fn time_now() -> i64 {
+    time::now_unix()
+}

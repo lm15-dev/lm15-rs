@@ -14,7 +14,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use lm15::auth::{explain_auth, AuthError, ExplainOptions};
+use lm15::auth::{explain_auth, ExplainOptions};
 use serde_json::Value;
 
 /// Copied from `harness/check.py` `CLOUD_RUNG_KINDS` (lm15-contract at the
@@ -238,7 +238,11 @@ fn core_cases_pass_the_fixture() {
 }
 
 #[test]
-fn cloud_cases_are_counted_as_not_implemented() {
+fn cloud_cases_replay_the_chain_offline() {
+    // Module 3b: every cloud case of auth/resolution.json through the
+    // offline walk, the way the harness drives it — a sandbox HOME, the
+    // case's `files` materialized under it and passed as the overlay,
+    // `~/` in env values rewritten to that HOME.
     let Some(fixture) = fixture() else { return };
     let sentinel = fixture["sentinel"].as_str().unwrap();
     let cloud = cloud_auth_providers(&fixture);
@@ -251,24 +255,60 @@ fn cloud_cases_are_counted_as_not_implemented() {
         if !cloud.contains(provider) {
             continue;
         }
-        let options = options_for(case, &scratch, sentinel);
-        let error = match explain_auth(provider, &options) {
-            Err(error) => error,
-            Ok(report) => {
-                panic!("{id}: module 3b is not implemented, yet explain_auth answered: {report}")
+        let home = scratch.join(format!("home-{id}"));
+        std::fs::create_dir_all(&home).unwrap();
+        let mut options = options_for(case, &scratch, sentinel);
+        let env = options.env.as_mut().unwrap();
+        for value in env.values_mut() {
+            *value = value.replace("~/", &format!("{}/", home.display()));
+        }
+        env.insert("HOME".into(), home.display().to_string());
+        let mut files = HashMap::new();
+        if let Some(map) = case.get("files").and_then(Value::as_object) {
+            for (rel, content) in map {
+                let target = home.join(rel.trim_start_matches("~/"));
+                std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+                std::fs::write(&target, content.as_str().unwrap()).unwrap();
+                files.insert(
+                    target.display().to_string(),
+                    content.as_str().unwrap().to_string(),
+                );
             }
-        };
-        assert!(
-            matches!(error, AuthError::NotImplemented { .. }),
-            "{id}: expected the typed not-implemented error, got {error:?}"
+        }
+        options.files = Some(files);
+        if let Some(settings) = case.get("settings").and_then(Value::as_object) {
+            options.settings = Some(
+                settings
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                    .collect(),
+            );
+        }
+        let report = explain_auth(provider, &options).unwrap_or_else(|e| panic!("{id}: {e}"));
+        let expect = &case["expect"];
+        assert_eq!(
+            report.configured,
+            expect["configured"].as_bool().unwrap(),
+            "{id}: configured"
         );
-        assert_eq!(error.class_name(), "NotConfiguredError", "{id}");
-        assert_eq!(error.code(), "not_configured", "{id}");
-        assert!(
-            error.to_string().contains("module 3b"),
-            "{id}: error must name module 3b: {error}"
-        );
-        for rendering in [error.to_string(), format!("{error:?}")] {
+        let actual: Vec<(String, &str)> = report
+            .steps
+            .iter()
+            .map(|s| (s.kind.clone(), s.state.as_str()))
+            .collect();
+        let expected: Vec<(String, &str)> = expect["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["kind"].as_str().unwrap().to_string(),
+                    s["state"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(actual, expected, "{id}: steps (kind, state) in chain order");
+        for rendering in [report.describe(), format!("{report:?}")] {
             assert!(
                 !rendering.contains(sentinel),
                 "{id}: sentinel leaked: {rendering}"
@@ -278,14 +318,8 @@ fn cloud_cases_are_counted_as_not_implemented() {
     }
 
     let _ = std::fs::remove_dir_all(&scratch);
-    println!(
-        "auth cloud cases: {counted}/{EXPECTED_CLOUD_CASES} answered NotConfiguredError (module 3b not implemented; providers: {})",
-        cloud.iter().cloned().collect::<Vec<_>>().join(", ")
-    );
-    assert_eq!(
-        counted, EXPECTED_CLOUD_CASES,
-        "cloud case count moved; move CONTRACT_PIN and this constant together"
-    );
+    println!("auth cloud cases: {counted}/{EXPECTED_CLOUD_CASES} replayed");
+    assert_eq!(counted, EXPECTED_CLOUD_CASES, "cloud case count moved");
 }
 
 #[test]

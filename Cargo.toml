@@ -25,12 +25,17 @@ hmac = "0.12"
 # ssl.create_default_context() reads; no compression features, so the
 # provider sends identity bodies, as the reference asks for.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "stream"] }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "rt"] }
 futures-core = "0.3"
 futures-util = { version = "0.3", default-features = false }
 bytes = "1"
 # Retry-After as an HTTP-date (the reference: email.utils.parsedate_to_datetime).
 httpdate = "1"
+# AUTH-11 jwt-rs256 (GCP service accounts, Entra certificates): RSA
+# PKCS#1 v1.5 / SHA-256 from the crypto provider rustls already builds
+# (aws-lc-rs), never a second RSA implementation. Also SHA-1 for the
+# Entra x5t thumbprint (a legacy digest used only as a certificate id).
+aws-lc-rs = "1"
 
 [features]
 default = []

@@ -38,13 +38,22 @@ pub enum AuthError {
         refreshable: bool,
         hint: String,
     },
+    /// A credential source that answered and was refused, or answered
+    /// something unusable (an STS 403, a token exchange 400, a malformed
+    /// credential_process output): AUTH-6 "provider-rejected". Class
+    /// `AuthError`, code `auth`.
+    Rejected {
+        provider: Option<String>,
+        message: String,
+        hint: Option<String>,
+    },
 }
 
 impl AuthError {
     /// The ErrorCode literal (spec/vocabularies.md ErrorCode).
     pub fn code(&self) -> &'static str {
         match self {
-            AuthError::Expired { .. } => "auth",
+            AuthError::Expired { .. } | AuthError::Rejected { .. } => "auth",
             _ => "not_configured",
         }
     }
@@ -52,7 +61,7 @@ impl AuthError {
     /// The canonical class name (spec/vocabularies.md ErrorCode table).
     pub fn class_name(&self) -> &'static str {
         match self {
-            AuthError::Expired { .. } => "AuthError",
+            AuthError::Expired { .. } | AuthError::Rejected { .. } => "AuthError",
             _ => "NotConfiguredError",
         }
     }
@@ -63,7 +72,9 @@ impl AuthError {
             AuthError::UnknownProvider { provider }
             | AuthError::NotImplemented { provider, .. }
             | AuthError::Expired { provider, .. } => Some(provider),
-            AuthError::NotConfigured { provider, .. } => provider.as_deref(),
+            AuthError::NotConfigured { provider, .. } | AuthError::Rejected { provider, .. } => {
+                provider.as_deref()
+            }
         }
     }
 
@@ -110,6 +121,20 @@ impl fmt::Display for AuthError {
                  to a port with module 3b, or use a non-cloud provider",
                 policy.as_str()
             ),
+            AuthError::Rejected {
+                provider,
+                message,
+                hint,
+            } => {
+                if let Some(provider) = provider {
+                    write!(f, "{provider}: ")?;
+                }
+                f.write_str(message)?;
+                if let Some(hint) = hint {
+                    write!(f, "\n\n  To fix:\n    - {hint}\n")?;
+                }
+                Ok(())
+            }
             AuthError::Expired {
                 provider,
                 refreshable,
@@ -146,7 +171,9 @@ impl From<AuthError> for crate::errors::Lm15Error {
         let mut meta = crate::errors::ErrorMeta::new(err.to_string());
         meta.provider = err.provider().map(str::to_string);
         match err {
-            AuthError::Expired { .. } => crate::errors::Lm15Error::AuthError(meta),
+            AuthError::Expired { .. } | AuthError::Rejected { .. } => {
+                crate::errors::Lm15Error::AuthError(meta)
+            }
             _ => crate::errors::Lm15Error::NotConfiguredError(meta),
         }
     }

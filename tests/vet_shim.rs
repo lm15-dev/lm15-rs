@@ -38,7 +38,7 @@ fn one_reply_per_request_with_the_same_id() {
                "body_text": "{\"error\":{\"message\":\"slow down\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\"}}"}),
         json!({"op": "build_request", "id": "build_request#7", "provider": "openai", "api_key": "k", "stream": false,
                "canonical_request": {"model": "gpt-5", "messages": [{"role": "user", "parts": [{"type": "text", "text": "hi"}]}]}}),
-        json!({"op": "token_exchange_parse", "id": "token#8", "provider": "aws-imds", "rung": "http-metadata", "status": 200, "body": {}, "now": "2026-09-03T00:00:00Z"}),
+        json!({"op": "token_exchange_parse", "id": "token#8", "provider": "bedrock-anthropic", "rung": "imds", "status": 200, "body": {"AccessKeyId": "AKID", "SecretAccessKey": "S", "Token": "T", "Expiration": "2026-09-03T18:00:00Z"}, "now": "2026-09-03T00:00:00Z"}),
     ]);
     assert_eq!(replies.len(), 8);
 
@@ -97,13 +97,14 @@ fn one_reply_per_request_with_the_same_id() {
     );
     assert_eq!(replies[6]["result"]["headers"]["authorization"], "Bearer k");
 
-    // Module 3b ops answer the refusal that names the module.
-    assert_eq!(replies[7]["ok"], false);
-    assert_eq!(replies[7]["error"]["type"], "UnsupportedFeatureError");
-    assert!(replies[7]["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("module 3b"));
+    // Module 3b: a token-exchange parse under the fixed clock.
+    assert_eq!(replies[7]["ok"], true, "{}", replies[7]);
+    assert_eq!(replies[7]["result"]["credential"]["kind"], "aws");
+    assert_eq!(replies[7]["result"]["credential"]["access_key_id"], "AKID");
+    assert_eq!(
+        replies[7]["result"]["credential"]["expires_at"],
+        "2026-09-03T18:00:00Z"
+    );
 }
 
 /// `sigv4_sign` (PROTOCOL.md): list-valued headers repeat the name, a

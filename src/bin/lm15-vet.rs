@@ -42,6 +42,8 @@ const OPS: &[&str] = &[
     "replay_stream",
     "serde_roundtrip",
     "sigv4_sign",
+    "token_exchange_build",
+    "token_exchange_parse",
     "validate",
     "video_op_build",
     "video_op_parse",
@@ -144,6 +146,12 @@ fn op_explain_auth(msg: &Map<String, Value>) -> Result<Value, Failure> {
             .get("credentials_path")
             .and_then(Value::as_str)
             .map(std::path::PathBuf::from),
+        files: msg.get("files").and_then(Value::as_object).map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        }),
+        settings: settings_of(msg),
     };
     let report = lm15::auth::explain_auth(&provider, &options).map_err(Lm15Error::from)?;
     let steps: Vec<Value> = report
@@ -524,6 +532,84 @@ fn op_video_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
     })
 }
 
+fn chain_context(msg: &Map<String, Value>) -> Result<lm15::cloud::chains::ChainContext, Failure> {
+    let now = clock_of(msg)?
+        .map(|c| c.0)
+        .unwrap_or_else(lm15::auth::time_now);
+    let input = msg.get("input").and_then(Value::as_object);
+    let env = input
+        .and_then(|i| i.get("env"))
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut ctx = lm15::cloud::chains::ChainContext::offline(env, now);
+    // The certificate vector: the harness supplies the PEM contents in
+    // `input.certificate_pem` and `input.private_key_pem` for the path the
+    // env names; both go into one overlay file.
+    if let Some(path) = ctx.env.get("AZURE_CLIENT_CERTIFICATE_PATH").cloned() {
+        let cert = input
+            .and_then(|i| i.get("certificate_pem"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let key = input
+            .and_then(|i| i.get("private_key_pem"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !cert.is_empty() || !key.is_empty() {
+            let mut files = std::collections::BTreeMap::new();
+            files.insert(path, format!("{cert}\n{key}"));
+            ctx = ctx.with_files(files);
+        }
+    }
+    let mut settings = settings_of(msg).unwrap_or_default();
+    if let Some(extra) = input
+        .and_then(|i| i.get("settings"))
+        .and_then(Value::as_object)
+    {
+        for (k, v) in extra {
+            settings.insert(
+                k.clone(),
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string()),
+            );
+        }
+    }
+    Ok(ctx.with_settings(settings))
+}
+
+fn op_token_exchange_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let rung = field_str(msg, "rung")?;
+    let ctx = chain_context(msg)?;
+    let input = msg
+        .get("input")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    Ok(lm15::cloud::chains::token_exchange_build(&rung, &input, &ctx).map_err(Lm15Error::from)?)
+}
+
+fn op_token_exchange_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let rung = field_str(msg, "rung")?;
+    let ctx = chain_context(msg)?;
+    let status = msg.get("status").and_then(Value::as_u64).unwrap_or(0) as u16;
+    let body = match msg.get("body") {
+        Some(Value::Object(map)) => map.clone(),
+        Some(Value::String(text)) => serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default(),
+        _ => Map::new(),
+    };
+    let credential = lm15::cloud::chains::token_exchange_parse(&rung, status, &body, &ctx)
+        .map_err(Lm15Error::from)?;
+    Ok(json!({ "ok": true, "credential": credential.to_json() }))
+}
+
 fn op_build_models_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let lm = surface_adapter(msg, credential_of(msg)?)?;
     Ok(transport_request_json(&lm.models_request()?))
@@ -676,6 +762,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "cache_op_build" => op_cache_op_build(msg),
         "generation_build" => op_generation_build(msg),
         "video_op_build" => op_video_op_build(msg),
+        "token_exchange_build" => op_token_exchange_build(msg),
+        "token_exchange_parse" => op_token_exchange_parse(msg),
         "video_op_parse" => op_video_op_parse(msg),
         "generation_parse" => op_generation_parse(msg),
         "cache_op_parse" => op_cache_op_parse(msg),
@@ -685,13 +773,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "parse_models_response" => op_parse_models_response(msg),
         "replay_stream" => op_replay_stream(msg),
         "sigv4_sign" => op_sigv4_sign(msg),
-        // Module 3b (cloud chains: token exchange, RS256) is not implemented.
-        "token_exchange_build" | "token_exchange_parse" => Err(Lm15Error::unsupported_feature(
-            format!("op {op:?} needs module 3b (cloud credential chains), which this port does not implement"),
-        )
-        .into()),
         other => Err(Lm15Error::unsupported_feature(format!(
-            "op {other:?} is not implemented by the Rust shim (modules 1-5: {})",
+            "op {other:?} is not implemented by the Rust shim (ops: {})",
             OPS.join(", ")
         ))
         .into()),

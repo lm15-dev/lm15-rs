@@ -42,10 +42,11 @@ use crate::adapter::{EventStream, LmBuilder, ProviderLM};
 use crate::auth::{
     canonical_provider, AccessPolicy, CredentialPolicy, CredentialProvider, StoredLogin,
 };
+use crate::cloud::chains::{profile_setting, ChainContext, ChainProvider};
 use crate::cloud::hosts::{resolve_settings, HostSettings};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::{lookup, DialectId, EntryKind, ProviderDefinition, PROVIDERS};
-use crate::transport::Transport;
+use crate::transport::{HttpTransport, Transport};
 use crate::types::{ModelInfo, Request, Response};
 
 // ─── rules ───────────────────────────────────────────────────────────
@@ -753,20 +754,38 @@ fn build_lm(resolution: &Resolution, config: &RouterConfig) -> Result<ProviderLM
         .map(|c| Box::new(c) as Box<dyn CredentialProvider + Send + Sync>);
 
     if let Some(host) = &policy.host {
-        // A cloud door (AUTH-10): settings from config, then env, then
-        // defaults. The credential: the explicit entry, or — for a `key`
-        // policy — the declared env keys. Cloud-chain rungs beyond the
-        // explicit entry are module 3b, which this port does not
-        // implement; the doctor gives the same answer (AUTH-7).
-        let given = config.settings.get(provider).cloned().unwrap_or_default();
-        let settings = resolve_settings(Some(host), &given, Some(&config.env_map()), provider)?;
-        builder = builder.settings(settings);
-        if credential.is_none() && policy.is_cloud_chain() {
-            return Err(crate::auth::AuthError::NotImplemented {
-                provider: provider.to_string(),
-                policy: policy.credential_policy,
+        // A cloud door (AUTH-10): settings from config, then env, then the
+        // cloud's own profile (AWS region, GCP project), then defaults.
+        // The credential: the explicit entry, or — for a cloud chain
+        // policy — the chain's caching provider (AUTH-1/AUTH-2/AUTH-3),
+        // or — for a `key` policy — the declared env keys.
+        let env_map = config.env_map();
+        let now = crate::auth::time_now();
+        let transport: Arc<dyn Transport> = match &config.transport {
+            Some(transport) => Arc::clone(transport),
+            None => HttpTransport::shared()?,
+        };
+        let mut ctx = ChainContext::online(env_map.clone(), transport, now);
+        let mut given = config.settings.get(provider).cloned().unwrap_or_default();
+        if policy.is_cloud_chain() {
+            for setting in host.settings {
+                let from_config = given.get(setting.name).is_some_and(|v| !v.is_empty());
+                let from_env = setting
+                    .env
+                    .iter()
+                    .any(|var| env_map.get(*var).is_some_and(|v| !v.is_empty()));
+                if !from_config && !from_env {
+                    if let Some(value) = profile_setting(policy, &ctx, setting.name) {
+                        given.insert(setting.name.to_string(), value);
+                    }
+                }
             }
-            .into());
+        }
+        let settings = resolve_settings(Some(host), &given, Some(&env_map), provider)?;
+        builder = builder.settings(settings.clone());
+        if credential.is_none() && policy.is_cloud_chain() {
+            ctx.settings = settings;
+            credential = Some(Box::new(ChainProvider::new(policy, ctx)));
         }
     }
 
@@ -973,11 +992,46 @@ mod tests {
     }
 
     #[test]
-    fn hosted_doors_resolve_settings_and_cloud_chains_name_module_3b() {
-        let router = LMRouter::with_config(hermetic(&[("AWS_REGION", "eu-west-1")]));
-        let err = router.lm("bedrock-chat:m").unwrap_err();
+    fn hosted_doors_resolve_settings_and_cloud_chains_walk() {
+        // A cloud chain with nothing configured builds the adapter (the
+        // chain resolves at the first request, asynchronously) …
+        let router = LMRouter::with_config(hermetic(&[
+            ("AWS_REGION", "eu-west-1"),
+            ("AWS_EC2_METADATA_DISABLED", "true"),
+            ("HOME", "/nonexistent"),
+        ]));
+        let lm = router.lm("bedrock-chat:m").unwrap();
+        let request = Request::new("m", vec![crate::Message::user("hi").unwrap()]).unwrap();
+        // … and a synchronous build before `prepare` says so, typed.
+        let err = lm.build_request(&request, false).unwrap_err();
         assert_eq!(err.class_name(), "NotConfiguredError");
-        assert!(err.message().contains("module 3b"), "{err}");
+        assert!(err.message().contains("not been resolved"), "{err}");
+        // Static env keys: the chain selects them and signs (module 3b).
+        let router = LMRouter::with_config(hermetic(&[
+            ("AWS_REGION", "eu-west-1"),
+            ("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE"),
+            (
+                "AWS_SECRET_ACCESS_KEY",
+                "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            ),
+            ("HOME", "/nonexistent"),
+        ]));
+        let lm = router.lm("bedrock-chat:m").unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let err = lm.complete(&request).await.unwrap_err();
+            // The chain resolved (no auth error); the wire refused the
+            // connection or the region: anything but "not resolved".
+            assert!(!err.message().contains("not been resolved"), "{err}");
+        });
+        let built = lm.build_request(&request, false).unwrap();
+        assert!(built
+            .header("authorization")
+            .unwrap()
+            .starts_with("AWS4-HMAC-SHA256"));
         // Rung 0 (an explicit entry) works without 3b.
         let router = LMRouter::with_config(
             hermetic(&[("AWS_REGION", "eu-west-1")]).api_key("bedrock-chat", "bearer"),
@@ -988,8 +1042,11 @@ mod tests {
             lm.base_url(),
             "https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1"
         );
-        // A missing required setting is the typed error naming it.
-        let router = LMRouter::with_config(hermetic(&[]).api_key("bedrock-chat", "bearer"));
+        // A missing required setting is the typed error naming it (the
+        // AWS profile is the last fallback before that: HOME is pinned).
+        let router = LMRouter::with_config(
+            hermetic(&[("HOME", "/nonexistent")]).api_key("bedrock-chat", "bearer"),
+        );
         let err = router.lm("bedrock-chat:m").unwrap_err();
         assert_eq!(err.class_name(), "NotConfiguredError");
         assert!(err.message().contains("AWS_REGION"), "{err}");

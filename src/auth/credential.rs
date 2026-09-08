@@ -293,6 +293,15 @@ pub fn select_scheme(
 /// time and never caches the result; caching belongs to the provider.
 pub trait CredentialProvider {
     fn credential(&self) -> Result<Credential, AuthError>;
+
+    /// An asynchronous step the adapter awaits before building a request:
+    /// a cloud chain resolves or refreshes its cached credential here
+    /// (AUTH-3), over the network, without blocking a runtime worker.
+    /// `None` (the default) means nothing to do; `credential()` then
+    /// answers from memory or a file.
+    fn prepare(&self) -> Option<crate::transport::BoxFuture<'_, Result<(), AuthError>>> {
+        None
+    }
 }
 
 /// A value is its own provider.
@@ -325,11 +334,17 @@ impl<T: CredentialProvider + ?Sized> CredentialProvider for Box<T> {
     fn credential(&self) -> Result<Credential, AuthError> {
         (**self).credential()
     }
+    fn prepare(&self) -> Option<crate::transport::BoxFuture<'_, Result<(), AuthError>>> {
+        (**self).prepare()
+    }
 }
 
 impl<T: CredentialProvider + ?Sized> CredentialProvider for std::sync::Arc<T> {
     fn credential(&self) -> Result<Credential, AuthError> {
         (**self).credential()
+    }
+    fn prepare(&self) -> Option<crate::transport::BoxFuture<'_, Result<(), AuthError>>> {
+        (**self).prepare()
     }
 }
 

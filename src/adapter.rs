@@ -48,8 +48,9 @@ use crate::wire::{
     emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
 };
 
-type BoxedCredentials = Box<dyn CredentialProvider + Send + Sync>;
+type BoxedCredentials = Arc<dyn CredentialProvider + Send + Sync>;
 type BoxedClock = Box<dyn Clock + Send + Sync>;
+type SharedClock = Arc<dyn Clock + Send + Sync>;
 type SharedTransport = Arc<dyn Transport>;
 
 /// A dialect bound to an access policy, a compat value, a credential
@@ -57,7 +58,7 @@ type SharedTransport = Arc<dyn Transport>;
 pub struct ProviderLM {
     binding: Arc<Binding>,
     credentials: BoxedCredentials,
-    clock: BoxedClock,
+    clock: SharedClock,
     transport: SharedTransport,
 }
 
@@ -267,6 +268,7 @@ impl ProviderLM {
     /// Advisory metadata (docs/model-hydration.md): it never changes what
     /// `build_request` produces.
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, Lm15Error> {
+        self.ready().await?;
         let built = self.models_request()?;
         let mut response = self.transport.send(built).await?;
         let status = response.status;
@@ -355,12 +357,14 @@ impl ProviderLM {
     /// media part's `file_id` takes. Gemini may answer `pending`:
     /// `file_wait_ready` covers that.
     pub async fn file_upload(&self, request: &FileUploadRequest) -> Result<FileInfo, Lm15Error> {
+        self.ready().await?;
         let built = self.file_request(&FileOp::Upload(request))?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_file_info(status, &body)
     }
 
     pub async fn file_get(&self, file_id: &str) -> Result<FileInfo, Lm15Error> {
+        self.ready().await?;
         let built = self.file_request(&FileOp::Get(file_id))?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_file_info(status, &body)
@@ -369,6 +373,7 @@ impl ProviderLM {
     /// One page of this credential's stored files; `cursor` is the
     /// previous page's `next_cursor`.
     pub async fn file_list(&self, limit: u64, cursor: Option<&str>) -> Result<FilePage, Lm15Error> {
+        self.ready().await?;
         let built = self.file_request(&FileOp::List { limit, cursor })?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_file_page(status, &body)
@@ -377,6 +382,7 @@ impl ProviderLM {
     /// Delete a stored file. Returning without an error IS the
     /// confirmation; acknowledgement bodies carry nothing canonical.
     pub async fn file_delete(&self, file_id: &str) -> Result<(), Lm15Error> {
+        self.ready().await?;
         let built = self.file_request(&FileOp::Delete(file_id))?;
         self.send_surface(built).await.map(|_| ())
     }
@@ -384,6 +390,7 @@ impl ProviderLM {
     /// A file's content, when THIS file supports download; a provider's
     /// refusal is forwarded, never masked.
     pub async fn file_download(&self, file_id: &str) -> Result<Vec<u8>, Lm15Error> {
+        self.ready().await?;
         let built = self.file_request(&FileOp::Download(file_id))?;
         self.send_surface(built).await.map(|(_, _, body)| body)
     }
@@ -396,6 +403,7 @@ impl ProviderLM {
         poll_every: std::time::Duration,
         timeout: Option<std::time::Duration>,
     ) -> Result<FileInfo, Lm15Error> {
+        self.ready().await?;
         let deadline = timeout.map(|t| std::time::Instant::now() + t);
         let mut info = self.file_get(file_id).await?;
         while info.readiness == crate::types::FileReadiness::Pending {
@@ -490,6 +498,7 @@ impl ProviderLM {
 
     /// Submit a batch: the optional upload step, then the submit.
     pub async fn batch_submit(&self, request: &BatchRequest) -> Result<BatchJobInfo, Lm15Error> {
+        self.ready().await?;
         request.validate().map_err(|err| {
             let mut meta = ErrorMeta::new(format!("{}: {}", self.provider(), err.message));
             meta.provider = Some(self.provider().to_string());
@@ -515,6 +524,7 @@ impl ProviderLM {
     }
 
     pub async fn batch_status(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        self.ready().await?;
         let built = self
             .batch_requests(&BatchAction::Status(batch_id))?
             .remove(0);
@@ -523,6 +533,7 @@ impl ProviderLM {
     }
 
     pub async fn batch_cancel(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        self.ready().await?;
         let built = self
             .batch_requests(&BatchAction::Cancel(batch_id))?
             .remove(0);
@@ -534,6 +545,7 @@ impl ProviderLM {
     /// terminal body calls for. A batch still running is an
     /// `InvalidRequestError`, never partial entries.
     pub async fn batch_results(&self, batch_id: &str) -> Result<Vec<BatchEntry>, Lm15Error> {
+        self.ready().await?;
         let built = self
             .batch_requests(&BatchAction::Status(batch_id))?
             .remove(0);
@@ -558,6 +570,7 @@ impl ProviderLM {
     }
 
     pub async fn batch_list(&self, limit: u64) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+        self.ready().await?;
         let built = self.batch_requests(&BatchAction::List(limit))?.remove(0);
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_batch_jobs(status, &body)
@@ -618,6 +631,7 @@ impl ProviderLM {
         ttl_seconds: Option<u64>,
         label: Option<&str>,
     ) -> Result<CacheInfo, Lm15Error> {
+        self.ready().await?;
         let built = self.cache_request(&CacheOp::Create {
             prefix,
             ttl_seconds,
@@ -628,6 +642,7 @@ impl ProviderLM {
     }
 
     pub async fn cache_get(&self, cache_id: &str) -> Result<CacheInfo, Lm15Error> {
+        self.ready().await?;
         let built = self.cache_request(&CacheOp::Get(cache_id))?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_cache_info(status, &body)
@@ -638,12 +653,14 @@ impl ProviderLM {
         limit: u64,
         cursor: Option<&str>,
     ) -> Result<CachePage, Lm15Error> {
+        self.ready().await?;
         let built = self.cache_request(&CacheOp::List { limit, cursor })?;
         let (status, _, body) = self.send_surface(built).await?;
         self.parse_cache_page(status, &body)
     }
 
     pub async fn cache_delete(&self, cache_id: &str) -> Result<(), Lm15Error> {
+        self.ready().await?;
         let built = self.cache_request(&CacheOp::Delete(cache_id))?;
         self.send_surface(built).await.map(|_| ())
     }
@@ -653,6 +670,7 @@ impl ProviderLM {
         cache_id: &str,
         ttl_seconds: u64,
     ) -> Result<CacheInfo, Lm15Error> {
+        self.ready().await?;
         let built = self.cache_request(&CacheOp::Update {
             cache_id,
             ttl_seconds,
@@ -696,6 +714,7 @@ impl ProviderLM {
         &self,
         request: &ImageGenerationRequest,
     ) -> Result<ImageGenerationResponse, Lm15Error> {
+        self.ready().await?;
         let built = self.image_generate_request(request)?;
         let (status, headers, body) = self.send_surface(built).await?;
         self.parse_image_generation(request, status, &headers, &body)
@@ -734,6 +753,7 @@ impl ProviderLM {
         &self,
         request: &SpeechGenerationRequest,
     ) -> Result<SpeechGenerationResponse, Lm15Error> {
+        self.ready().await?;
         let built = self.speech_generate_request(request)?;
         let (status, headers, body) = self.send_surface(built).await?;
         self.parse_speech_generation(request, status, &headers, &body)
@@ -814,6 +834,7 @@ impl ProviderLM {
         &self,
         request: &VideoGenerationRequest,
     ) -> Result<VideoJobInfo, Lm15Error> {
+        self.ready().await?;
         let built = self
             .video_requests(&VideoAction::Submit(request))?
             .remove(0);
@@ -822,6 +843,7 @@ impl ProviderLM {
     }
 
     pub async fn video_status(&self, video_id: &str) -> Result<VideoJobInfo, Lm15Error> {
+        self.ready().await?;
         let built = self
             .video_requests(&VideoAction::Status(video_id))?
             .remove(0);
@@ -833,6 +855,7 @@ impl ProviderLM {
     /// terminal body calls for. A job still running is an
     /// `InvalidRequestError`; a failed one is the provider's error.
     pub async fn video_result(&self, video_id: &str) -> Result<VideoPart, Lm15Error> {
+        self.ready().await?;
         let built = self
             .video_requests(&VideoAction::Status(video_id))?
             .remove(0);
@@ -868,6 +891,7 @@ impl ProviderLM {
         limit: u64,
         model: Option<&str>,
     ) -> Result<Vec<VideoJobInfo>, Lm15Error> {
+        self.ready().await?;
         let built = self
             .video_requests(&VideoAction::List { limit, model })?
             .remove(0);
@@ -899,11 +923,22 @@ impl ProviderLM {
         self.transport.as_ref()
     }
 
+    /// AUTH-3: a credential provider with an asynchronous step (a cloud
+    /// chain resolving or refreshing its token) runs it here, before any
+    /// request is built. Static credentials and stored logins have none.
+    async fn ready(&self) -> Result<(), Lm15Error> {
+        if let Some(prepare) = self.credentials.prepare() {
+            prepare.await.map_err(Lm15Error::from)?;
+        }
+        Ok(())
+    }
+
     /// One call: build, send, decode (`BaseProviderLM.complete`). A
     /// status of 400 or more is the provider's error, normalized, with
     /// `retry_after` from the `Retry-After` header when the body did not
     /// say; a failure below HTTP is `TransportError`.
     pub async fn complete(&self, request: &Request) -> Result<Response, Lm15Error> {
+        self.ready().await?;
         let built = self.build_request(request, false)?;
         let mut response = self.transport.send(built).await?;
         let status = response.status;
@@ -925,12 +960,30 @@ impl ProviderLM {
     /// the stream closes the connection. The stream owns everything it
     /// needs (`'static`): it can be spawned, sent, or stored.
     pub fn stream(&self, request: &Request) -> EventStream {
-        let state = match self.build_request(request, true) {
-            Ok(built) => {
+        // Validation first (no wire, no credential); the build itself runs
+        // inside the future so a cloud chain can `prepare` before it.
+        let state = match request.validate() {
+            Ok(()) => {
                 let transport = Arc::clone(&self.transport);
                 let binding = Arc::clone(&self.binding);
+                let credentials = Arc::clone(&self.credentials);
+                let clock = Arc::clone(&self.clock);
+                let decoder = Box::new(self.stream_decoder(request));
+                let request = request.clone();
                 let fut: BoxFuture<'static, Result<TransportResponse, Lm15Error>> =
                     Box::pin(async move {
+                        if let Some(prepare) = credentials.prepare() {
+                            prepare.await.map_err(Lm15Error::from)?;
+                        }
+                        let cx = binding.context(&request);
+                        let built = emit(
+                            dialect_for(binding.dialect),
+                            &request,
+                            true,
+                            &cx,
+                            credentials.as_ref(),
+                            clock.as_ref(),
+                        )?;
                         let response = transport.send(built).await?;
                         if response.status >= 400 {
                             let status = response.status;
@@ -940,12 +993,13 @@ impl ProviderLM {
                         }
                         Ok(response)
                     });
-                StreamState::Connecting {
-                    fut,
-                    decoder: Box::new(self.stream_decoder(request)),
-                }
+                StreamState::Connecting { fut, decoder }
             }
-            Err(err) => StreamState::Failed(err),
+            Err(err) => {
+                let mut meta = ErrorMeta::new(format!("{}: {}", self.provider(), err.message));
+                meta.provider = Some(self.provider().to_string());
+                StreamState::Failed(Lm15Error::InvalidRequestError(meta))
+            }
         };
         EventStream {
             provider: self.provider().to_string(),
@@ -1240,7 +1294,7 @@ impl LmBuilder {
     /// The credential: a string (the `ApiKey` shorthand), a `Credential`
     /// value, or any `CredentialProvider` (invoked once per request).
     pub fn api_key(mut self, credentials: impl CredentialProvider + Send + Sync + 'static) -> Self {
-        self.credentials = Some(Box::new(credentials));
+        self.credentials = Some(Arc::new(credentials));
         self
     }
 
@@ -1354,7 +1408,10 @@ impl LmBuilder {
                 account_id: self.account_id,
             }),
             credentials,
-            clock: self.clock.unwrap_or_else(|| Box::new(SystemClock)),
+            clock: match self.clock {
+                Some(clock) => Arc::from(clock),
+                None => Arc::new(SystemClock),
+            },
             transport,
         })
     }
