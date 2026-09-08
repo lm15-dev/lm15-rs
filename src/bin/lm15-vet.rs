@@ -24,6 +24,8 @@ const OPS: &[&str] = &[
     "build_request",
     "build_models_request",
     "batch_op_build",
+    "cache_op_build",
+    "cache_op_parse",
     "batch_op_parse",
     "file_op_build",
     "file_op_parse",
@@ -349,6 +351,46 @@ fn op_batch_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
     })
 }
 
+fn op_cache_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    use lm15::adapter::CacheOp;
+    let lm = surface_adapter(msg, credential_of(msg)?)?;
+    let cache_id = msg.get("cache_id").and_then(Value::as_str).unwrap_or("");
+    let ttl = msg.get("ttl_seconds").and_then(Value::as_u64);
+    let built = match field_str(msg, "cache_op")?.as_str() {
+        "create" => {
+            let prefix = Request::from_json(field(msg, "prefix_request")?)?;
+            lm.cache_request(&CacheOp::Create {
+                prefix: &prefix,
+                ttl_seconds: ttl,
+                label: msg.get("label").and_then(Value::as_str),
+            })?
+        }
+        "get" => lm.cache_request(&CacheOp::Get(cache_id))?,
+        "delete" => lm.cache_request(&CacheOp::Delete(cache_id))?,
+        "update" => lm.cache_request(&CacheOp::Update {
+            cache_id,
+            ttl_seconds: ttl.ok_or_else(|| ValidationError::value("ttl_seconds is required"))?,
+        })?,
+        "list" => lm.cache_request(&CacheOp::List {
+            limit: msg.get("limit").and_then(Value::as_u64).unwrap_or(20),
+            cursor: msg.get("cursor").and_then(Value::as_str),
+        })?,
+        other => return Err(ValidationError::value(format!("unknown cache_op {other:?}")).into()),
+    };
+    Ok(transport_request_json(&built))
+}
+
+fn op_cache_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+    let body = body_of(msg)?;
+    Ok(match field_str(msg, "kind")?.as_str() {
+        "info" => json!({ "cache": lm.parse_cache_info(status, &body)?.to_json() }),
+        "page" => json!({ "page": lm.parse_cache_page(status, &body)?.to_json() }),
+        other => return Err(ValidationError::value(format!("unknown kind {other:?}")).into()),
+    })
+}
+
 fn op_build_models_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let lm = surface_adapter(msg, credential_of(msg)?)?;
     Ok(transport_request_json(&lm.models_request()?))
@@ -498,6 +540,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "parse_response" => op_parse_response(msg),
         "build_models_request" => op_build_models_request(msg),
         "file_op_build" => op_file_op_build(msg),
+        "cache_op_build" => op_cache_op_build(msg),
+        "cache_op_parse" => op_cache_op_parse(msg),
         "batch_op_build" => op_batch_op_build(msg),
         "batch_op_parse" => op_batch_op_parse(msg),
         "file_op_parse" => op_file_op_parse(msg),

@@ -39,8 +39,8 @@ use crate::transport::{
 use serde_json::Value;
 
 use crate::types::{
-    BatchEntry, BatchJobInfo, BatchRequest, FileInfo, FilePage, FileUploadRequest, ModelInfo,
-    Request, Response, StreamEvent,
+    BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
+    FileUploadRequest, ModelInfo, Request, Response, StreamEvent,
 };
 use crate::wire::{
     emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
@@ -520,6 +520,73 @@ impl ProviderLM {
         self.parse_batch_jobs(status, &body)
     }
 
+    // ─── stored caches (MAP-6 resource tier; module 7c) ──────────────
+
+    pub fn cache_request(&self, op: &CacheOp<'_>) -> Result<TransportRequest, Lm15Error> {
+        self.require("caches")?;
+        let cx = self.binding.surface_context();
+        let dialect = dialect_for(self.dialect());
+        let (wire, timeout) = match op {
+            CacheOp::Create { prefix, ttl_seconds, label } => {
+                (dialect.cache_create_request(&cx, prefix, *ttl_seconds, *label)?, 120)
+            }
+            CacheOp::Get(id) => (dialect.cache_get_request(&cx, id)?, 60),
+            CacheOp::List { limit, cursor } => (dialect.cache_list_request(&cx, *limit, *cursor)?, 60),
+            CacheOp::Delete(id) => (dialect.cache_delete_request(&cx, id)?, 60),
+            CacheOp::Update { cache_id, ttl_seconds } => {
+                (dialect.cache_update_request(&cx, cache_id, *ttl_seconds)?, 60)
+            }
+        };
+        self.surface_request(wire, timeout)
+    }
+
+    pub fn parse_cache_info(&self, status: u16, body: &[u8]) -> Result<CacheInfo, Lm15Error> {
+        self.require("caches")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).cache_info(&self.binding.surface_context(), body)
+    }
+
+    pub fn parse_cache_page(&self, status: u16, body: &[u8]) -> Result<CachePage, Lm15Error> {
+        self.require("caches")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).cache_page(&self.binding.surface_context(), body)
+    }
+
+    /// Store a prefix (model, system, tools, messages) as a provider-side
+    /// cache object; `CacheInfo.id` is what `CacheConfig.resource` names.
+    pub async fn cache_create(&self, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<CacheInfo, Lm15Error> {
+        let built = self.cache_request(&CacheOp::Create { prefix, ttl_seconds, label })?;
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_cache_info(status, &body)
+    }
+
+    pub async fn cache_get(&self, cache_id: &str) -> Result<CacheInfo, Lm15Error> {
+        let built = self.cache_request(&CacheOp::Get(cache_id))?;
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_cache_info(status, &body)
+    }
+
+    pub async fn cache_list(&self, limit: u64, cursor: Option<&str>) -> Result<CachePage, Lm15Error> {
+        let built = self.cache_request(&CacheOp::List { limit, cursor })?;
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_cache_page(status, &body)
+    }
+
+    pub async fn cache_delete(&self, cache_id: &str) -> Result<(), Lm15Error> {
+        let built = self.cache_request(&CacheOp::Delete(cache_id))?;
+        self.send_surface(built).await.map(|_| ())
+    }
+
+    pub async fn cache_update(&self, cache_id: &str, ttl_seconds: u64) -> Result<CacheInfo, Lm15Error> {
+        let built = self.cache_request(&CacheOp::Update { cache_id, ttl_seconds })?;
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_cache_info(status, &body)
+    }
+
     /// `_require` (`lm15/providers/base.py:366-377`): the bound access
     /// path, not the dialect, decides which surfaces exist.
     fn require(&self, surface: &str) -> Result<(), Lm15Error> {
@@ -624,6 +691,20 @@ pub enum FileOp<'a> {
     List { limit: u64, cursor: Option<&'a str> },
     Delete(&'a str),
     Download(&'a str),
+}
+
+/// One stored-cache op (the shim's `cache_op`).
+#[derive(Debug)]
+pub enum CacheOp<'a> {
+    Create {
+        prefix: &'a Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&'a str>,
+    },
+    Get(&'a str),
+    List { limit: u64, cursor: Option<&'a str> },
+    Delete(&'a str),
+    Update { cache_id: &'a str, ttl_seconds: u64 },
 }
 
 /// One batch action (the shim's `action`).

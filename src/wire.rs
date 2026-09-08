@@ -33,8 +33,8 @@ use crate::sse::SseEvent;
 /// `lm15/providers/openai.py:391`).
 pub const CODEX_BACKEND: &str = "chatgpt-codex";
 use crate::types::{
-    BatchEntry, BatchJobInfo, BatchRequest, FileInfo, FilePage, FileUploadRequest, ModelInfo,
-    ModelOrigin, Request, Response, StreamEvent,
+    BatchEntry, BatchJobInfo, BatchRequest, CacheInfo, CachePage, FileInfo, FilePage,
+    FileUploadRequest, ModelInfo, ModelOrigin, Request, Response, StreamEvent,
 };
 
 /// A request ready for a transport. `url` carries no query string; the
@@ -319,6 +319,36 @@ pub trait Surfaces {
     fn batch_jobs(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<Vec<BatchJobInfo>, Lm15Error> {
         let _ = body;
         Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+
+    // ─── stored caches (the resource tier of MAP-6) ───
+    fn cache_create_request(&self, cx: &BuildContext<'_>, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        let _ = (prefix, ttl_seconds, label);
+        Err(crate::surfaces::unsupported(cx.provider, "caches"))
+    }
+    fn cache_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<CacheInfo, Lm15Error> {
+        let _ = body;
+        Err(crate::surfaces::unsupported(cx.provider, "caches"))
+    }
+    fn cache_get_request(&self, cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+        let _ = cache_id;
+        Err(crate::surfaces::unsupported(cx.provider, "caches"))
+    }
+    fn cache_list_request(&self, cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        let _ = (limit, cursor);
+        Err(crate::surfaces::unsupported(cx.provider, "caches"))
+    }
+    fn cache_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<CachePage, Lm15Error> {
+        let _ = body;
+        Err(crate::surfaces::unsupported(cx.provider, "caches"))
+    }
+    fn cache_delete_request(&self, cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+        let _ = cache_id;
+        Err(crate::surfaces::unsupported(cx.provider, "caches"))
+    }
+    fn cache_update_request(&self, cx: &BuildContext<'_>, cache_id: &str, ttl_seconds: u64) -> Result<WireRequest, Lm15Error> {
+        let _ = (cache_id, ttl_seconds);
+        Err(crate::surfaces::unsupported(cx.provider, "caches"))
     }
 }
 

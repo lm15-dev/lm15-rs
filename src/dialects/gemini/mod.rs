@@ -18,6 +18,7 @@
 mod config;
 mod contents;
 pub mod batch;
+pub mod cache;
 pub mod files;
 pub mod response;
 
@@ -242,6 +243,28 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
 }
 
 impl Surfaces for Gemini {
+    fn cache_create_request(&self, cx: &BuildContext<'_>, prefix: &Request, ttl_seconds: Option<u64>, label: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        cache::create_request(self, cx, prefix, ttl_seconds, label)
+    }
+    fn cache_info(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::CacheInfo, Lm15Error> {
+        cache::info_from_body(cx, body)
+    }
+    fn cache_get_request(&self, _cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(cache::get_request(cache_id))
+    }
+    fn cache_list_request(&self, _cx: &BuildContext<'_>, limit: u64, cursor: Option<&str>) -> Result<WireRequest, Lm15Error> {
+        Ok(cache::list_request(limit, cursor))
+    }
+    fn cache_page(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::CachePage, Lm15Error> {
+        cache::page(cx, body)
+    }
+    fn cache_delete_request(&self, _cx: &BuildContext<'_>, cache_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(cache::delete_request(cache_id))
+    }
+    fn cache_update_request(&self, _cx: &BuildContext<'_>, cache_id: &str, ttl_seconds: u64) -> Result<WireRequest, Lm15Error> {
+        Ok(cache::update_request(cache_id, ttl_seconds))
+    }
+
     fn batch_upload_request(&self, _cx: &BuildContext<'_>, _request: &crate::types::BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
         Ok(None)
     }
