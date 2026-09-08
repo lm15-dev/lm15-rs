@@ -1566,6 +1566,10 @@ macro_rules! named_constructor {
             /// configured is the typed `NotConfiguredError` naming the
             /// env keys or the login hint. Use [`Self::builder`] for an
             /// explicit key, base URL, settings or transport.
+            // The family's name for this is `new` (api-family § Providers,
+            // direct); the unit struct is a namespace, the adapter type is
+            // `ProviderLM` — stated in the README.
+            #[allow(clippy::new_ret_no_self)]
             pub fn new() -> Result<ProviderLM, Lm15Error> {
                 crate::router::provider_from_environment($provider)
             }
