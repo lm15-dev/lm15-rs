@@ -37,20 +37,24 @@ pub mod compat;
 pub mod dialects;
 pub mod errors;
 pub mod registry;
+pub mod response_stream;
 pub mod serde;
 pub mod sse;
 pub mod stream;
+pub mod transport;
 pub mod types;
 pub mod wire;
 
 pub use adapter::{
-    AnthropicLM, ClaudeCodeLM, GeminiLM, LmBuilder, OpenAIChatLM, OpenAICodexLM, OpenAILM,
-    ProviderLM, XaiLM,
+    AnthropicLM, ClaudeCodeLM, EventStream, GeminiLM, LmBuilder, OpenAIChatLM, OpenAICodexLM,
+    OpenAILM, ProviderLM, XaiLM,
 };
 pub use auth::{AccessPolicy, Credential, CredentialProvider, HostSpec};
 pub use cloud::hosts::HostSettings;
 pub use compat::{AnthropicCompat, OpenAIChatCompat, OpenAIResponsesCompat};
 pub use errors::{normalize_error, ErrorClass, ErrorCode, ErrorMeta, Lm15Error};
+pub use response_stream::ResponseStream;
 pub use serde::Canonical;
+pub use transport::{HttpTransport, Transport, TransportResponse};
 pub use types::*;
 pub use wire::TransportRequest;

@@ -366,6 +366,26 @@ impl Lm15Error {
         }
     }
 
+    pub fn meta_mut(&mut self) -> &mut ErrorMeta {
+        match self {
+            Lm15Error::StreamAssemblyError(s) => &mut s.meta,
+            Lm15Error::TransportError(m)
+            | Lm15Error::ConfigurationError(m)
+            | Lm15Error::NotConfiguredError(m)
+            | Lm15Error::CapabilityError(m)
+            | Lm15Error::UnsupportedFeatureError(m)
+            | Lm15Error::ProviderError(m)
+            | Lm15Error::AuthError(m)
+            | Lm15Error::BillingError(m)
+            | Lm15Error::RateLimitError(m)
+            | Lm15Error::InvalidRequestError(m)
+            | Lm15Error::ContextLengthError(m)
+            | Lm15Error::UnsupportedModelError(m)
+            | Lm15Error::TimeoutError(m)
+            | Lm15Error::ServerError(m) => m,
+        }
+    }
+
     pub fn message(&self) -> &str {
         &self.meta().message
     }

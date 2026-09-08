@@ -8,11 +8,19 @@
 //! Module 4 is the request side: [`ProviderLM::build_request`]. Module 5
 //! is the response side: [`ProviderLM::parse_response`] for a complete
 //! body, [`ProviderLM::stream_decoder`] / [`ProviderLM::replay_stream`] for
-//! an SSE body (MAP-1..4, MAP-9). `complete` and `stream` over a transport,
-//! and `LMRouter`, are not yet built: the codec is the contract, the
-//! transport is per-language idiom (harness/PROTOCOL.md § Concurrency).
+//! an SSE body (MAP-1..4, MAP-9). Module 5b is the network:
+//! [`ProviderLM::complete`] and [`ProviderLM::stream`] send the built
+//! request through a [`Transport`] and decode the answer (the reference's
+//! `BaseProviderLM.complete` / `_stream_raw`). `LMRouter` is not yet
+//! built.
 
+use std::collections::VecDeque;
 use std::fmt;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
+use futures_core::Stream;
 
 use crate::auth::{AccessPolicy, CredentialProvider};
 use crate::cloud::hosts::{render_base_url, resolve_settings, HostSettings};
@@ -25,11 +33,15 @@ use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::{lookup, DialectId, ProviderDefinition};
 use crate::sse::{SseEvent, SseParser};
 use crate::stream::{materialize_response, Coalescer};
+use crate::transport::{
+    attach_retry_after, BodyStream, BoxFuture, HttpTransport, Transport, TransportResponse,
+};
 use crate::types::{Request, Response, StreamEvent};
 use crate::wire::{emit, BuildContext, Clock, Dialect, SystemClock, TransportRequest};
 
 type BoxedCredentials = Box<dyn CredentialProvider + Send + Sync>;
 type BoxedClock = Box<dyn Clock + Send + Sync>;
+type SharedTransport = Arc<dyn Transport>;
 
 /// A dialect bound to an access policy, a compat value, a credential
 /// provider, a base URL, host settings and a clock.
@@ -42,6 +54,7 @@ pub struct ProviderLM {
     base_url: String,
     settings: HostSettings,
     clock: BoxedClock,
+    transport: SharedTransport,
 }
 
 impl ProviderLM {
@@ -178,6 +191,169 @@ impl ProviderLM {
         let events = self.replay_stream(request, body)?;
         materialize_response(events.iter(), request)
     }
+
+    /// The transport this adapter sends through.
+    pub fn transport(&self) -> &dyn Transport {
+        self.transport.as_ref()
+    }
+
+    /// One call: build, send, decode (`BaseProviderLM.complete`). A
+    /// status of 400 or more is the provider's error, normalized, with
+    /// `retry_after` from the `Retry-After` header when the body did not
+    /// say; a failure below HTTP is `TransportError`.
+    pub async fn complete(&self, request: &Request) -> Result<Response, Lm15Error> {
+        let built = self.build_request(request, false)?;
+        let mut response = self.transport.send(built).await?;
+        let status = response.status;
+        let headers = std::mem::take(&mut response.headers);
+        let body = response.read().await?;
+        if status >= 400 {
+            return Err(self.http_error(status, &headers, &body));
+        }
+        self.parse_response(request, status, &body)
+    }
+
+    /// The canonical events of one streamed call, as they arrive
+    /// (`BaseProviderLM.stream`): one start event, deltas, one final end
+    /// event (MAP-3, MAP-4). A provider error before the stream opens, a
+    /// transport failure mid-stream, or a malformed frame is the stream's
+    /// one `Err` item, after which it ends. A provider's in-band error
+    /// frame is an `Ok(StreamEvent::Error)`, as the dialect decoded it;
+    /// [`crate::ResponseStream`] turns it into the typed error. Dropping
+    /// the stream closes the connection.
+    pub fn stream<'a>(&'a self, request: &'a Request) -> EventStream<'a> {
+        let state = match self.build_request(request, true) {
+            Ok(built) => {
+                let transport = Arc::clone(&self.transport);
+                let fut: BoxFuture<'a, Result<TransportResponse, Lm15Error>> =
+                    Box::pin(async move {
+                        let response = transport.send(built).await?;
+                        if response.status >= 400 {
+                            let status = response.status;
+                            let headers = response.headers.clone();
+                            let body = response.read().await?;
+                            return Err(self.http_error(status, &headers, &body));
+                        }
+                        Ok(response)
+                    });
+                StreamState::Connecting(fut)
+            }
+            Err(err) => StreamState::Failed(err),
+        };
+        EventStream {
+            lm: self,
+            request,
+            state,
+            pending: VecDeque::new(),
+        }
+    }
+
+    /// The typed error of a non-2xx response: the dialect's normalization
+    /// over the body, `Retry-After` from the headers filling the gap.
+    pub fn http_error(&self, status: u16, headers: &[(String, String)], body: &[u8]) -> Lm15Error {
+        let text = String::from_utf8_lossy(body);
+        let mut error = match crate::errors::normalize_error(&self.provider, status, &text) {
+            Ok(error) => error,
+            Err(err) => Lm15Error::ConfigurationError(ErrorMeta::new(err.message)),
+        };
+        attach_retry_after(&mut error, headers);
+        error
+    }
+}
+
+/// The stream [`ProviderLM::stream`] returns: connects on first poll,
+/// then decodes body chunks into canonical events.
+pub struct EventStream<'a> {
+    lm: &'a ProviderLM,
+    request: &'a Request,
+    state: StreamState<'a>,
+    pending: VecDeque<StreamEvent>,
+}
+
+enum StreamState<'a> {
+    Failed(Lm15Error),
+    Connecting(BoxFuture<'a, Result<TransportResponse, Lm15Error>>),
+    Streaming {
+        body: BodyStream,
+        // Boxed: the decoder (SSE buffer + coalescer) is the fat variant.
+        decoder: Box<StreamDecoder<'a>>,
+    },
+    Done,
+}
+
+impl Stream for EventStream<'_> {
+    type Item = Result<StreamEvent, Lm15Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        loop {
+            if let Some(event) = this.pending.pop_front() {
+                return Poll::Ready(Some(Ok(event)));
+            }
+            match &mut this.state {
+                StreamState::Done => return Poll::Ready(None),
+                StreamState::Failed(_) => {
+                    let StreamState::Failed(err) =
+                        std::mem::replace(&mut this.state, StreamState::Done)
+                    else {
+                        unreachable!()
+                    };
+                    return Poll::Ready(Some(Err(err)));
+                }
+                StreamState::Connecting(fut) => match fut.as_mut().poll(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(err)) => {
+                        this.state = StreamState::Done;
+                        return Poll::Ready(Some(Err(err)));
+                    }
+                    Poll::Ready(Ok(response)) => {
+                        this.state = StreamState::Streaming {
+                            body: response.into_body(),
+                            decoder: Box::new(this.lm.stream_decoder(this.request)),
+                        };
+                    }
+                },
+                StreamState::Streaming { body, decoder } => match body.as_mut().poll_next(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Some(Err(err))) => {
+                        this.state = StreamState::Done;
+                        return Poll::Ready(Some(Err(err)));
+                    }
+                    Poll::Ready(Some(Ok(chunk))) => match decoder.feed(&chunk) {
+                        Ok(events) => this.pending.extend(events),
+                        Err(err) => {
+                            this.state = StreamState::Done;
+                            return Poll::Ready(Some(Err(err)));
+                        }
+                    },
+                    Poll::Ready(None) => {
+                        let finished = decoder.finish();
+                        this.state = StreamState::Done;
+                        match finished {
+                            Ok(events) => this.pending.extend(events),
+                            Err(err) => return Poll::Ready(Some(Err(err))),
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
+impl fmt::Debug for EventStream<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = match self.state {
+            StreamState::Failed(_) => "failed",
+            StreamState::Connecting(_) => "connecting",
+            StreamState::Streaming { .. } => "streaming",
+            StreamState::Done => "done",
+        };
+        f.debug_struct("EventStream")
+            .field("provider", &self.lm.provider)
+            .field("state", &state)
+            .field("pending", &self.pending.len())
+            .finish()
+    }
 }
 
 /// The streaming codec of one response, incremental: SSE bytes in,
@@ -251,6 +427,7 @@ pub struct LmBuilder {
     base_url: Option<String>,
     settings: HostSettings,
     clock: Option<BoxedClock>,
+    transport: Option<SharedTransport>,
 }
 
 impl LmBuilder {
@@ -266,6 +443,7 @@ impl LmBuilder {
             base_url: None,
             settings: HostSettings::new(),
             clock: None,
+            transport: None,
         }
     }
 
@@ -316,6 +494,18 @@ impl LmBuilder {
         self
     }
 
+    /// The transport to send through; the process-wide
+    /// [`HttpTransport::shared`] otherwise.
+    pub fn transport(mut self, transport: impl Transport + 'static) -> Self {
+        self.transport = Some(Arc::new(transport));
+        self
+    }
+
+    pub fn transport_shared(mut self, transport: SharedTransport) -> Self {
+        self.transport = Some(transport);
+        self
+    }
+
     pub fn build(self) -> Result<ProviderLM, Lm15Error> {
         let provider = self.provider;
         let policy = self.policy;
@@ -355,6 +545,11 @@ impl LmBuilder {
             },
         };
 
+        let transport = match self.transport {
+            Some(transport) => transport,
+            None => HttpTransport::shared()?,
+        };
+
         Ok(ProviderLM {
             provider: provider.to_string(),
             dialect: self.dialect,
@@ -364,6 +559,7 @@ impl LmBuilder {
             base_url,
             settings,
             clock: self.clock.unwrap_or_else(|| Box::new(SystemClock)),
+            transport,
         })
     }
 }

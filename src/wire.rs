@@ -17,6 +17,7 @@
 //!   Nothing else touches headers.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -42,6 +43,9 @@ pub struct TransportRequest {
     pub params: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
     pub body: Option<Value>,
+    /// The idle read timeout for this request (the reference's
+    /// per-request `read_timeout`); `None` takes the transport's default.
+    pub read_timeout: Option<Duration>,
 }
 
 impl TransportRequest {
@@ -291,6 +295,13 @@ pub fn emit(
             .map(|(k, v)| (k.to_ascii_lowercase(), v))
             .collect(),
         body,
+        // Every dialect's `build_request`: `read_timeout=120.0 if stream
+        // else 60.0`.
+        read_timeout: Some(if stream {
+            crate::transport::STREAM_READ_TIMEOUT
+        } else {
+            crate::transport::DEFAULT_READ_TIMEOUT
+        }),
     };
 
     if scheme == AuthScheme::SigV4 {

@@ -19,6 +19,21 @@ serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 # SigV4 (spec/auth.md AUTH-11): RustCrypto SHA-256 and HMAC.
 sha2 = "0.10"
 hmac = "0.12"
+# Transport (playbooks/api-family.md rule 5: Rust uses reqwest + tokio, the
+# one stated zero-dependency deviation). rustls with the OS trust store
+# (rustls-platform-verifier), the same store the reference's
+# ssl.create_default_context() reads; no compression features, so the
+# provider sends identity bodies, as the reference asks for.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "stream"] }
+tokio = { version = "1", features = ["time"] }
+futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false }
+bytes = "1"
+# Retry-After as an HTTP-date (the reference: email.utils.parsedate_to_datetime).
+httpdate = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "test-util"] }
 
 [[bin]]
 name = "lm15-vet"

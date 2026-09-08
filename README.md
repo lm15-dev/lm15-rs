@@ -16,6 +16,8 @@ grade the port against any other commit.
 | 3b cloud chains | AUTH-1 `aws-chain`/`azure-chain`/`gcp-chain`, AUTH-11 rung kinds, SigV4, RS256 | SigV4 done (module 4 needs it): `--direction token` 34 pass / 9 fail — the 34 `sigv4.*` vectors pass, the 9 `token.*` vectors (`token_exchange_build` / `token_exchange_parse`: GCP service account, Azure certificate/secret/MSI, GCP metadata, AWS credential_process/IMDS) answer `UnsupportedFeatureError` naming module 3b. Cloud-chain providers are in the policy table as data; `explain_auth` answers `AuthError::NotImplemented` (class `NotConfiguredError`) for them. The 11 cloud auth cases are asserted to answer that error and counted, not skipped |
 | 4 — dialects, request side | AUTH-10 policy table, hosts, settings, host rewrites; MAP-5..MAP-8 refusals; **MAP-10 tool-result content** (`src/dialects/content.rs`, the `tool_result_media` knob on the three compat tables); compat presets; the four dialects (`src/dialects/{anthropic,openai_responses,openai_chat,gemini}`) | done — `--direction request` 361 pass / 0 fail / 1 skip (`openai.computer_use`, no canonical_request) at the pin, including the 64 MAP-10 cases (native and raise). The per-dialect sections below state each dialect's deviations |
 | 5 — dialects, response side + stream assembly | MAP-1..MAP-4, MAP-9; `parse_response` / `replay_stream` for the four dialects; the SSE parser; the MAP-3/4 coalescer and the MAP-9 assembler (`src/stream.rs`) | done — `--direction response` 298 pass / 0 fail / 1 skip (`openai.computer_use`, no golden), `--direction stream` 40 pass / 0 fail / 0 skip, including the pinned `StreamAssemblyError` refusal (`openai_chat.tool_call_unnamed`). The "Module 5" section below states the deviations |
+| 5b — the network | `complete` / `stream` over a transport (api-family § The core loop, § Providers, direct); `ResponseStream` | done — `src/transport.rs` (the `Transport` trait, the reqwest `HttpTransport`), `ProviderLM::complete` / `ProviderLM::stream`, `src/response_stream.rs`. `tests/transport_roundtrip.rs` drives the real transport against a loopback HTTP/1.1 server (SSE frames split across chunks, a 429 with `Retry-After`, a stalled body, cancellation by drop). First live traffic: `receipts/2026-09-07-live-smoke/` (one binding per dialect, `complete` and `stream` agree). Not a harness direction: the codec is the contract, the transport is per-language idiom |
+| `LMRouter`, the `blocking` feature | api-family § The core loop, rule 4 | not started |
 | 6–9 — models, files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
 
 Gates for modules 1–4, from the contract checkout:
@@ -54,6 +56,47 @@ The shim answers `capabilities`, `serde_roundtrip`, `validate`,
 implemented: it must come from reflection, and Rust has no runtime
 reflection over struct fields; it is not a module gate (`tools/audit.py`
 reads the reference's dump).
+
+## Quick start (a call)
+
+```rust
+use futures_util::StreamExt;
+use lm15::{AnthropicLM, Config, Message, Request, ResponseStream};
+
+let lm = AnthropicLM::builder().api_key(std::env::var("ANTHROPIC_API_KEY")?).build()?;
+let request = Request {
+    model: "claude-haiku-4-5".into(),
+    messages: vec![Message::user("hi")?],
+    config: Config { max_tokens: Some(100), ..Default::default() },
+    ..Default::default()
+};
+
+// One call.
+let response = lm.complete(&request).await?;
+println!("{}", response.text().unwrap_or_default());
+
+// Streamed: text as it arrives, then the same Response `complete` returns.
+let mut rs = ResponseStream::new(lm.stream(&request), &request);
+while let Some(text) = rs.text_chunks().next().await {
+    print!("{}", text?);
+}
+let response = rs.response().await?;
+```
+
+Async on tokio (api-family rule 4). `lm.stream(&request)` is a
+`Stream<Item = Result<StreamEvent, Lm15Error>>` — one start event, deltas,
+one final end event (MAP-3/4) — and dropping it closes the connection. A
+provider's non-2xx is the typed error with `retry_after` from the
+`Retry-After` header when the body did not say; anything below HTTP (DNS,
+connect, TLS, a reset, a read that idles past its timeout) is
+`TransportError`, retryable. `LmBuilder::transport` injects any
+`Transport` (a fake for tests, a client with custom roots or a pinned
+proxy); every adapter otherwise shares `HttpTransport::shared()`, one
+connection pool per process.
+
+`cargo run --example live_smoke -- <dir>` sends one request per dialect
+with the keys in the environment and writes redacted receipts; it is not
+a gate.
 
 ## Quick start (types and errors)
 
@@ -135,10 +178,36 @@ Each row names the rule it deviates from (playbooks/port.md rule 8).
   (private fields, checked setters) would cost every caller more.
 
 - **Dependencies** (api-family rule 5): the port uses `serde` and
-  `serde_json`, plus `sha2` and `hmac` (RustCrypto) for SigV4. Zero-dep is
-  not a Rust idiom; stated once for the whole port. A hand-rolled SHA-256
-  and HMAC would be unaudited and not constant-time; RustCrypto is the
-  audited implementation the ecosystem uses.
+  `serde_json`, plus `sha2` and `hmac` (RustCrypto) for SigV4, and for
+  the network `reqwest` + `tokio` (the pair rule 5 names for Rust) with
+  `futures-core` / `futures-util` (the `Stream` trait), `bytes`, and
+  `httpdate` (`Retry-After` as an HTTP-date; zero-dep, what hyper uses).
+  Zero-dep is not a Rust idiom; stated once for the whole port. A
+  hand-rolled SHA-256 and HMAC would be unaudited and not constant-time;
+  RustCrypto is the audited implementation the ecosystem uses.
+- **TLS** is rustls with the OS trust store (`rustls-platform-verifier`,
+  the store the reference's `ssl.create_default_context()` reads) and
+  rustls's default crypto provider, `aws-lc-rs`. The cost: `aws-lc-sys`
+  is a C build (a C compiler; cmake on some platforms). The alternative,
+  `ring` under `rustls-no-provider`, would have the library install a
+  process-global provider or own the TLS configuration itself; neither
+  is a library's place. reqwest honours a provider the application
+  installs first, so an application that wants `ring` can have it.
+- **Socket timeouts are `TransportError`, not `TimeoutError`** — the
+  reference's own mapping (`_send` / `_stream_raw` wrap every
+  `transports.TransportError`, `ReadTimeout` included); `TimeoutError`
+  is the provider's 408/504 (spec/vocabularies.md). Both are retryable.
+- **The write timeout is folded into the read timeout.** The reference
+  has connect / read / write timeouts; reqwest has no separate write
+  timeout, so the per-request idle timeout (60 s complete, 120 s
+  stream, the reference's values) bounds the wait for the response head
+  — which includes writing the request — and then every body chunk.
+  HTTP/2 is negotiated when the provider offers it; the reference speaks
+  HTTP/1.1 only. Nothing on the wire the contract pins depends on the
+  HTTP version.
+- **`ResponseStream` requires its source to be `Unpin`** (`Box::pin` one
+  that is not); pin projection without the `pin-project` crate is
+  unsafe code, and every stream the port itself returns is `Unpin`.
 - **`serde_json` `preserve_order`** (a feature, not a new dependency at
   the surface; it pulls `indexmap`): a SigV4 signature covers the body
   bytes, and every Bedrock fixture pins the reference's JSON key order
