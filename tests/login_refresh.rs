@@ -328,10 +328,14 @@ async fn lock_contention_is_a_timeout_not_an_auth_failure() {
         .build()
         .unwrap();
     let err = lm.complete(&request()).await.unwrap_err();
-    assert_eq!(err.class_name(), "TimeoutError");
+    assert_eq!(err.class_name(), "LockTimeoutError");
+    assert_eq!(err.code().as_str(), "lock_timeout");
     assert!(err.is_retryable());
     assert!(!err.is_a(ErrorClass::AuthError));
+    assert!(!err.is_a(ErrorClass::ProviderError));
     assert_eq!(err.provider(), None);
+    let (path, lock_path) = err.lock_paths().unwrap();
+    assert!(path.ends_with(".credentials.json") && lock_path.ends_with(".lock"));
     assert!(err.message().contains("lock"), "{err}");
     assert!(transport.urls().is_empty());
 }

@@ -12,6 +12,7 @@ use crate::types::{
 use crate::wire::{batch_entry_request, wire_model, BuildContext, Dialect, WireRequest};
 
 use super::model_path;
+use crate::cloud::percent::path_id;
 
 /// `_gemini_batch_status` (states observed live 2026-08-31:
 /// BATCH_STATE_PENDING / RUNNING / SUCCEEDED — the docs' JOB_STATE_*
@@ -104,11 +105,11 @@ pub fn job_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<BatchJobInfo,
 }
 
 pub fn status_request(batch_id: &str) -> WireRequest {
-    WireRequest::get(format!("/{batch_id}"))
+    WireRequest::get(format!("/{}", path_id(batch_id, true)))
 }
 
 pub fn cancel_request(batch_id: &str) -> WireRequest {
-    let mut wire = WireRequest::post(format!("/{batch_id}:cancel"), json!({}));
+    let mut wire = WireRequest::post(format!("/{}:cancel", path_id(batch_id, true)), json!({}));
     wire.headers
         .push(("Content-Type".into(), "application/json".into()));
     wire

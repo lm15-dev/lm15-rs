@@ -3,6 +3,7 @@
 
 use serde_json::{Map, Value};
 
+use crate::cloud::percent::path_id;
 use crate::errors::Lm15Error;
 use crate::surfaces::{
     body_object, iso_utc, multipart_form_body, openai_file_readiness, provider_error, str_field,
@@ -78,7 +79,7 @@ pub fn file_info_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<FileInf
 }
 
 pub fn get_request(cx: &BuildContext<'_>, file_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/files/{file_id}"));
+    let mut wire = WireRequest::get(format!("/files/{}", path_id(file_id, false)));
     wire.headers = json_headers(cx);
     wire
 }
@@ -114,14 +115,14 @@ pub fn page(cx: &BuildContext<'_>, body: &[u8]) -> Result<FilePage, Lm15Error> {
 }
 
 pub fn delete_request(cx: &BuildContext<'_>, file_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/files/{file_id}"));
+    let mut wire = WireRequest::get(format!("/files/{}", path_id(file_id, false)));
     wire.method = "DELETE".into();
     wire.headers = json_headers(cx);
     wire
 }
 
 pub fn download_request(cx: &BuildContext<'_>, file_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/files/{file_id}/content"));
+    let mut wire = WireRequest::get(format!("/files/{}/content", path_id(file_id, false)));
     wire.headers = json_headers(cx);
     wire
 }

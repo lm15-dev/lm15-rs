@@ -13,6 +13,7 @@ use crate::types::{
 use crate::wire::{batch_entry_request, BuildContext, Dialect, WireRequest};
 
 use super::surface_headers;
+use crate::cloud::percent::path_id;
 
 fn json_headers(cx: &BuildContext<'_>) -> Vec<(String, String)> {
     let mut headers = surface_headers(cx.policy);
@@ -110,13 +111,16 @@ pub fn job_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<BatchJobInfo,
 }
 
 pub fn status_request(cx: &BuildContext<'_>, batch_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/messages/batches/{batch_id}"));
+    let mut wire = WireRequest::get(format!("/messages/batches/{}", path_id(batch_id, false)));
     wire.headers = json_headers(cx);
     wire
 }
 
 pub fn cancel_request(cx: &BuildContext<'_>, batch_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/messages/batches/{batch_id}/cancel"));
+    let mut wire = WireRequest::get(format!(
+        "/messages/batches/{}/cancel",
+        path_id(batch_id, false)
+    ));
     wire.method = "POST".into();
     wire.headers = json_headers(cx);
     wire

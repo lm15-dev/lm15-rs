@@ -11,6 +11,6 @@
 pub mod chains;
 pub mod hosts;
 pub mod ini;
-pub(crate) mod percent;
+pub mod percent;
 pub mod rs256;
 pub mod sigv4;

@@ -10,6 +10,7 @@ use crate::types::{VideoGenerationRequest, VideoJobInfo, VideoPart, VideoStatus}
 use crate::wire::{BuildContext, WireRequest};
 
 use super::files::json_headers;
+use crate::cloud::percent::path_id;
 
 fn status(wire: &str) -> Option<VideoStatus> {
     Some(match wire {
@@ -78,14 +79,14 @@ pub fn job_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<VideoJobInfo,
 }
 
 pub fn status_request(cx: &BuildContext<'_>, video_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/videos/{video_id}"));
+    let mut wire = WireRequest::get(format!("/videos/{}", path_id(video_id, false)));
     wire.headers = json_headers(cx);
     wire
 }
 
 pub fn result_fetch(cx: &BuildContext<'_>, status_body: &Map<String, Value>) -> WireRequest {
     let id = status_body.get("id").and_then(Value::as_str).unwrap_or("");
-    let mut wire = WireRequest::get(format!("/videos/{id}/content"));
+    let mut wire = WireRequest::get(format!("/videos/{}/content", path_id(id, false)));
     wire.headers = json_headers(cx);
     wire
 }

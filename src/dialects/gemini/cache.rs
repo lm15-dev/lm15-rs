@@ -10,6 +10,7 @@ use crate::types::{CacheInfo, CachePage, Request};
 use crate::wire::{BuildContext, Dialect, WireRequest};
 
 use super::model_path;
+use crate::cloud::percent::path_id;
 
 pub fn cache_resource(cache_id: &str) -> String {
     if cache_id.starts_with("cachedContents/") {
@@ -86,7 +87,7 @@ pub fn info_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<CacheInfo, L
 }
 
 pub fn get_request(cache_id: &str) -> WireRequest {
-    WireRequest::get(format!("/{}", cache_resource(cache_id)))
+    WireRequest::get(format!("/{}", path_id(&cache_resource(cache_id), true)))
 }
 
 pub fn list_request(limit: u64, cursor: Option<&str>) -> WireRequest {
@@ -123,7 +124,7 @@ pub fn delete_request(cache_id: &str) -> WireRequest {
 pub fn update_request(cache_id: &str, ttl_seconds: u64) -> WireRequest {
     let mut wire = WireRequest::json(
         "PATCH",
-        format!("/{}", cache_resource(cache_id)),
+        format!("/{}", path_id(&cache_resource(cache_id), true)),
         json!({"ttl": format!("{ttl_seconds}s")}),
     );
     wire.headers

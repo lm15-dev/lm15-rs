@@ -11,6 +11,7 @@ use crate::types::{VideoGenerationRequest, VideoJobInfo, VideoPart, VideoStatus}
 use crate::wire::{BuildContext, WireRequest};
 
 use super::generation::json_headers;
+use crate::cloud::percent::path_id;
 
 pub fn submit_request(
     cx: &BuildContext<'_>,
@@ -86,7 +87,7 @@ pub fn job_from_body(
 }
 
 pub fn status_request(cx: &BuildContext<'_>, video_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/videos/{video_id}"));
+    let mut wire = WireRequest::get(format!("/videos/{}", path_id(video_id, false)));
     wire.headers = json_headers(cx);
     wire
 }

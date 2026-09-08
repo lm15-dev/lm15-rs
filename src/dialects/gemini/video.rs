@@ -11,6 +11,7 @@ use crate::types::{VideoGenerationRequest, VideoJobInfo, VideoPart, VideoStatus}
 use crate::wire::{wire_model, BuildContext, WireRequest};
 
 use super::model_path;
+use crate::cloud::percent::path_id;
 
 pub fn submit_request(
     cx: &BuildContext<'_>,
@@ -75,7 +76,7 @@ pub fn job_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<VideoJobInfo,
 }
 
 pub fn status_request(video_id: &str) -> WireRequest {
-    WireRequest::get(format!("/{video_id}"))
+    WireRequest::get(format!("/{}", path_id(video_id, true)))
 }
 
 fn result_uri(

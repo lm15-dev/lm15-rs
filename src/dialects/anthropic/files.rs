@@ -11,6 +11,7 @@ use crate::types::{FileInfo, FilePage, FileReadiness, FileUploadRequest};
 use crate::wire::{BuildContext, WireRequest};
 
 use super::surface_headers;
+use crate::cloud::percent::path_id;
 
 fn json_headers(cx: &BuildContext<'_>) -> Vec<(String, String)> {
     let mut headers = surface_headers(cx.policy);
@@ -75,7 +76,7 @@ pub fn file_info_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<FileInf
 }
 
 pub fn get_request(cx: &BuildContext<'_>, file_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/files/{file_id}"));
+    let mut wire = WireRequest::get(format!("/files/{}", path_id(file_id, false)));
     wire.headers = json_headers(cx);
     wire
 }
@@ -111,7 +112,7 @@ pub fn delete_request(cx: &BuildContext<'_>, file_id: &str) -> WireRequest {
 }
 
 pub fn download_request(cx: &BuildContext<'_>, file_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/files/{file_id}/content"));
+    let mut wire = WireRequest::get(format!("/files/{}/content", path_id(file_id, false)));
     wire.headers = json_headers(cx);
     wire
 }

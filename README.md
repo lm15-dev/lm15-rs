@@ -25,8 +25,8 @@ zero failures and no skips added; the two skips are corpus gaps
 | `stream` | SSE decoding, MAP-3/4 coalescing, MAP-9 assembly and its refusal | 40 / 0 |
 | `router` | the three rungs, precedence, `unknown_model` / `ambiguous_model` | 22 / 0 |
 | `models` | `list_models` on every provider | 34 / 0 |
-| `files`, `batch`, `cache` | the three surfaces, multipart byte for byte | 39 / 0, 35 / 0, 9 / 0 |
-| `generation`, `video` | image and speech generation, video jobs | 20 / 0, 24 / 0 |
+| `files`, `batch`, `cache` | the three surfaces, multipart byte for byte, MAP-11 id escaping | 48 / 0, 41 / 0, 11 / 0 |
+| `generation`, `video` | image and speech generation, video jobs (MAP-11) | 20 / 0, 27 / 0 |
 | `live` | the websocket codec (OpenAI Realtime, Gemini Live) | 24 / 0 |
 
 Beyond the harness: 397 unit and integration tests, zero `unsafe`, zero
@@ -338,13 +338,12 @@ wire is not affected unless the entry says so.
 - **Socket timeouts are `TransportError`, not `TimeoutError`** — the
   reference's own mapping; `TimeoutError` is the provider's 408/504.
   Both are retryable.
-- **A credential-file lock timeout is `TimeoutError`** (AUTH-6: "a local
-  timeout error type, deliberately not an `AuthError`"). The reference
-  raises a non-lm15 builtin `TimeoutError`; this port's one error enum
-  has no non-lm15 channel, so `AuthError::LockTimeout` maps to
-  `Lm15Error::TimeoutError` — retryable, no provider, the message names
-  the lock file. The cost: `is_a(ProviderError)` is true for it. Flagged
-  as a vocabulary gap for the contract (a local timeout has no code).
+- **A credential-file lock timeout is `LockTimeoutError`** (`lock_timeout`,
+  ratified 2026-09-08, `changes/2026-09-08-lock-timeout-code.md`, closing
+  the gap this port flagged): root-level beside `TransportError`,
+  retryable, no provider; `err.lock_paths()` reads the guarded file and
+  its lock. The reference's `CredentialLockTimeout` is additionally a
+  builtin `TimeoutError`; Rust has no such second channel and needs none.
 - **`normalize_error` takes no host settings**: it maps the body through
   the provider's dialect table without constructing an adapter.
 
@@ -553,11 +552,11 @@ tool call on the complete path became the contract on 2026-09-07
   2026-09-08 (`changes/2026-09-08-openai-chat-provider-spelling.md`).
 - Router error codes outside the vocabulary — RESOLVED 2026-09-08
   (`changes/2026-09-08-router-error-codes.md`; `--direction router`).
-- `findings/2026-09-08-id-path-escaping.md` — OPEN: provider ids are
-  interpolated raw into URL paths by the reference and this port alike;
-  the contract should state the escaping rule and pin a case.
-- A local lock timeout has no ErrorCode — OPEN, stated above under
-  Errors; the reference sidesteps it with a non-lm15 exception.
+- `findings/2026-09-08-id-path-escaping.md` — RESOLVED 2026-09-08
+  (`changes/2026-09-08-id-path-escaping.md`, MAP-11; ten pinned cases;
+  `cloud::percent::path_id` at every id-in-path site).
+- A local lock timeout had no ErrorCode — RESOLVED 2026-09-08
+  (`changes/2026-09-08-lock-timeout-code.md`; `lock_timeout`).
 
 ## Not implemented, stated
 

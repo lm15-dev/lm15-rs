@@ -280,8 +280,8 @@ mod tests {
         let err =
             FileLock::acquire_blocking(&locks, &guarded, Duration::from_millis(120)).unwrap_err();
         assert!(matches!(err, AuthError::LockTimeout { .. }));
-        assert_eq!(err.class_name(), "TimeoutError");
-        assert_eq!(err.code(), "timeout");
+        assert_eq!(err.class_name(), "LockTimeoutError");
+        assert_eq!(err.code(), "lock_timeout");
         assert!(err.to_string().contains("c.json"), "{err}");
         drop(held);
         assert!(FileLock::try_acquire(&locks, &guarded).unwrap().is_some());

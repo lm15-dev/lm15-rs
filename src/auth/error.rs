@@ -37,10 +37,8 @@ pub enum AuthError {
     /// The credential-file lock could not be taken within the timeout
     /// (AUTH-4): another lm15 process is refreshing the same credential.
     /// Local and transient — deliberately NOT an auth failure (AUTH-6:
-    /// nothing is wrong with the credential). The reference raises a
-    /// non-lm15 builtin `TimeoutError`; this port's one error enum maps it
-    /// to class `TimeoutError`, code `timeout` (retryable) with no
-    /// provider — stated in the README.
+    /// nothing is wrong with the credential). Class `LockTimeoutError`,
+    /// code `lock_timeout` (retryable; 2026-09-08).
     LockTimeout {
         path: String,
         lock_path: String,
@@ -67,7 +65,7 @@ impl AuthError {
             AuthError::Expired { .. }
             | AuthError::Rejected { .. }
             | AuthError::DeviceCodeExpired { .. } => "auth",
-            AuthError::LockTimeout { .. } => "timeout",
+            AuthError::LockTimeout { .. } => "lock_timeout",
             _ => "not_configured",
         }
     }
@@ -78,7 +76,7 @@ impl AuthError {
             AuthError::Expired { .. }
             | AuthError::Rejected { .. }
             | AuthError::DeviceCodeExpired { .. } => "AuthError",
-            AuthError::LockTimeout { .. } => "TimeoutError",
+            AuthError::LockTimeout { .. } => "LockTimeoutError",
             _ => "NotConfiguredError",
         }
     }
@@ -211,7 +209,13 @@ impl From<AuthError> for crate::errors::Lm15Error {
             AuthError::Expired { .. }
             | AuthError::Rejected { .. }
             | AuthError::DeviceCodeExpired { .. } => crate::errors::Lm15Error::AuthError(meta),
-            AuthError::LockTimeout { .. } => crate::errors::Lm15Error::TimeoutError(meta),
+            AuthError::LockTimeout {
+                path, lock_path, ..
+            } => crate::errors::Lm15Error::LockTimeoutError(crate::errors::LockTimeout {
+                meta,
+                path,
+                lock_path,
+            }),
             _ => crate::errors::Lm15Error::NotConfiguredError(meta),
         }
     }

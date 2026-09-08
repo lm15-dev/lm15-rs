@@ -14,6 +14,7 @@ use crate::types::{
 use crate::wire::{batch_entry_request, BuildContext, Dialect, WireRequest};
 
 use super::files::json_headers;
+use crate::cloud::percent::path_id;
 
 /// `_openai_batch_status`.
 pub fn batch_status(status: &str) -> BatchStatus {
@@ -115,13 +116,13 @@ pub fn job_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<BatchJobInfo,
 }
 
 pub fn status_request(cx: &BuildContext<'_>, batch_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/batches/{batch_id}"));
+    let mut wire = WireRequest::get(format!("/batches/{}", path_id(batch_id, false)));
     wire.headers = json_headers(cx);
     wire
 }
 
 pub fn cancel_request(cx: &BuildContext<'_>, batch_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/batches/{batch_id}/cancel"));
+    let mut wire = WireRequest::get(format!("/batches/{}/cancel", path_id(batch_id, false)));
     wire.method = "POST".into();
     wire.headers = json_headers(cx);
     wire
@@ -132,7 +133,7 @@ pub fn result_fetches(cx: &BuildContext<'_>, status_body: &Map<String, Value>) -
         .iter()
         .filter_map(|key| str_field(status_body, key))
         .map(|file_id| {
-            let mut wire = WireRequest::get(format!("/files/{file_id}/content"));
+            let mut wire = WireRequest::get(format!("/files/{}/content", path_id(&file_id, false)));
             wire.headers = json_headers(cx);
             wire
         })

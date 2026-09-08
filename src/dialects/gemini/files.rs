@@ -4,6 +4,7 @@
 
 use serde_json::{json, Map, Value};
 
+use crate::cloud::percent::path_id;
 use crate::errors::Lm15Error;
 use crate::surfaces::{
     body_object, iso_utc, multipart_related_body, provider_error, str_field, u64_field,
@@ -121,7 +122,7 @@ pub fn file_info_from_body(cx: &BuildContext<'_>, body: &[u8]) -> Result<FileInf
 }
 
 pub fn get_request(file_id: &str) -> WireRequest {
-    WireRequest::get(format!("/{}", file_resource(file_id)))
+    WireRequest::get(format!("/{}", path_id(&file_resource(file_id), true)))
 }
 
 pub fn list_request(limit: u64, cursor: Option<&str>) -> WireRequest {
@@ -154,7 +155,10 @@ pub fn delete_request(file_id: &str) -> WireRequest {
 }
 
 pub fn download_request(file_id: &str) -> WireRequest {
-    let mut wire = WireRequest::get(format!("/{}:download", file_resource(file_id)));
+    let mut wire = WireRequest::get(format!(
+        "/{}:download",
+        path_id(&file_resource(file_id), true)
+    ));
     wire.params.push(("alt".into(), "media".into()));
     wire
 }

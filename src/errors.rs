@@ -8,6 +8,7 @@
 //! ```text
 //! LM15Error
 //! ├── TransportError
+//! ├── LockTimeoutError       (the credential-file lock could not be taken; local, transient)
 //! ├── StreamAssemblyError
 //! ├── ConfigurationError
 //! │   ├── NotConfiguredError
@@ -49,6 +50,7 @@ pub enum ErrorCode {
     UnknownModel,
     AmbiguousModel,
     Transport,
+    LockTimeout,
     StreamAssembly,
     Provider,
 }
@@ -68,6 +70,7 @@ impl ErrorCode {
         ErrorCode::UnknownModel,
         ErrorCode::AmbiguousModel,
         ErrorCode::Transport,
+        ErrorCode::LockTimeout,
         ErrorCode::StreamAssembly,
         ErrorCode::Provider,
     ];
@@ -87,6 +90,7 @@ impl ErrorCode {
             ErrorCode::UnknownModel => "unknown_model",
             ErrorCode::AmbiguousModel => "ambiguous_model",
             ErrorCode::Transport => "transport",
+            ErrorCode::LockTimeout => "lock_timeout",
             ErrorCode::StreamAssembly => "stream_assembly",
             ErrorCode::Provider => "provider",
         }
@@ -116,6 +120,7 @@ impl ErrorCode {
             ErrorCode::UnknownModel => ErrorClass::UnknownModelError,
             ErrorCode::AmbiguousModel => ErrorClass::AmbiguousModelError,
             ErrorCode::Transport => ErrorClass::TransportError,
+            ErrorCode::LockTimeout => ErrorClass::LockTimeoutError,
             ErrorCode::StreamAssembly => ErrorClass::StreamAssemblyError,
             ErrorCode::Provider => ErrorClass::ProviderError,
         }
@@ -133,6 +138,7 @@ impl fmt::Display for ErrorCode {
 pub enum ErrorClass {
     LM15Error,
     TransportError,
+    LockTimeoutError,
     StreamAssemblyError,
     ConfigurationError,
     NotConfiguredError,
@@ -156,6 +162,7 @@ impl ErrorClass {
         match self {
             ErrorClass::LM15Error => "LM15Error",
             ErrorClass::TransportError => "TransportError",
+            ErrorClass::LockTimeoutError => "LockTimeoutError",
             ErrorClass::StreamAssemblyError => "StreamAssemblyError",
             ErrorClass::ConfigurationError => "ConfigurationError",
             ErrorClass::NotConfiguredError => "NotConfiguredError",
@@ -180,6 +187,7 @@ impl ErrorClass {
         Some(match self {
             ErrorClass::LM15Error => return None,
             ErrorClass::TransportError
+            | ErrorClass::LockTimeoutError
             | ErrorClass::StreamAssemblyError
             | ErrorClass::ConfigurationError
             | ErrorClass::CapabilityError
@@ -233,6 +241,7 @@ impl ErrorClass {
             ErrorClass::UnknownModelError => ErrorCode::UnknownModel,
             ErrorClass::AmbiguousModelError => ErrorCode::AmbiguousModel,
             ErrorClass::TransportError => ErrorCode::Transport,
+            ErrorClass::LockTimeoutError => ErrorCode::LockTimeout,
             ErrorClass::StreamAssemblyError => ErrorCode::StreamAssembly,
             ErrorClass::ProviderError | ErrorClass::LM15Error => ErrorCode::Provider,
         }
@@ -290,6 +299,18 @@ pub struct AmbiguousModel {
     pub providers: Vec<String>,
 }
 
+/// The credential-file lock could not be taken within the timeout
+/// (`lock_timeout`, spec/auth.md AUTH-4/6): another lm15 process is
+/// refreshing the same credential. Local and transient; retryable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LockTimeout {
+    pub meta: ErrorMeta,
+    /// The guarded credential file.
+    pub path: String,
+    /// The lock file in the lm15-owned lock directory.
+    pub lock_path: String,
+}
+
 /// The lm15 error: one variant per class, same names as the family.
 // Every class name ends in `Error` by contract (api-family: "variants,
 // same names"), so the variant-name lint does not apply.
@@ -297,6 +318,7 @@ pub struct AmbiguousModel {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Lm15Error {
     TransportError(ErrorMeta),
+    LockTimeoutError(LockTimeout),
     StreamAssemblyError(StreamAssembly),
     ConfigurationError(ErrorMeta),
     NotConfiguredError(ErrorMeta),
@@ -321,6 +343,11 @@ impl Lm15Error {
     pub fn of_class(class: ErrorClass, meta: ErrorMeta) -> Lm15Error {
         match class {
             ErrorClass::TransportError => Lm15Error::TransportError(meta),
+            ErrorClass::LockTimeoutError => Lm15Error::LockTimeoutError(LockTimeout {
+                meta,
+                path: String::new(),
+                lock_path: String::new(),
+            }),
             ErrorClass::StreamAssemblyError => Lm15Error::StreamAssemblyError(StreamAssembly {
                 meta,
                 partial: None,
@@ -354,6 +381,7 @@ impl Lm15Error {
     pub fn class(&self) -> ErrorClass {
         match self {
             Lm15Error::TransportError(_) => ErrorClass::TransportError,
+            Lm15Error::LockTimeoutError(_) => ErrorClass::LockTimeoutError,
             Lm15Error::StreamAssemblyError(_) => ErrorClass::StreamAssemblyError,
             Lm15Error::ConfigurationError(_) => ErrorClass::ConfigurationError,
             Lm15Error::NotConfiguredError(_) => ErrorClass::NotConfiguredError,
@@ -388,7 +416,8 @@ impl Lm15Error {
         self.class().is_a(ancestor)
     }
 
-    /// RETRYABLE_ERRORS: RateLimitError, TimeoutError, ServerError, TransportError.
+    /// RETRYABLE_ERRORS: RateLimitError, TimeoutError, ServerError,
+    /// TransportError, LockTimeoutError.
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
@@ -396,12 +425,14 @@ impl Lm15Error {
                 | Lm15Error::TimeoutError(_)
                 | Lm15Error::ServerError(_)
                 | Lm15Error::TransportError(_)
+                | Lm15Error::LockTimeoutError(_)
         )
     }
 
     pub fn meta(&self) -> &ErrorMeta {
         match self {
             Lm15Error::StreamAssemblyError(s) => &s.meta,
+            Lm15Error::LockTimeoutError(l) => &l.meta,
             Lm15Error::UnknownModelError(u) => &u.meta,
             Lm15Error::AmbiguousModelError(a) => &a.meta,
             Lm15Error::TransportError(m)
@@ -424,6 +455,7 @@ impl Lm15Error {
     pub fn meta_mut(&mut self) -> &mut ErrorMeta {
         match self {
             Lm15Error::StreamAssemblyError(s) => &mut s.meta,
+            Lm15Error::LockTimeoutError(l) => &mut l.meta,
             Lm15Error::UnknownModelError(u) => &mut u.meta,
             Lm15Error::AmbiguousModelError(a) => &mut a.meta,
             Lm15Error::TransportError(m)
@@ -482,6 +514,14 @@ impl Lm15Error {
         match self {
             Lm15Error::UnknownModelError(u) => Some(&u.model),
             Lm15Error::AmbiguousModelError(a) => Some(&a.model),
+            _ => None,
+        }
+    }
+
+    /// `LockTimeoutError.path` / `.lock_path`: the guarded file and its lock.
+    pub fn lock_paths(&self) -> Option<(&str, &str)> {
+        match self {
+            Lm15Error::LockTimeoutError(l) => Some((&l.path, &l.lock_path)),
             _ => None,
         }
     }
@@ -981,12 +1021,17 @@ mod tests {
         assert_eq!(AmbiguousModelError.code(), ErrorCode::AmbiguousModel);
         assert_eq!(UnsupportedFeatureError.parent(), Some(CapabilityError));
         assert_eq!(TransportError.parent(), Some(LM15Error));
+        assert_eq!(LockTimeoutError.parent(), Some(LM15Error));
+        assert!(!LockTimeoutError.is_a(ProviderError));
+        assert!(!LockTimeoutError.is_a(AuthError));
+        assert_eq!(LockTimeoutError.code(), ErrorCode::LockTimeout);
         assert_eq!(StreamAssemblyError.parent(), Some(LM15Error));
         assert_eq!(LM15Error.parent(), None);
         assert!(ContextLengthError.is_a(ProviderError));
         assert!(!TransportError.is_a(ProviderError));
         for class in [
             TransportError,
+            LockTimeoutError,
             StreamAssemblyError,
             ConfigurationError,
             NotConfiguredError,
@@ -1025,6 +1070,7 @@ mod tests {
         assert!(Lm15Error::TimeoutError(meta.clone()).is_retryable());
         assert!(Lm15Error::ServerError(meta.clone()).is_retryable());
         assert!(Lm15Error::TransportError(meta.clone()).is_retryable());
+        assert!(Lm15Error::of_class(ErrorClass::LockTimeoutError, meta.clone()).is_retryable());
         assert!(!Lm15Error::AuthError(meta.clone()).is_retryable());
         assert!(!Lm15Error::InvalidRequestError(meta).is_retryable());
     }

@@ -4,6 +4,18 @@
 //! bytes, everything else is `%XX` over its UTF-8 bytes. Decoding keeps a
 //! malformed `%` literally.
 
+/// A provider id placed in a URL path (docs/mapping-rules.md MAP-11):
+/// RFC 3986 over UTF-8, every byte outside the unreserved set `%XX`.
+/// `resource_name` keeps `/` literal for wires whose ids are resource
+/// names (Gemini `files/abc`); a flat-id wire (OpenAI, Anthropic, xAI)
+/// encodes `/` too — a literal slash would turn one operation into
+/// another on the same route table. Never decoded first: a pre-encoded
+/// id is double-encoded and answers 404 (loud), where a raw reserved
+/// byte would misroute (silent).
+pub fn path_id(id: &str, resource_name: bool) -> String {
+    encode(id, if resource_name { b"/" } else { b"" })
+}
+
 /// `quote(text, safe)`.
 pub fn encode(text: &str, safe: &[u8]) -> String {
     encode_bytes(text.as_bytes(), safe)

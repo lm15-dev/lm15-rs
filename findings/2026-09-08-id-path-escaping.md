@@ -1,5 +1,10 @@
 # Finding: provider ids are interpolated raw into URL paths (reference and port alike)
 
+Status: RESOLVED 2026-09-08 — ratified as MAP-11
+(`lm15-contract/changes/2026-09-08-id-path-escaping.md`): percent-encode,
+`/` kept only on the resource-name dialect; ten pinned cases; both
+implementations fixed the same day.
+
 Found by: `tools/differential_surfaces.py` (2026-09-08), probes
 `file_op_build get_id_with_reserved_chars` and `batch_op_build
 status_odd_id`: a file id `file/with?odd=chars&x#1` and a batch id
