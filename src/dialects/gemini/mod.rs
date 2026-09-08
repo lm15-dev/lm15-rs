@@ -17,6 +17,7 @@
 
 mod config;
 mod contents;
+pub mod batch;
 pub mod files;
 pub mod response;
 
@@ -76,7 +77,7 @@ pub(crate) fn invalid(cx: &BuildContext<'_>, message: String) -> Lm15Error {
 
 /// `_model_path` (`lm15/providers/gemini.py:551-553`): `quote(model,
 /// safe="/:@")`, prefixed with `models/` unless already so.
-fn model_path(model: &str) -> String {
+pub(crate) fn model_path(model: &str) -> String {
     let quoted = crate::cloud::percent::encode(model, b"/:@");
     if quoted.starts_with("models/") {
         quoted
@@ -241,6 +242,34 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
 }
 
 impl Surfaces for Gemini {
+    fn batch_upload_request(&self, _cx: &BuildContext<'_>, _request: &crate::types::BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
+        Ok(None)
+    }
+    fn batch_submit_request(&self, cx: &BuildContext<'_>, request: &crate::types::BatchRequest, _upload_body: Option<&Map<String, Value>>) -> Result<WireRequest, Lm15Error> {
+        batch::submit_request(self, cx, request)
+    }
+    fn batch_job(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::BatchJobInfo, Lm15Error> {
+        batch::job_from_body(cx, body)
+    }
+    fn batch_status_request(&self, _cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(batch::status_request(batch_id))
+    }
+    fn batch_cancel_request(&self, _cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(batch::cancel_request(batch_id))
+    }
+    fn batch_result_fetches(&self, _cx: &BuildContext<'_>, _status_body: &Map<String, Value>) -> Result<Vec<WireRequest>, Lm15Error> {
+        Ok(Vec::new()) // inlined in the terminal operation
+    }
+    fn batch_entries(&self, cx: &BuildContext<'_>, status_body: &Map<String, Value>, _fetched: &[Vec<u8>]) -> Result<Vec<crate::types::BatchEntry>, Lm15Error> {
+        batch::entries(self, cx, status_body)
+    }
+    fn batch_list_request(&self, _cx: &BuildContext<'_>, limit: u64) -> Result<WireRequest, Lm15Error> {
+        Ok(batch::list_request(limit))
+    }
+    fn batch_jobs(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<Vec<crate::types::BatchJobInfo>, Lm15Error> {
+        batch::jobs(cx, body)
+    }
+
     fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
         files::upload_request(cx, request)
     }

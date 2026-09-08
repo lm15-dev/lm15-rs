@@ -36,7 +36,12 @@ use crate::stream::{materialize_response, Coalescer};
 use crate::transport::{
     attach_retry_after, BodyStream, BoxFuture, HttpTransport, Transport, TransportResponse,
 };
-use crate::types::{FileInfo, FilePage, FileUploadRequest, ModelInfo, Request, Response, StreamEvent};
+use serde_json::Value;
+
+use crate::types::{
+    BatchEntry, BatchJobInfo, BatchRequest, FileInfo, FilePage, FileUploadRequest, ModelInfo,
+    Request, Response, StreamEvent,
+};
 use crate::wire::{
     emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
 };
@@ -394,6 +399,127 @@ impl ProviderLM {
         Ok(info)
     }
 
+    // ─── batch (the third execution mode; module 7b) ─────────────────
+
+    /// The wire requests of one batch action (the shim's `batch_op_build`):
+    /// ALWAYS a list — `upload` is empty on a single-step wire,
+    /// `result_fetches` is empty when results are inlined.
+    pub fn batch_requests(&self, action: &BatchAction<'_>) -> Result<Vec<TransportRequest>, Lm15Error> {
+        self.require("batches")?;
+        let cx = self.binding.surface_context();
+        let dialect = dialect_for(self.dialect());
+        let wires: Vec<(WireRequest, u64)> = match action {
+            BatchAction::Upload(request) => dialect
+                .batch_upload_request(&cx, request)?
+                .into_iter()
+                .map(|w| (w, 300))
+                .collect(),
+            BatchAction::Submit { request, upload_body } => {
+                vec![(dialect.batch_submit_request(&cx, request, *upload_body)?, 120)]
+            }
+            BatchAction::Status(id) => vec![(dialect.batch_status_request(&cx, id)?, 60)],
+            BatchAction::Cancel(id) => vec![(dialect.batch_cancel_request(&cx, id)?, 60)],
+            BatchAction::ResultFetches(status_body) => dialect
+                .batch_result_fetches(&cx, status_body)?
+                .into_iter()
+                .map(|w| (w, 300))
+                .collect(),
+            BatchAction::List(limit) => vec![(dialect.batch_list_request(&cx, *limit)?, 60)],
+        };
+        wires
+            .into_iter()
+            .map(|(wire, timeout)| self.surface_request(wire, timeout))
+            .collect()
+    }
+
+    pub fn parse_batch_job(&self, status: u16, body: &[u8]) -> Result<BatchJobInfo, Lm15Error> {
+        self.require("batches")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).batch_job(&self.binding.surface_context(), body)
+    }
+
+    pub fn parse_batch_jobs(&self, status: u16, body: &[u8]) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+        self.require("batches")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        dialect_for(self.dialect()).batch_jobs(&self.binding.surface_context(), body)
+    }
+
+    /// The entries of a terminal batch, in submission order, from its
+    /// status body and the fetched result texts.
+    pub fn parse_batch_entries(&self, status_body: &serde_json::Map<String, Value>, fetched: &[Vec<u8>]) -> Result<Vec<BatchEntry>, Lm15Error> {
+        self.require("batches")?;
+        dialect_for(self.dialect()).batch_entries(&self.binding.surface_context(), status_body, fetched)
+    }
+
+    /// Submit a batch: the optional upload step, then the submit.
+    pub async fn batch_submit(&self, request: &BatchRequest) -> Result<BatchJobInfo, Lm15Error> {
+        request.validate().map_err(|err| {
+            let mut meta = ErrorMeta::new(format!("{}: {}", self.provider(), err.message));
+            meta.provider = Some(self.provider().to_string());
+            Lm15Error::InvalidRequestError(meta)
+        })?;
+        let mut upload_body = None;
+        for built in self.batch_requests(&BatchAction::Upload(request))? {
+            let (_, _, body) = self.send_surface(built).await?;
+            upload_body = Some(crate::surfaces::body_object(self.provider(), &body, "batch upload")?);
+        }
+        let built = self
+            .batch_requests(&BatchAction::Submit {
+                request,
+                upload_body: upload_body.as_ref(),
+            })?
+            .remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_batch_job(status, &body)
+    }
+
+    pub async fn batch_status(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        let built = self.batch_requests(&BatchAction::Status(batch_id))?.remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_batch_job(status, &body)
+    }
+
+    pub async fn batch_cancel(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        let built = self.batch_requests(&BatchAction::Cancel(batch_id))?.remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_batch_job(status, &body)
+    }
+
+    /// The entries of a batch: its status, then the result fetches the
+    /// terminal body calls for. A batch still running is an
+    /// `InvalidRequestError`, never partial entries.
+    pub async fn batch_results(&self, batch_id: &str) -> Result<Vec<BatchEntry>, Lm15Error> {
+        let built = self.batch_requests(&BatchAction::Status(batch_id))?.remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        let job = self.parse_batch_job(status, &body)?;
+        if !job.status.is_terminal() {
+            let mut meta = ErrorMeta::new(format!(
+                "{}: batch {batch_id} is {} — results exist once the job is terminal",
+                self.provider(),
+                job.status.as_str()
+            ));
+            meta.provider = Some(self.provider().to_string());
+            return Err(Lm15Error::InvalidRequestError(meta));
+        }
+        let status_body = crate::surfaces::body_object(self.provider(), &body, "batch")?;
+        let mut fetched = Vec::new();
+        for built in self.batch_requests(&BatchAction::ResultFetches(&status_body))? {
+            let (_, _, text) = self.send_surface(built).await?;
+            fetched.push(text);
+        }
+        self.parse_batch_entries(&status_body, &fetched)
+    }
+
+    pub async fn batch_list(&self, limit: u64) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+        let built = self.batch_requests(&BatchAction::List(limit))?.remove(0);
+        let (status, _, body) = self.send_surface(built).await?;
+        self.parse_batch_jobs(status, &body)
+    }
+
     /// `_require` (`lm15/providers/base.py:366-377`): the bound access
     /// path, not the dialect, decides which surfaces exist.
     fn require(&self, surface: &str) -> Result<(), Lm15Error> {
@@ -498,6 +624,20 @@ pub enum FileOp<'a> {
     List { limit: u64, cursor: Option<&'a str> },
     Delete(&'a str),
     Download(&'a str),
+}
+
+/// One batch action (the shim's `action`).
+#[derive(Debug)]
+pub enum BatchAction<'a> {
+    Upload(&'a BatchRequest),
+    Submit {
+        request: &'a BatchRequest,
+        upload_body: Option<&'a serde_json::Map<String, Value>>,
+    },
+    Status(&'a str),
+    Cancel(&'a str),
+    ResultFetches(&'a serde_json::Map<String, Value>),
+    List(u64),
 }
 
 /// The stream [`ProviderLM::stream`] returns: connects on first poll,

@@ -12,7 +12,7 @@ use lm15::cloud::sigv4::{self, AwsKeys, SigningRequest};
 use lm15::errors::{normalize_error, Lm15Error};
 use lm15::serde::{roundtrip, validate};
 use lm15::stream::materialize_response;
-use lm15::types::{FileUploadRequest, Request, Response, ValidationError};
+use lm15::types::{BatchRequest, FileUploadRequest, Request, Response, ValidationError};
 use lm15::wire::{FixedClock, TransportRequest};
 use lm15::{Canonical, HostSettings};
 
@@ -23,6 +23,8 @@ const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 const OPS: &[&str] = &[
     "build_request",
     "build_models_request",
+    "batch_op_build",
+    "batch_op_parse",
     "file_op_build",
     "file_op_parse",
     "capabilities",
@@ -286,6 +288,67 @@ fn op_file_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
     })
 }
 
+fn op_batch_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    use lm15::adapter::BatchAction;
+    let lm = surface_adapter(msg, credential_of(msg)?)?;
+    let action = field_str(msg, "action")?;
+    let batch_id = msg.get("batch_id").and_then(Value::as_str).unwrap_or("");
+    let request = match msg.get("batch_request") {
+        Some(value @ Value::Object(_)) => Some(BatchRequest::from_json(value)?),
+        _ => None,
+    };
+    let need = || -> Result<&BatchRequest, Failure> {
+        request
+            .as_ref()
+            .ok_or_else(|| ValidationError::value("batch_request is required").into())
+    };
+    let upload_body = msg.get("upload_body").and_then(Value::as_object);
+    let status_body = msg.get("status_body").and_then(Value::as_object);
+    let built = match action.as_str() {
+        "upload" => lm.batch_requests(&BatchAction::Upload(need()?))?,
+        "submit" => lm.batch_requests(&BatchAction::Submit {
+            request: need()?,
+            upload_body,
+        })?,
+        "status" => lm.batch_requests(&BatchAction::Status(batch_id))?,
+        "cancel" => lm.batch_requests(&BatchAction::Cancel(batch_id))?,
+        "result_fetches" => lm.batch_requests(&BatchAction::ResultFetches(
+            status_body.ok_or_else(|| ValidationError::value("status_body is required"))?,
+        ))?,
+        "list" => lm.batch_requests(&BatchAction::List(
+            msg.get("limit").and_then(Value::as_u64).unwrap_or(20),
+        ))?,
+        other => return Err(ValidationError::value(format!("unknown action {other:?}")).into()),
+    };
+    Ok(json!({ "requests": built.iter().map(transport_request_json).collect::<Vec<_>>() }))
+}
+
+fn op_batch_op_parse(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(msg, Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?)?;
+    let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+    Ok(match field_str(msg, "kind")?.as_str() {
+        "job" => json!({ "job": lm.parse_batch_job(status, &body_of(msg)?)?.to_json() }),
+        "list" => json!({ "jobs": lm.parse_batch_jobs(status, &body_of(msg)?)?.iter().map(|j| j.to_json()).collect::<Vec<_>>() }),
+        "entries" => {
+            let status_body = msg
+                .get("status_body")
+                .and_then(Value::as_object)
+                .ok_or_else(|| ValidationError::value("status_body is required"))?;
+            let fetched: Vec<Vec<u8>> = msg
+                .get("fetched_b64")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|b64| lm15::types::base64_decode(b64).map_err(Failure::from))
+                .collect::<Result<_, _>>()?;
+            let entries = lm.parse_batch_entries(status_body, &fetched)?;
+            json!({ "entries": entries.iter().map(|e| e.to_json()).collect::<Vec<_>>() })
+        }
+        other => return Err(ValidationError::value(format!("unknown kind {other:?}")).into()),
+    })
+}
+
 fn op_build_models_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let lm = surface_adapter(msg, credential_of(msg)?)?;
     Ok(transport_request_json(&lm.models_request()?))
@@ -435,6 +498,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "parse_response" => op_parse_response(msg),
         "build_models_request" => op_build_models_request(msg),
         "file_op_build" => op_file_op_build(msg),
+        "batch_op_build" => op_batch_op_build(msg),
+        "batch_op_parse" => op_batch_op_parse(msg),
         "file_op_parse" => op_file_op_parse(msg),
         "parse_models_response" => op_parse_models_response(msg),
         "replay_stream" => op_replay_stream(msg),

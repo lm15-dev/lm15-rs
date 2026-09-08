@@ -12,6 +12,7 @@
 
 mod body;
 mod parts;
+pub mod batch;
 pub mod files;
 pub mod response;
 mod tables;
@@ -49,6 +50,34 @@ pub static ANTHROPIC: Anthropic = Anthropic;
 pub const ENDPOINT: &str = "messages";
 
 impl Surfaces for Anthropic {
+    fn batch_upload_request(&self, _cx: &BuildContext<'_>, _request: &crate::types::BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
+        Ok(None)
+    }
+    fn batch_submit_request(&self, cx: &BuildContext<'_>, request: &crate::types::BatchRequest, _upload_body: Option<&serde_json::Map<String, Value>>) -> Result<WireRequest, Lm15Error> {
+        batch::submit_request(self, cx, request)
+    }
+    fn batch_job(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<crate::types::BatchJobInfo, Lm15Error> {
+        batch::job_from_body(cx, body)
+    }
+    fn batch_status_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(batch::status_request(cx, batch_id))
+    }
+    fn batch_cancel_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+        Ok(batch::cancel_request(cx, batch_id))
+    }
+    fn batch_result_fetches(&self, cx: &BuildContext<'_>, status_body: &serde_json::Map<String, Value>) -> Result<Vec<WireRequest>, Lm15Error> {
+        batch::result_fetches(cx, status_body)
+    }
+    fn batch_entries(&self, cx: &BuildContext<'_>, _status_body: &serde_json::Map<String, Value>, fetched: &[Vec<u8>]) -> Result<Vec<crate::types::BatchEntry>, Lm15Error> {
+        batch::entries(self, cx, fetched)
+    }
+    fn batch_list_request(&self, cx: &BuildContext<'_>, limit: u64) -> Result<WireRequest, Lm15Error> {
+        Ok(batch::list_request(cx, limit))
+    }
+    fn batch_jobs(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<Vec<crate::types::BatchJobInfo>, Lm15Error> {
+        batch::jobs(cx, body)
+    }
+
     fn file_upload_request(&self, cx: &BuildContext<'_>, request: &crate::types::FileUploadRequest) -> Result<WireRequest, Lm15Error> {
         files::upload_request(cx, request)
     }

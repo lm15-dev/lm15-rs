@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::auth::{select_scheme, AccessPolicy, AuthScheme, Credential, CredentialProvider};
 use crate::cloud::hosts::{finish_request, FinishedRequest, HostInput, HostSettings};
@@ -33,7 +33,8 @@ use crate::sse::SseEvent;
 /// `lm15/providers/openai.py:391`).
 pub const CODEX_BACKEND: &str = "chatgpt-codex";
 use crate::types::{
-    FileInfo, FilePage, FileUploadRequest, ModelInfo, ModelOrigin, Request, Response, StreamEvent,
+    BatchEntry, BatchJobInfo, BatchRequest, FileInfo, FilePage, FileUploadRequest, ModelInfo,
+    ModelOrigin, Request, Response, StreamEvent,
 };
 
 /// A request ready for a transport. `url` carries no query string; the
@@ -273,6 +274,82 @@ pub trait Surfaces {
         let _ = file_id;
         Err(crate::surfaces::unsupported(cx.provider, "files"))
     }
+
+    // ─── batch ───
+    /// The optional pre-submit upload (OpenAI's JSONL file); `None` on a
+    /// single-step wire.
+    fn batch_upload_request(&self, cx: &BuildContext<'_>, request: &BatchRequest) -> Result<Option<WireRequest>, Lm15Error> {
+        let _ = request;
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    /// The submit; `upload_body` is the parsed upload reply when an upload
+    /// step preceded.
+    fn batch_submit_request(&self, cx: &BuildContext<'_>, request: &BatchRequest, upload_body: Option<&Map<String, Value>>) -> Result<WireRequest, Lm15Error> {
+        let _ = (request, upload_body);
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    fn batch_job(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<BatchJobInfo, Lm15Error> {
+        let _ = body;
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    fn batch_status_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+        let _ = batch_id;
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    fn batch_cancel_request(&self, cx: &BuildContext<'_>, batch_id: &str) -> Result<WireRequest, Lm15Error> {
+        let _ = batch_id;
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    /// The fetches a terminal status body calls for (zero when results
+    /// are inlined).
+    fn batch_result_fetches(&self, cx: &BuildContext<'_>, status_body: &Map<String, Value>) -> Result<Vec<WireRequest>, Lm15Error> {
+        let _ = status_body;
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    /// The entries, in SUBMISSION order, from the terminal status body and
+    /// the fetched result texts.
+    fn batch_entries(&self, cx: &BuildContext<'_>, status_body: &Map<String, Value>, fetched: &[Vec<u8>]) -> Result<Vec<BatchEntry>, Lm15Error> {
+        let _ = (status_body, fetched);
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    fn batch_list_request(&self, cx: &BuildContext<'_>, limit: u64) -> Result<WireRequest, Lm15Error> {
+        let _ = limit;
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+    fn batch_jobs(&self, cx: &BuildContext<'_>, body: &[u8]) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+        let _ = body;
+        Err(crate::surfaces::unsupported(cx.provider, "batch"))
+    }
+}
+
+/// The model string the dialect sends for `model` under `provider`: a
+/// `provider:` prefix naming this binding (either spelling) is removed.
+pub fn wire_model<'m>(provider: &str, model: &'m str) -> &'m str {
+    match model.split_once(':') {
+        Some((head, rest)) if crate::registry::canonical_provider(head) == provider && !rest.is_empty() => rest,
+        _ => model,
+    }
+}
+
+impl<'a> BuildContext<'a> {
+    /// This context for a nested request (a batch entry): the same
+    /// binding, that request's wire model.
+    pub fn for_model(&self, model: &'a str) -> BuildContext<'a> {
+        BuildContext {
+            model: wire_model(self.provider, model),
+            ..self.clone()
+        }
+    }
+}
+
+/// `batch_entry_request` (`lm15/providers/base.py:1001-1012`): a
+/// synthetic request for parsing a batch entry body — results outlive
+/// the submitting process, and `parse_response` reads only the model as
+/// a fallback the body always supplies.
+pub fn batch_entry_request(model: Option<&str>) -> Request {
+    let name = model.filter(|m| !m.is_empty()).unwrap_or("batch");
+    Request::new(name, vec![crate::types::Message::user("-").expect("a text message")])
+        .expect("a synthetic request validates")
 }
 
 /// `{provider}: model listing not supported` (`lm15/providers/base.py`
