@@ -2,7 +2,10 @@
 //! the chat dialect (module 4 W3) consults the resolved value, after
 //! `for_model` applied the door's per-model overrides.
 
-use super::{IncludeOmit, JsonObject, Knob, OpenAICacheControl, ReasoningEfforts, SendReject, ToolResultMedia};
+use super::{
+    IncludeOmit, JsonObject, Knob, OpenAICacheControl, ReasoningEfforts, SendReject,
+    ToolResultMedia,
+};
 use crate::types::ReasoningEffort;
 
 /// `lm15/compat.py:309` `OpenAIChatInstructionRole`.
@@ -419,7 +422,7 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
             },
             None,
             &[],
-        )
+        ),
     ),
     (
         "vllm",

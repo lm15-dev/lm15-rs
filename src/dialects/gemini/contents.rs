@@ -29,8 +29,8 @@ use crate::types::{
 };
 use crate::wire::BuildContext;
 
-use crate::dialects::content;
 use super::{invalid, unsupported};
+use crate::dialects::content;
 
 /// The `data.value` of a `gemini:thought_signature` state, when present.
 fn thought_signature(part: &Part, cx: &BuildContext<'_>) -> Result<Option<String>, Lm15Error> {

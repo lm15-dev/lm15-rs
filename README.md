@@ -13,14 +13,16 @@ grade the port against any other commit.
 | 1 — canonical types + serde | spec/types.md, spec/vocabularies.md, spec/invariants.md, docs/serde-rules.md; all 36 serde kinds of harness/PROTOCOL.md | done — `--direction serde` 115 pass / 0 fail / 0 skip |
 | 2 — errors | spec/vocabularies.md ErrorCode + class hierarchy; `normalize_error` for every provider in `errors/cases/` | done — `--direction error` 84 pass / 0 fail / 0 skip |
 | 3a core auth | spec/auth.md AUTH-1 (`key`, `oauth`, `oauth-unless-explicit`), AUTH-2 credential values + D1 scheme selection, AUTH-5, AUTH-7 doctor, AUTH-8 read side, AUTH-10 policy table | done — `--direction auth --auth-scope core` 26 pass / 0 fail / 0 skip; `tests/auth_resolution_contract.rs` replays the same `auth/resolution.json` from the contract checkout with the same core/cloud split |
-| 3b cloud chains | AUTH-1 `aws-chain`/`azure-chain`/`gcp-chain`, AUTH-11 rung kinds, SigV4, RS256 | SigV4 done (module 4 needs it): `--direction token` 34 pass / 9 fail — the 34 `sigv4.*` vectors pass, the 9 `token.*` vectors (`token_exchange_build` / `token_exchange_parse`: GCP service account, Azure certificate/secret/MSI, GCP metadata, AWS credential_process/IMDS) answer `UnsupportedFeatureError` naming module 3b. Cloud-chain providers are in the policy table as data; `explain_auth` answers `AuthError::NotImplemented` (class `NotConfiguredError`) for them. The 11 cloud auth cases are asserted to answer that error and counted, not skipped |
+| 3b cloud chains | AUTH-1 `aws-chain`/`azure-chain`/`gcp-chain`, AUTH-11 rung kinds, SigV4, RS256 | done — `src/cloud/chains.rs` (the three chains as data over the ten rung kinds, the offline doctor walk and the online resolve), `src/cloud/rs256.rs` (RS256 through aws-lc-rs), `src/cloud/ini.rs`; `--direction token` 43 pass / 0 fail (the JWTs byte for byte), `--direction auth` 37 pass / 0 fail (the 11 cloud cases included). The router builds a `ChainProvider` for a cloud door with no explicit entry; its network work runs in the async `CredentialProvider::prepare` the adapter awaits (stated below) |
 | 4 — dialects, request side | AUTH-10 policy table, hosts, settings, host rewrites; MAP-5..MAP-8 refusals; **MAP-10 tool-result content** (`src/dialects/content.rs`, the `tool_result_media` knob on the three compat tables); compat presets; the four dialects (`src/dialects/{anthropic,openai_responses,openai_chat,gemini}`) | done — `--direction request` 361 pass / 0 fail / 1 skip (`openai.computer_use`, no canonical_request) at the pin, including the 64 MAP-10 cases (native and raise). The per-dialect sections below state each dialect's deviations |
 | 5 — dialects, response side + stream assembly | MAP-1..MAP-4, MAP-9; `parse_response` / `replay_stream` for the four dialects; the SSE parser; the MAP-3/4 coalescer and the MAP-9 assembler (`src/stream.rs`) | done — `--direction response` 298 pass / 0 fail / 1 skip (`openai.computer_use`, no golden), `--direction stream` 40 pass / 0 fail / 0 skip, including the pinned `StreamAssemblyError` refusal (`openai_chat.tool_call_unnamed`). The "Module 5" section below states the deviations |
 | 5b — the network | `complete` / `stream` over a transport (api-family § The core loop, § Providers, direct); `ResponseStream` | done — `src/transport.rs` (the `Transport` trait, the reqwest `HttpTransport`), `ProviderLM::complete` / `ProviderLM::stream`, `src/response_stream.rs`. `tests/transport_roundtrip.rs` drives the real transport against a loopback HTTP/1.1 server (SSE frames split across chunks, a 429 with `Retry-After`, a stalled body, cancellation by drop). First live traffic: `receipts/2026-09-07-live-smoke/` (one binding per dialect, `complete` and `stream` agree). Not a harness direction: the codec is the contract, the transport is per-language idiom |
 | 5c — `LMRouter` | api-family § The core loop; AUTH-1 resolution order; the reference's `lm15.router` | done — `src/router.rs`: prefix / catalog / rule rungs, `resolve` (pure), `lm` (the AUTH-1 chain: explicit entry, stored login, env keys, placeholder), one adapter per provider; stored logins as a per-request `CredentialProvider` (`src/auth/login.rs`); the Codex `chatgpt-account-id` header (a stated skeleton gap, now closed). Live through the router: `receipts/2026-09-07-router-live/`. Differential probe against the reference, 130 comparisons outside the corpus, zero differences: `receipts/2026-09-07-differential/` (`tools/differential.py`) |
 | the `blocking` feature | api-family rule 4 | done — `lm15::blocking::{LMRouter, ProviderLM, ResponseStream, EventStream}`, the same names over one library-owned runtime thread (the `reqwest::blocking` design); `tests/blocking_roundtrip.rs` drives it from a plain thread against a loopback server. Calling it from inside an async runtime panics with a message naming the async API (stated below) |
 | 6 — model listing | `changes/2026-08-31-list-models-provisional.md`; `--direction models` | done — `ProviderLM::list_models` / `models_request` / `parse_models`, the four dialects' GETs and mappings copied as data; `--direction models` 33 pass / **1 fail** / 0 skip: `openai_chat.models[parse]` pins `provider: "openai_chat"`, the reference adapter's legacy self-name, against the canonical `openai-chat` every other fixture and the support matrix use — a contract finding, not absorbed: `findings/2026-09-07-openai-chat-provider-spelling.md`. Live: `receipts/2026-09-07-models-live/` |
-| 7–9 — files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
+| 7 — files, batch, cache | `--direction files`, `batch`, `cache` | done — `wire::Surfaces` hooks per dialect (`src/dialects/*/{files,batch}.rs`, `src/dialects/gemini/cache.rs`), the multipart encoders of `src/surfaces.rs` byte for byte; files 39 / 0, batch 35 / 0, cache 9 / 0. Live: `receipts/2026-09-08-surfaces-live/` |
+| 8 — generation (image, speech) and video | `--direction generation`, `video` | done — `src/dialects/*/{generation,video}.rs`; generation 20 / 0, video 24 / 0 |
+| 9 — live | `--direction live` | done — the codec in `src/dialects/{openai_responses,gemini}/live.rs` (24 / 0), the session in `src/live.rs` over tokio-tungstenite; `tests/live_roundtrip.rs` replays the pinned Realtime transcript through a loopback socket; one live text turn each against OpenAI Realtime and Gemini Live (`receipts/2026-09-08-surfaces-live/`) |
 
 Gates for modules 1–4, from the contract checkout:
 
@@ -35,7 +37,16 @@ python3 harness/check.py --shim rust --direction request
 python3 harness/check.py --shim rust --direction response
 python3 harness/check.py --shim rust --direction stream
 python3 harness/check.py --shim rust --direction models    # 33 pass / 1 fail (the openai_chat spelling finding), stated above
+python3 harness/check.py --shim rust --direction token
+python3 harness/check.py --shim rust --direction files
+python3 harness/check.py --shim rust --direction batch
+python3 harness/check.py --shim rust --direction cache
+python3 harness/check.py --shim rust --direction generation
+python3 harness/check.py --shim rust --direction video
+python3 harness/check.py --shim rust --direction live
 ```
+
+Every direction is green except the one stated `models` case.
 
 `cargo test` runs the INV-* unit tests, the serde-rule edge tests, the
 shim framing tests, `tests/contract_corpus.rs` (replays
@@ -51,10 +62,14 @@ sibling `../lm15-contract` checkout (or `LM15_CONTRACT_DIR`) and do
 nothing when it is absent. The corpus is never copied into this
 repository.
 
-The shim answers `capabilities`, `serde_roundtrip`, `validate`,
-`normalize_error`, `explain_auth`, `build_request`, `parse_response`,
-`replay_stream`, `build_models_request`, `parse_models_response` and
-`sigv4_sign`.
+The shim answers every op of harness/PROTOCOL.md but `surface_dump`:
+`capabilities`, `serde_roundtrip`, `validate`, `normalize_error`,
+`explain_auth`, `build_request`, `parse_response`, `replay_stream`,
+`build_models_request`, `parse_models_response`, `sigv4_sign`,
+`token_exchange_build`, `token_exchange_parse`, `file_op_build`,
+`file_op_parse`, `batch_op_build`, `batch_op_parse`, `cache_op_build`,
+`cache_op_parse`, `generation_build`, `generation_parse`,
+`video_op_build`, `video_op_parse` and `replay_live`.
 `token_exchange_build` / `token_exchange_parse` answer
 `UnsupportedFeatureError` naming module 3b. `surface_dump` (PROTOCOL.md) is not
 implemented: it must come from reflection, and Rust has no runtime
@@ -267,12 +282,40 @@ Each row names the rule it deviates from (playbooks/port.md rule 8).
   re-login hint (AUTH-6), never a silent fall back to an environment key
   (AUTH-1, stored-credential-owns-provider). Refresh it with the
   provider's own tool.
-- **Cloud chains through the router: rung 0 only.** An explicit
-  `api_keys` entry for a cloud-chain provider (`bedrock-*`, `azure*`,
-  `vertex*`) builds the door with its resolved host settings; the deeper
-  rungs are module 3b, and the router answers the same
-  `NotConfiguredError` naming it that `explain_auth` answers (AUTH-7:
-  the doctor and real construction walk the same chain).
+- **A cloud chain resolves in an async `prepare`, not in
+  `credential()`.** The family's `CredentialProvider` is a synchronous
+  one-method interface, and a chain rung is a network round trip (STS,
+  a token exchange, a metadata server). Blocking a runtime worker on it
+  is the hazard this port refuses everywhere else, so `ChainProvider`
+  answers `credential()` from its AUTH-3 cache and does the network work
+  in `CredentialProvider::prepare()` (a default no-op elsewhere), which
+  every adapter driver awaits before building. Consequence: a
+  synchronous `build_request` on a cloud door before any driver ran
+  answers `NotConfiguredError` ("not resolved yet"); `complete`,
+  `stream`, `list_models` and the surfaces never see it.
+- **RS256 is `aws-lc-rs`, not a hand-rolled RSA.** The reference signs
+  in pure Python and states it is not hardened against timing attacks.
+  This port signs with the crypto provider rustls already builds
+  (constant-time, blinded), so that trade-off does not carry over.
+  Encrypted PEM and PKCS#12 stay unparsed, as in the reference.
+- **Chain gaps carry over, stated:** `aws login` refresh (a DPoP proof
+  over the cached EC key), Azure Service Fabric managed identity (TLS
+  thumbprint pinning), GCP `external_account` with an AWS
+  `credential_source`, `external_account_authorized_user` and
+  `gdch_service_account`. Each answers the typed `NotConfiguredError`
+  naming the gap and the fix; none falls through silently.
+- **Subprocess rungs** (`credential_process`, `az`, `pwsh`, `azd`,
+  `gcloud`, an executable credential source) run on a blocking thread
+  (`spawn_blocking`) with the chain's environment, never inline on a
+  runtime worker.
+- **The Gemini upload host** is derived from the base URL (`/upload`
+  inserted before the path) rather than a second constant, so a proxy
+  base URL uploads through the same host.
+- **Live sessions are `tokio-tungstenite`** (rustls, the OS trust
+  store); the socket is per-language idiom, the codec is the contract.
+  The session decodes eagerly and skips housekeeping frames; the
+  reference's `turn()` sugar and pending-queue mechanics are not
+  reproduced (out of contract scope).
 - **`lm15::blocking` owns one runtime thread and panics inside an async
   runtime.** The design of `reqwest::blocking`: a single worker thread
   named `lm15-blocking`, started on first use, every blocking call

@@ -37,7 +37,10 @@ mod tests {
             }),
             Part::ToolCall(ToolCallPart::default()),
         ];
-        assert_eq!(parts_to_text(&parts, "p", "x").unwrap(), "a\nt\nX — https://x");
+        assert_eq!(
+            parts_to_text(&parts, "p", "x").unwrap(),
+            "a\nt\nX — https://x"
+        );
         assert_eq!(parts_to_text(&[], "p", "x").unwrap(), "");
         assert_eq!(data_uri("image/png", "AA=="), "data:image/png;base64,AA==");
     }

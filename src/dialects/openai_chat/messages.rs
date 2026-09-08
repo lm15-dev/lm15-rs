@@ -9,11 +9,11 @@ use serde_json::{json, Map, Value};
 
 use super::cache::{breakpoint_index, breakpoint_unsupported, stable_prefix};
 use super::text::{data_uri, unsupported};
-use crate::dialects::content;
 use crate::compat::{
     IncludeOmit, OpenAIChatAssistantAfterToolResult, OpenAIChatAssistantReasoningContent,
     OpenAIChatThinkingReplay, ResolvedOpenAIChatCompat,
 };
+use crate::dialects::content;
 use crate::errors::Lm15Error;
 use crate::types::{ImagePart, Message, Part, Request, Role, SystemContent, ToolResultPart};
 
@@ -42,7 +42,9 @@ pub(super) fn build_messages(
     if let Some(system) = &request.system {
         let text = match system {
             SystemContent::Text(text) => text.clone(),
-            SystemContent::Parts(parts) => content::parts_to_text(parts, provider, "the system message")?,
+            SystemContent::Parts(parts) => {
+                content::parts_to_text(parts, provider, "the system message")?
+            }
         };
         if stable_prefix(request, compat.cache_control) {
             // prefix="stable": the mark rides on the system message's text
@@ -136,7 +138,12 @@ fn tool_row(
     compat: &ResolvedOpenAIChatCompat,
     provider: &str,
 ) -> Result<Value, Lm15Error> {
-    content::check_tool_result_media(provider, result, compat.tool_result_media, "a Chat Completions tool row")?;
+    content::check_tool_result_media(
+        provider,
+        result,
+        compat.tool_result_media,
+        "a Chat Completions tool row",
+    )?;
     let output = if content::text_only(&result.content) {
         Value::String(content::error_text(
             result,
@@ -147,13 +154,24 @@ fn tool_row(
         for part in &result.content {
             blocks.push(match part {
                 Part::Image(image) => image_block(image, provider)?,
-                other => text_block(&content::parts_to_text(std::slice::from_ref(other), provider, "a Chat Completions tool row")?),
+                other => text_block(&content::parts_to_text(
+                    std::slice::from_ref(other),
+                    provider,
+                    "a Chat Completions tool row",
+                )?),
             });
         }
         if result.is_error {
-            match blocks.iter_mut().find(|b| b.get("type") == Some(&Value::String("text".into()))) {
+            match blocks
+                .iter_mut()
+                .find(|b| b.get("type") == Some(&Value::String("text".into())))
+            {
                 Some(Value::Object(block)) => {
-                    let text = block.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                    let text = block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     block.insert("text".into(), Value::String(format!("[error] {text}")));
                 }
                 _ => blocks.insert(0, text_block("[error]")),
@@ -309,17 +327,18 @@ fn image_block(image: &ImagePart, provider: &str) -> Result<Value, Lm15Error> {
         (None, Some(data), _) => data_uri(&image.media_type, data),
         (None, None, Some(path)) => {
             let bytes = std::fs::read(path).map_err(|err| {
-                unsupported(provider, format!("cannot read image part path {}: {err}", path.display()))
+                unsupported(
+                    provider,
+                    format!("cannot read image part path {}: {err}", path.display()),
+                )
             })?;
             data_uri(&image.media_type, &crate::types::base64_encode(&bytes))
         }
-        (None, None, None) => {
-            return Err(unsupported(
-                provider,
-                "an image addressed by file_id cannot be sent on the Chat Completions wire (no file \
+        (None, None, None) => return Err(unsupported(
+            provider,
+            "an image addressed by file_id cannot be sent on the Chat Completions wire (no file \
                  reference form); pass a URL or inline data",
-            ))
-        }
+        )),
     };
     let mut inner = vec![("url", Value::String(url))];
     if let Some(detail) = image.detail {

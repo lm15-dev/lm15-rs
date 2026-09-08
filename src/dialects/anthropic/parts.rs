@@ -129,7 +129,12 @@ fn block(part: &Part, cx: &PartContext<'_>) -> Result<Option<Value>, Lm15Error> 
 /// one text part travels as a string, anything else as blocks (images and
 /// documents survive that way); `is_error` only when true.
 fn tool_result_block(result: &ToolResultPart, cx: &PartContext<'_>) -> Result<Value, Lm15Error> {
-    content::check_tool_result_media(cx.refuse.provider, result, cx.tool_result_media, "a tool_result block")?;
+    content::check_tool_result_media(
+        cx.refuse.provider,
+        result,
+        cx.tool_result_media,
+        "a tool_result block",
+    )?;
     let content = tool_result_content(&result.content, cx)?;
     let mut block = Map::new();
     block.insert("type".into(), "tool_result".into());

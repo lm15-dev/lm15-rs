@@ -411,11 +411,17 @@ const fn with(
     edit_image_field: Option<OpenAIResponsesEditImageField>,
     builtin_tools: Option<OpenAIResponsesBuiltinTools>,
 ) -> OpenAIResponsesCompat {
-    media(compat_with(compat, commentary_phase, edit_image_field, builtin_tools), None)
+    media(
+        compat_with(compat, commentary_phase, edit_image_field, builtin_tools),
+        None,
+    )
 }
 
 /// MAP-10 verdict on a preset (`None` keeps the dialect default, native).
-const fn media(mut compat: OpenAIResponsesCompat, verdict: Option<ToolResultMedia>) -> OpenAIResponsesCompat {
+const fn media(
+    mut compat: OpenAIResponsesCompat,
+    verdict: Option<ToolResultMedia>,
+) -> OpenAIResponsesCompat {
     if let Some(verdict) = verdict {
         compat.tool_result_media = Some(Set(verdict));
     }
@@ -455,65 +461,65 @@ pub const OPENAI_RESPONSES_PRESETS: &[(&str, OpenAIResponsesCompat)] = &[
         "openrouter",
         media(
             preset(
-            Developer,
-            MaxTokens,
-            Fmt::Openrouter,
-            OpenAICacheControl::OpenAI,
-        ),
+                Developer,
+                MaxTokens,
+                Fmt::Openrouter,
+                OpenAICacheControl::OpenAI,
+            ),
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
-        )
+        ),
     ),
     (
         "ollama",
         media(
             preset(System, MaxTokens, Fmt::None, OpenAICacheControl::None),
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
-        )
+        ),
     ),
     (
         "vllm",
         media(
             preset(
-            System,
-            MaxTokens,
-            Fmt::ReasoningEffort,
-            OpenAICacheControl::None,
-        ),
+                System,
+                MaxTokens,
+                Fmt::ReasoningEffort,
+                OpenAICacheControl::None,
+            ),
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
-        )
+        ),
     ),
     (
         "sglang",
         media(
             preset(
-            System,
-            MaxTokens,
-            Fmt::ReasoningEffort,
-            OpenAICacheControl::None,
-        ),
+                System,
+                MaxTokens,
+                Fmt::ReasoningEffort,
+                OpenAICacheControl::None,
+            ),
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
-        )
+        ),
     ),
     (
         "qwen",
         media(
             preset(System, MaxTokens, Fmt::Qwen, OpenAICacheControl::None),
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
-        )
+        ),
     ),
     (
         "deepseek",
         media(
             preset(System, MaxTokens, Fmt::Deepseek, OpenAICacheControl::None),
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
-        )
+        ),
     ),
     (
         "zai",
         media(
             preset(System, MaxTokens, Fmt::Zai, OpenAICacheControl::None),
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
-        )
+        ),
     ),
     // Meta Model API (`lm15/compat.py:232-242`).
     (
@@ -535,18 +541,18 @@ pub const OPENAI_RESPONSES_PRESETS: &[(&str, OpenAIResponsesCompat)] = &[
         "moonshotai",
         media(
             with(
-            preset(
-                Developer,
-                MaxOutputTokens,
-                Fmt::ResponsesReasoning,
-                OpenAICacheControl::OpenAIImplicit,
+                preset(
+                    Developer,
+                    MaxOutputTokens,
+                    Fmt::ResponsesReasoning,
+                    OpenAICacheControl::OpenAIImplicit,
+                ),
+                None,
+                None,
+                Some(OpenAIResponsesBuiltinTools::Verbatim),
             ),
-            None,
-            None,
-            Some(OpenAIResponsesBuiltinTools::Verbatim),
-        ),
             Some(ToolResultMedia::Images), // MAP-10: images received (kimi-k3); input_file is 400
-        )
+        ),
     ),
 ];
 

@@ -435,17 +435,26 @@ fn text_only_slots_refuse_media_and_tool_results_carry_it() {
     // MAP-10 on this wire: media nests under functionResponse.parts; an
     // image-only result has an empty response object (live 2026-09-07);
     // is_error is response.error; audio has no slot.
-    let out = body("gemini", json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
+    let out = body(
+        "gemini",
+        json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
         {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "name": "t",
-         "content": [{"type": "image", "media_type": "image/png", "data": "QUJD"}]}]}]}));
+         "content": [{"type": "image", "media_type": "image/png", "data": "QUJD"}]}]}]}),
+    );
     assert_eq!(
         out["contents"][1]["parts"][0]["functionResponse"],
         json!({"id": "x", "name": "t", "response": {}, "parts": [{"inlineData": {"mimeType": "image/png", "data": "QUJD"}}]})
     );
-    let out = body("gemini", json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
+    let out = body(
+        "gemini",
+        json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
         {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "name": "t", "is_error": true,
-         "content": [{"type": "text", "text": "boom"}]}]}]}));
-    assert_eq!(out["contents"][1]["parts"][0]["functionResponse"]["response"], json!({"error": "boom"}));
+         "content": [{"type": "text", "text": "boom"}]}]}]}),
+    );
+    assert_eq!(
+        out["contents"][1]["parts"][0]["functionResponse"]["response"],
+        json!({"error": "boom"})
+    );
     let err = refusal(json!({"model": "gemini-3.7-flash", "messages": [user("hi"),
         {"role": "tool", "parts": [{"type": "tool_result", "id": "x", "name": "t",
          "content": [{"type": "audio", "media_type": "audio/wav", "data": "QUJD"}]}]}]}));

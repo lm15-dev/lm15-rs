@@ -201,7 +201,12 @@ fn tool_result_item(
     result: &ToolResultPart,
     compat: &ResolvedOpenAIResponsesCompat,
 ) -> Result<Value, Lm15Error> {
-    content::check_tool_result_media(provider, result, compat.tool_result_media, "function_call_output")?;
+    content::check_tool_result_media(
+        provider,
+        result,
+        compat.tool_result_media,
+        "function_call_output",
+    )?;
     let output = if content::text_only(&result.content) {
         Value::String(content::error_text(
             result,
@@ -213,9 +218,16 @@ fn tool_result_item(
             blocks.push(part_to_input(provider, part)?);
         }
         if result.is_error {
-            match blocks.iter_mut().find(|b| b.get("type") == Some(&json!("input_text"))) {
+            match blocks
+                .iter_mut()
+                .find(|b| b.get("type") == Some(&json!("input_text")))
+            {
                 Some(Value::Object(block)) => {
-                    let text = block.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                    let text = block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     block.insert("text".into(), Value::String(format!("[error] {text}")));
                 }
                 _ => blocks.insert(0, json!({"type": "input_text", "text": "[error]"})),
@@ -299,7 +311,10 @@ pub(crate) fn part_to_input(provider: &str, part: &Part) -> Result<Value, Lm15Er
         Part::Refusal(_) | Part::ToolResult(_) | Part::ToolCall(_) => {
             return Err(unsupported(
                 provider,
-                format!("a {} part has no input block on the Responses wire (MAP-10)", part.type_name()),
+                format!(
+                    "a {} part has no input block on the Responses wire (MAP-10)",
+                    part.type_name()
+                ),
             ))
         }
     })
