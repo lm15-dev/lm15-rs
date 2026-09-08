@@ -27,8 +27,10 @@ use crate::compat::{OpenAIChatCompat, ResolvedOpenAIChatCompat};
 use crate::errors::Lm15Error;
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
-use crate::types::{Request, Response, StreamEvent, ToolChoiceMode};
-use crate::wire::{apply_static_headers, BuildContext, Dialect, WireRequest};
+use crate::types::{ModelInfo, Request, Response, StreamEvent, ToolChoiceMode};
+use crate::wire::{
+    apply_static_headers, model_infos_from_entries, BuildContext, Dialect, WireRequest,
+};
 
 /// The dialect value.
 #[derive(Debug, Clone, Copy, Default)]
@@ -62,6 +64,37 @@ impl Dialect for OpenAIChat {
         wire.endpoint = Some("chat/completions");
         wire.model = Some(cx.model.to_string());
         Ok(wire)
+    }
+
+    /// `openai_chat.py:248-264`: `GET /models`, entries under `data`,
+    /// `id` verbatim; `_headers()` (content type, static headers).
+    fn models_request(&self, cx: &BuildContext<'_>) -> Result<WireRequest, Lm15Error> {
+        let mut wire = WireRequest::get("/models");
+        wire.headers
+            .push(("Content-Type".into(), "application/json".into()));
+        apply_static_headers(&mut wire.headers, cx.policy);
+        Ok(wire)
+    }
+
+    fn parse_models(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<ModelInfo>, Lm15Error> {
+        let data: Value = serde_json::from_slice(body).map_err(|err| {
+            let mut meta = crate::errors::ErrorMeta::new(format!(
+                "{}: models body is not JSON: {err}",
+                cx.provider
+            ));
+            meta.provider = Some(cx.provider.to_string());
+            Lm15Error::ProviderError(meta)
+        })?;
+        Ok(model_infos_from_entries(
+            data.get("data"),
+            cx.provider,
+            "openai_chat",
+            |entry| entry.get("id").and_then(Value::as_str).map(str::to_string),
+        ))
     }
 
     fn parse_response(

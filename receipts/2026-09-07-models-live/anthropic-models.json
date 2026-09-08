@@ -1,0 +1,99 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "models",
+  "sent": {
+    "method": "GET",
+    "url": "https://api.anthropic.com/v1/models",
+    "params": {
+      "limit": "1000"
+    },
+    "headers": {
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "x-api-key": "$ANTHROPIC_API_KEY"
+    },
+    "body": null
+  },
+  "status": 200,
+  "response_headers": {
+    "anthropic-organization-id": "705202b1-79ca-4ef0-9604-08f21cdd602f",
+    "anthropic-workspace-id": "wrkspc_01VxzyaMjxiUw97skFpL6AjK",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a37a43dc8a12a266-YUL",
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    "content-type": "application/json",
+    "date": "Tue, 08 Sep 2026 01:43:55 GMT",
+    "request-id": "req_011Ceq8Cio9yUy2eXvFtPY8t",
+    "server": "cloudflare",
+    "server-timing": "x-originResponse;dur=56",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "vary": "Accept-Encoding",
+    "x-robots-tag": "none"
+  },
+  "body": {
+    "entries_omitted": true,
+    "bytes": 8931
+  },
+  "lm15": {
+    "models": [
+      {
+        "id": "claude-fable-5-1",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-opus-5",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-sonnet-5",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-fable-5",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-opus-4-8",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-opus-4-7",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-sonnet-4-6",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-opus-4-6",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-opus-4-5-20251101",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-haiku-4-5-20251001",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      },
+      {
+        "id": "claude-sonnet-4-5-20250929",
+        "provider": "anthropic",
+        "api_family": "anthropic_messages"
+      }
+    ]
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:43:55 GMT"
+}

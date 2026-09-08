@@ -18,8 +18,9 @@ grade the port against any other commit.
 | 5 — dialects, response side + stream assembly | MAP-1..MAP-4, MAP-9; `parse_response` / `replay_stream` for the four dialects; the SSE parser; the MAP-3/4 coalescer and the MAP-9 assembler (`src/stream.rs`) | done — `--direction response` 298 pass / 0 fail / 1 skip (`openai.computer_use`, no golden), `--direction stream` 40 pass / 0 fail / 0 skip, including the pinned `StreamAssemblyError` refusal (`openai_chat.tool_call_unnamed`). The "Module 5" section below states the deviations |
 | 5b — the network | `complete` / `stream` over a transport (api-family § The core loop, § Providers, direct); `ResponseStream` | done — `src/transport.rs` (the `Transport` trait, the reqwest `HttpTransport`), `ProviderLM::complete` / `ProviderLM::stream`, `src/response_stream.rs`. `tests/transport_roundtrip.rs` drives the real transport against a loopback HTTP/1.1 server (SSE frames split across chunks, a 429 with `Retry-After`, a stalled body, cancellation by drop). First live traffic: `receipts/2026-09-07-live-smoke/` (one binding per dialect, `complete` and `stream` agree). Not a harness direction: the codec is the contract, the transport is per-language idiom |
 | 5c — `LMRouter` | api-family § The core loop; AUTH-1 resolution order; the reference's `lm15.router` | done — `src/router.rs`: prefix / catalog / rule rungs, `resolve` (pure), `lm` (the AUTH-1 chain: explicit entry, stored login, env keys, placeholder), one adapter per provider; stored logins as a per-request `CredentialProvider` (`src/auth/login.rs`); the Codex `chatgpt-account-id` header (a stated skeleton gap, now closed). Live through the router: `receipts/2026-09-07-router-live/`. Differential probe against the reference, 130 comparisons outside the corpus, zero differences: `receipts/2026-09-07-differential/` (`tools/differential.py`) |
-| the `blocking` feature | api-family rule 4 | not started |
-| 6–9 — models, files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
+| the `blocking` feature | api-family rule 4 | done — `lm15::blocking::{LMRouter, ProviderLM, ResponseStream, EventStream}`, the same names over one library-owned runtime thread (the `reqwest::blocking` design); `tests/blocking_roundtrip.rs` drives it from a plain thread against a loopback server. Calling it from inside an async runtime panics with a message naming the async API (stated below) |
+| 6 — model listing | `changes/2026-08-31-list-models-provisional.md`; `--direction models` | done — `ProviderLM::list_models` / `models_request` / `parse_models`, the four dialects' GETs and mappings copied as data; `--direction models` 33 pass / **1 fail** / 0 skip: `openai_chat.models[parse]` pins `provider: "openai_chat"`, the reference adapter's legacy self-name, against the canonical `openai-chat` every other fixture and the support matrix use — a contract finding, not absorbed: `findings/2026-09-07-openai-chat-provider-spelling.md`. Live: `receipts/2026-09-07-models-live/` |
+| 7–9 — files/batch/cache, generation, live | | not started; the shim answers `UnsupportedFeatureError` |
 
 Gates for modules 1–4, from the contract checkout:
 
@@ -33,6 +34,7 @@ python3 harness/check.py --shim rust --direction token     # 34 pass / 9 fail (m
 python3 harness/check.py --shim rust --direction request
 python3 harness/check.py --shim rust --direction response
 python3 harness/check.py --shim rust --direction stream
+python3 harness/check.py --shim rust --direction models    # 33 pass / 1 fail (the openai_chat spelling finding), stated above
 ```
 
 `cargo test` runs the INV-* unit tests, the serde-rule edge tests, the
@@ -51,7 +53,8 @@ repository.
 
 The shim answers `capabilities`, `serde_roundtrip`, `validate`,
 `normalize_error`, `explain_auth`, `build_request`, `parse_response`,
-`replay_stream` and `sigv4_sign`.
+`replay_stream`, `build_models_request`, `parse_models_response` and
+`sigv4_sign`.
 `token_exchange_build` / `token_exchange_parse` answer
 `UnsupportedFeatureError` naming module 3b. `surface_dump` (PROTOCOL.md) is not
 implemented: it must come from reflection, and Rust has no runtime
@@ -98,9 +101,23 @@ let router = LMRouter::with_config(
 // The direct adapters remain first-class; the router is the front door.
 let lm = lm15::AnthropicLM::builder().api_key("...").build()?;
 let response = lm.complete(&request).await?;
+let models = lm.list_models().await?;      // module 6: advisory catalog, ModelInfo values
 ```
 
-Async on tokio (api-family rule 4). `lm.stream(&request)` is a
+Async on tokio (api-family rule 4). Without an async runtime, the
+`blocking` feature mirrors the same names:
+
+```rust
+use lm15::blocking::{LMRouter, ResponseStream};
+
+let router = LMRouter::new();
+let response = router.complete(&request)?;
+let mut rs = ResponseStream::new(router.stream(&request), &request);
+for text in rs.text_chunks() {
+    print!("{}", text?);
+}
+let response = rs.response()?;
+``` `lm.stream(&request)` is a
 `Stream<Item = Result<StreamEvent, Lm15Error>>` — one start event, deltas,
 one final end event (MAP-3/4) — and dropping it closes the connection. A
 provider's non-2xx is the typed error with `retry_after` from the
@@ -256,6 +273,15 @@ Each row names the rule it deviates from (playbooks/port.md rule 8).
   rungs are module 3b, and the router answers the same
   `NotConfiguredError` naming it that `explain_auth` answers (AUTH-7:
   the doctor and real construction walk the same chain).
+- **`lm15::blocking` owns one runtime thread and panics inside an async
+  runtime.** The design of `reqwest::blocking`: a single worker thread
+  named `lm15-blocking`, started on first use, every blocking call
+  driven on it; one connection pool for the process, no thread per
+  adapter. The cost: a blocking call from inside a tokio runtime cannot
+  be made safe (blocking a worker on another runtime deadlocks under
+  load), so it panics at the call site with a message naming the async
+  API. The reference's `LMRouter` is plain synchronous Python and has no
+  such edge.
 - **The Codex account id is resolved at the first build, not at
   construction.** The reference reads the ChatGPT account id off a static
   token when the adapter is constructed and raises then. This port's

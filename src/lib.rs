@@ -32,6 +32,8 @@
 
 pub mod adapter;
 pub mod auth;
+#[cfg(feature = "blocking")]
+pub mod blocking;
 pub mod cloud;
 pub mod compat;
 pub mod dialects;

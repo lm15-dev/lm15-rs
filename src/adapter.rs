@@ -36,8 +36,8 @@ use crate::stream::{materialize_response, Coalescer};
 use crate::transport::{
     attach_retry_after, BodyStream, BoxFuture, HttpTransport, Transport, TransportResponse,
 };
-use crate::types::{Request, Response, StreamEvent};
-use crate::wire::{emit, BuildContext, Clock, Dialect, SystemClock, TransportRequest};
+use crate::types::{ModelInfo, Request, Response, StreamEvent};
+use crate::wire::{emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest};
 
 type BoxedCredentials = Box<dyn CredentialProvider + Send + Sync>;
 type BoxedClock = Box<dyn Clock + Send + Sync>;
@@ -87,6 +87,19 @@ impl Binding {
             compat: &self.compat,
             base_url: &self.base_url,
             model: self.wire_model(&request.model),
+            account_id: self.account_id.as_deref(),
+        }
+    }
+
+    /// The context of a surface request that names no model.
+    fn surface_context(&self) -> BuildContext<'_> {
+        BuildContext {
+            provider: &self.provider,
+            policy: self.policy,
+            settings: &self.settings,
+            compat: &self.compat,
+            base_url: &self.base_url,
+            model: "",
             account_id: self.account_id.as_deref(),
         }
     }
@@ -207,6 +220,73 @@ impl ProviderLM {
     pub fn parse_stream(&self, request: &Request, body: &[u8]) -> Result<Response, Lm15Error> {
         let events = self.replay_stream(request, body)?;
         materialize_response(events.iter(), request)
+    }
+
+    /// The wire GET for this provider's model catalog (module 6). A
+    /// policy that does not carry the `models` surface refuses with
+    /// `UnsupportedFeatureError` before any wire.
+    pub fn models_request(&self) -> Result<TransportRequest, Lm15Error> {
+        self.require("models")?;
+        let dialect = dialect_for(self.dialect());
+        let cx = self.binding.surface_context();
+        let wire = dialect.models_request(&cx)?;
+        let mut built = emit_wire(
+            dialect,
+            wire,
+            false,
+            &cx,
+            self.credentials.as_ref(),
+            self.clock.as_ref(),
+        )?;
+        // Every dialect's `_models_request`: `read_timeout=30.0`.
+        built.read_timeout = Some(std::time::Duration::from_secs(30));
+        Ok(built)
+    }
+
+    /// The canonical `ModelInfo` list of a catalog body; a status of 400
+    /// or more is the provider's error, normalized.
+    pub fn parse_models(&self, status: u16, body: &[u8]) -> Result<Vec<ModelInfo>, Lm15Error> {
+        self.require("models")?;
+        if status >= 400 {
+            return Err(self.http_error(status, &[], body));
+        }
+        let cx = self.binding.surface_context();
+        dialect_for(self.dialect()).parse_models(&cx, body)
+    }
+
+    /// The models this credential can use (`BaseProviderLM.list_models`).
+    /// Advisory metadata (docs/model-hydration.md): it never changes what
+    /// `build_request` produces.
+    pub async fn list_models(&self) -> Result<Vec<ModelInfo>, Lm15Error> {
+        let built = self.models_request()?;
+        let mut response = self.transport.send(built).await?;
+        let status = response.status;
+        let headers = std::mem::take(&mut response.headers);
+        let body = response.read().await?;
+        if status >= 400 {
+            return Err(self.http_error(status, &headers, &body));
+        }
+        let cx = self.binding.surface_context();
+        dialect_for(self.dialect()).parse_models(&cx, &body)
+    }
+
+    /// `_require` (`lm15/providers/base.py:366-377`): the bound access
+    /// path, not the dialect, decides which surfaces exist.
+    fn require(&self, surface: &str) -> Result<(), Lm15Error> {
+        if self.policy().supports.supports_endpoint(surface) {
+            return Ok(());
+        }
+        let word = match surface {
+            "models" => "model listing",
+            "batches" => "batch",
+            "images" => "image generation",
+            "speech" => "speech generation",
+            "video" => "video generation",
+            other => other,
+        };
+        let mut meta = ErrorMeta::new(format!("{}: {word} not supported", self.provider()));
+        meta.provider = Some(self.provider().to_string());
+        Err(Lm15Error::UnsupportedFeatureError(meta))
     }
 
     /// The transport this adapter sends through.

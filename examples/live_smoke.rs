@@ -174,8 +174,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let stream_ms = started.elapsed().as_millis();
 
+        // Module 6: the catalog this key can use must contain the model
+        // just called (advisory metadata, but it had better be true).
+        let started = std::time::Instant::now();
+        let listed = router.lm(model)?.list_models().await;
+        let models_ms = started.elapsed().as_millis();
+
         let exchanges = log.lock().unwrap().clone();
         let mut verdict = Vec::new();
+        match &listed {
+            Ok(models) => {
+                // The id asked for, or the id the provider reported (an
+                // alias like `claude-haiku-4-5` answers as its dated id).
+                let wire_model = resolution.model.as_str();
+                let reported = complete.as_ref().ok().map(|r| r.model.as_str());
+                if !models
+                    .iter()
+                    .any(|m| m.id == wire_model || Some(m.id.as_str()) == reported)
+                {
+                    verdict.push(format!(
+                        "list_models ({} entries) contains neither {wire_model:?} nor {reported:?}",
+                        models.len()
+                    ));
+                }
+                if models.iter().any(|m| m.origin.provider_data.is_none()) {
+                    verdict.push("a listed model lacks origin.provider_data".into());
+                }
+            }
+            Err(err) => verdict.push(format!("list_models failed: {err}")),
+        }
         match (&complete, &streamed) {
             (Ok(c), Ok(s)) => {
                 if c.text() != s.text() {
@@ -204,10 +231,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ok = verdict.is_empty();
         failures += usize::from(!ok);
         println!(
-            "{provider:<10} {} complete {complete_ms}ms  stream {stream_ms}ms (first text {}ms, {} chunks)  text={:?}",
+            "{provider:<10} {} complete {complete_ms}ms  stream {stream_ms}ms (first text {}ms, {} chunks)  models {models_ms}ms ({} entries)  text={:?}",
             if ok { "OK  " } else { "FAIL" },
             first_chunk_ms.unwrap_or(0),
             chunks.len(),
+            listed.as_ref().map(Vec::len).unwrap_or(0),
             complete.as_ref().ok().and_then(|r| r.text()).unwrap_or_default(),
         );
         for problem in &verdict {
@@ -215,27 +243,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(dir) = &out {
-            for (i, (op, result)) in [("complete", &complete), ("stream", &streamed)]
-                .iter()
-                .enumerate()
-            {
+            let models_value = match &listed {
+                Ok(models) => json!({ "models": models.iter().map(|m| json!({
+                    "id": m.id, "provider": m.provider, "api_family": m.api_family })).collect::<Vec<_>>() }),
+                Err(err) => {
+                    json!({ "error": { "class": err.class_name(), "code": err.code().as_str(), "message": err.message() } })
+                }
+            };
+            let complete_value = |result: &Result<lm15::Response, Lm15Error>| match result {
+                Ok(response) => json!({ "response": response.to_json() }),
+                Err(err) => {
+                    json!({ "error": { "class": err.class_name(), "code": err.code().as_str(), "message": err.message() } })
+                }
+            };
+            let ops = [
+                ("complete", complete_value(&complete)),
+                ("stream", complete_value(&streamed)),
+                ("models", models_value),
+            ];
+            for (i, (op, lm15_value)) in ops.into_iter().enumerate() {
                 let Some(exchange) = exchanges.get(i) else {
                     continue;
                 };
                 let body = exchange.body.lock().unwrap().clone();
-                let lm15_value = match result {
-                    Ok(response) => json!({ "response": response.to_json() }),
-                    Err(err) => {
-                        json!({ "error": { "class": err.class_name(), "code": err.code().as_str(), "message": err.message() } })
-                    }
-                };
                 let receipt = json!({
                     "port": format!("lm15-rs {}", env!("CARGO_PKG_VERSION")),
                     "op": op,
                     "sent": exchange.sent.as_ref().map(|s| redact(s, env_key)),
                     "status": exchange.status,
                     "response_headers": exchange.headers.iter().cloned().collect::<BTreeMap<_, _>>(),
-                    "body": body_value(&body),
+                    // A catalog body is large and provider-owned; the
+                    // mapped ids are what this receipt is for.
+                    "body": if op == "models" { json!({"entries_omitted": true, "bytes": body.len()}) } else { body_value(&body) },
                     "lm15": lm15_value,
                     "verdict": if ok { "ok" } else { "fail" },
                     "problems": verdict,

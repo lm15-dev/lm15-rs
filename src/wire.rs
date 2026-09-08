@@ -32,7 +32,7 @@ use crate::sse::SseEvent;
 /// The backend value of the ChatGPT Codex door (spec/auth.md AUTH-10;
 /// `lm15/providers/openai.py:391`).
 pub const CODEX_BACKEND: &str = "chatgpt-codex";
-use crate::types::{Request, Response, StreamEvent};
+use crate::types::{ModelInfo, ModelOrigin, Request, Response, StreamEvent};
 
 /// A request ready for a transport. `url` carries no query string; the
 /// params are decoded pairs (harness/PROTOCOL.md § Query parameter
@@ -170,6 +170,82 @@ pub trait Dialect: Sync {
         event: &SseEvent,
         out: &mut Vec<StreamEvent>,
     ) -> Result<(), Lm15Error>;
+
+    /// The wire GET for the provider's model catalog (module 6; the
+    /// mapping table of `changes/2026-08-31-list-models-provisional.md`),
+    /// before auth and host work. The default: the dialect has no listing.
+    fn models_request(&self, cx: &BuildContext<'_>) -> Result<WireRequest, Lm15Error> {
+        Err(models_unsupported(cx.provider))
+    }
+
+    /// A 2xx catalog body as canonical `ModelInfo` values: `id` is the
+    /// usable `Request.model` string, the wire entry rides verbatim under
+    /// `origin.provider_data`; an entry without a usable id is skipped,
+    /// never invented.
+    fn parse_models(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<ModelInfo>, Lm15Error> {
+        let _ = body;
+        Err(models_unsupported(cx.provider))
+    }
+}
+
+/// `{provider}: model listing not supported` (`lm15/providers/base.py`
+/// `_models_request`, and `_require("models")`).
+pub fn models_unsupported(provider: &str) -> Lm15Error {
+    let mut meta = ErrorMeta::new(format!("{provider}: model listing not supported"));
+    meta.provider = Some(provider.to_string());
+    Lm15Error::UnsupportedFeatureError(meta)
+}
+
+/// The reference's `model_infos_from_entries` (`lm15/providers/common.py`):
+/// each object entry whose `id_of` is a non-empty string becomes a
+/// `ModelInfo` with the entry embedded verbatim; anything else is skipped.
+pub fn model_infos_from_entries(
+    entries: Option<&Value>,
+    provider: &str,
+    api_family: &str,
+    id_of: impl Fn(&serde_json::Map<String, Value>) -> Option<String>,
+) -> Vec<ModelInfo> {
+    let Some(Value::Array(entries)) = entries else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let object = entry.as_object()?;
+            let id = id_of(object).filter(|id| !id.is_empty())?;
+            Some(ModelInfo {
+                id,
+                provider: provider.to_string(),
+                api_family: api_family.to_string(),
+                origin: ModelOrigin {
+                    provider_data: Some(object.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+/// A GET with no body (the models listing). `content-type` is the
+/// dialect's to add when its reference `_headers()` does (every dialect
+/// but Gemini).
+impl WireRequest {
+    pub fn get(path: impl Into<String>) -> WireRequest {
+        WireRequest {
+            method: "GET".into(),
+            path: path.into(),
+            params: Vec::new(),
+            headers: Vec::new(),
+            body: None,
+            endpoint: None,
+            model: None,
+        }
+    }
 }
 
 /// The time source every time-dependent byte reads (SigV4 date, credential
@@ -247,7 +323,19 @@ pub fn emit(
     clock: &dyn Clock,
 ) -> Result<TransportRequest, Lm15Error> {
     let wire = dialect.build(request, stream, cx)?;
+    emit_wire(dialect, wire, stream, cx, credentials, clock)
+}
 
+/// The auth-and-host half of [`emit`] for a wire request already built
+/// (a chat request, or a surface request such as the models listing).
+pub fn emit_wire(
+    dialect: &dyn Dialect,
+    wire: WireRequest,
+    stream: bool,
+    cx: &BuildContext<'_>,
+    credentials: &dyn CredentialProvider,
+    clock: &dyn Clock,
+) -> Result<TransportRequest, Lm15Error> {
     // AUTH-2: once per request, never cached.
     let credential = credentials.credential().map_err(Lm15Error::from)?;
     let scheme = select_scheme(cx.policy.auth_scheme, &credential).map_err(|err| {

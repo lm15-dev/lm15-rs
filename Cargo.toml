@@ -32,6 +32,12 @@ bytes = "1"
 # Retry-After as an HTTP-date (the reference: email.utils.parsedate_to_datetime).
 httpdate = "1"
 
+[features]
+default = []
+# api-family rule 4: the same names, blocking, for programs without an
+# async runtime (`lm15::blocking`). Owns one tokio runtime thread.
+blocking = ["tokio/rt-multi-thread"]
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "test-util"] }
 

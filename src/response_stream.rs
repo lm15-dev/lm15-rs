@@ -25,16 +25,99 @@ use crate::errors::Lm15Error;
 use crate::stream::{error_from_detail, StreamAccumulator};
 use crate::types::{Delta, Request, Response, StreamEvent};
 
-/// The assembled stream: canonical events out, a `Response` at the end.
-/// `S` is usually [`crate::adapter::EventStream`]; any
-/// `Stream<Item = Result<StreamEvent, Lm15Error>> + Unpin` works
-/// (`Box::pin` one that is not `Unpin`).
-pub struct ResponseStream<S> {
-    source: S,
+/// The assembly engine both [`ResponseStream`] and the blocking mirror
+/// step: every source item goes through `step`, which tees it into the
+/// MAP-9 accumulator and decides what the consumer sees.
+#[derive(Debug)]
+pub struct Assembler {
     accumulator: StreamAccumulator,
     response: Option<Response>,
     failure: Option<Lm15Error>,
     done: bool,
+}
+
+impl Assembler {
+    pub fn new(request: &Request) -> Self {
+        Assembler {
+            accumulator: StreamAccumulator::new(request),
+            response: None,
+            failure: None,
+            done: false,
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// One source item in (`None`: the source ran dry), what the consumer
+    /// sees out (`None`: the assembled stream has ended).
+    pub fn step(
+        &mut self,
+        item: Option<Result<StreamEvent, Lm15Error>>,
+    ) -> Option<Result<StreamEvent, Lm15Error>> {
+        if self.done {
+            return None;
+        }
+        match item {
+            None => self.finish().err().map(Err),
+            Some(Err(err)) => Some(Err(self.fail(err))),
+            Some(Ok(StreamEvent::Error(event))) => {
+                Some(Err(self.fail(error_from_detail(&event.error))))
+            }
+            Some(Ok(event)) => {
+                self.accumulator.push(&event);
+                if matches!(event, StreamEvent::End(_)) {
+                    if let Err(err) = self.finish() {
+                        return Some(Err(err));
+                    }
+                }
+                Some(Ok(event))
+            }
+        }
+    }
+
+    /// The outcome once the stream has ended; a failure is remembered.
+    pub fn outcome(&self) -> Result<Response, Lm15Error> {
+        match (&self.failure, &self.response) {
+            (Some(err), _) => Err(err.clone()),
+            (None, Some(response)) => Ok(response.clone()),
+            (None, None) => unreachable!("a finished stream has a response or a failure"),
+        }
+    }
+
+    pub fn failure(&self) -> Option<&Lm15Error> {
+        self.failure.as_ref()
+    }
+
+    fn fail(&mut self, err: Lm15Error) -> Lm15Error {
+        self.failure = Some(err.clone());
+        self.done = true;
+        err
+    }
+
+    fn finish(&mut self) -> Result<(), Lm15Error> {
+        self.done = true;
+        match self.accumulator.response() {
+            Ok(response) => {
+                self.response = Some(response);
+                Ok(())
+            }
+            Err(err) => {
+                self.failure = Some(err.clone());
+                Err(err)
+            }
+        }
+    }
+}
+
+/// The assembled stream: canonical events out, a `Response` at the end.
+/// `S` is usually [`crate::adapter::EventStream`]; any
+/// `Stream<Item = Result<StreamEvent, Lm15Error>> + Unpin` works
+/// (`Box::pin` one that is not).
+pub struct ResponseStream<S> {
+    source: S,
+    assembler: Assembler,
 }
 
 impl<S> ResponseStream<S>
@@ -44,10 +127,7 @@ where
     pub fn new(events: S, request: &Request) -> Self {
         ResponseStream {
             source: events,
-            accumulator: StreamAccumulator::new(request),
-            response: None,
-            failure: None,
-            done: false,
+            assembler: Assembler::new(request),
         }
     }
 
@@ -58,45 +138,21 @@ where
 
     /// The complete `Response`: drains the stream if it is still open.
     pub async fn response(&mut self) -> Result<Response, Lm15Error> {
-        if let Some(err) = &self.failure {
+        if let Some(err) = self.assembler.failure() {
             return Err(err.clone());
         }
-        while !self.done {
+        while !self.assembler.is_done() {
             if let Some(Err(err)) = self.next().await {
                 return Err(err);
             }
         }
-        match (&self.failure, &self.response) {
-            (Some(err), _) => Err(err.clone()),
-            (None, Some(response)) => Ok(response.clone()),
-            (None, None) => unreachable!("a finished stream has a response or a failure"),
-        }
+        self.assembler.outcome()
     }
 
     /// Whether the stream has ended (an `end` event, a failure, or the
     /// source ran dry).
     pub fn is_done(&self) -> bool {
-        self.done
-    }
-
-    fn fail(&mut self, err: Lm15Error) -> Poll<Option<Result<StreamEvent, Lm15Error>>> {
-        self.failure = Some(err.clone());
-        self.done = true;
-        Poll::Ready(Some(Err(err)))
-    }
-
-    fn finish(&mut self) -> Poll<Option<Result<StreamEvent, Lm15Error>>> {
-        self.done = true;
-        match self.accumulator.response() {
-            Ok(response) => {
-                self.response = Some(response);
-                Poll::Ready(None)
-            }
-            Err(err) => {
-                self.failure = Some(err.clone());
-                Poll::Ready(Some(Err(err)))
-            }
-        }
+        self.assembler.is_done()
     }
 }
 
@@ -108,27 +164,12 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        if this.done {
+        if this.assembler.is_done() {
             return Poll::Ready(None);
         }
         match Pin::new(&mut this.source).poll_next(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => this.finish(),
-            Poll::Ready(Some(Err(err))) => this.fail(err),
-            Poll::Ready(Some(Ok(StreamEvent::Error(event)))) => {
-                this.fail(error_from_detail(&event.error))
-            }
-            Poll::Ready(Some(Ok(event))) => {
-                this.accumulator.push(&event);
-                if matches!(event, StreamEvent::End(_)) {
-                    this.done = true;
-                    match this.accumulator.response() {
-                        Ok(response) => this.response = Some(response),
-                        Err(err) => return this.fail(err),
-                    }
-                }
-                Poll::Ready(Some(Ok(event)))
-            }
+            Poll::Ready(item) => Poll::Ready(this.assembler.step(item)),
         }
     }
 }

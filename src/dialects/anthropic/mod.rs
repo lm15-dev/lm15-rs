@@ -33,8 +33,8 @@ use crate::compat::{AnthropicCompat, ResolvedAnthropicCompat};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
-use crate::types::{Request, Response, StreamEvent, Tool};
-use crate::wire::{BuildContext, Dialect, WireRequest};
+use crate::types::{ModelInfo, Request, Response, StreamEvent, Tool};
+use crate::wire::{model_infos_from_entries, BuildContext, Dialect, WireRequest};
 
 /// The dialect value; stateless (everything per binding is in the
 /// [`BuildContext`]).
@@ -65,6 +65,37 @@ impl Dialect for Anthropic {
         wire.endpoint = Some(ENDPOINT);
         wire.model = Some(cx.model.to_string());
         Ok(wire)
+    }
+
+    /// `anthropic.py:975-994`: `GET /models?limit=1000` (the endpoint
+    /// maximum; the catalog fits one page, `has_more: false` live
+    /// 2026-08-31), entries under `data`, `id` verbatim.
+    fn models_request(&self, cx: &BuildContext<'_>) -> Result<WireRequest, Lm15Error> {
+        let mut wire = WireRequest::get("/models");
+        wire.params.push(("limit".into(), "1000".into()));
+        wire.headers = surface_headers(cx.policy);
+        wire.headers
+            .push(("content-type".into(), "application/json".into()));
+        Ok(wire)
+    }
+
+    fn parse_models(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<ModelInfo>, Lm15Error> {
+        let data: Value = serde_json::from_slice(body).map_err(|err| {
+            let mut meta =
+                ErrorMeta::new(format!("{}: models body is not JSON: {err}", cx.provider));
+            meta.provider = Some(cx.provider.to_string());
+            Lm15Error::ProviderError(meta)
+        })?;
+        Ok(model_infos_from_entries(
+            data.get("data"),
+            cx.provider,
+            "anthropic_messages",
+            |entry| entry.get("id").and_then(Value::as_str).map(str::to_string),
+        ))
     }
 
     fn parse_response(
@@ -103,6 +134,19 @@ fn resolved_compat(cx: &BuildContext<'_>) -> ResolvedAnthropicCompat {
 /// offered) — comma-separated, first occurrence wins, no duplicates.
 /// `content-type` and the credential are `emit`'s.
 pub fn headers(request: &Request, policy: &AccessPolicy) -> Vec<(String, String)> {
+    headers_with_betas(policy, dialect_betas(request))
+}
+
+/// The headers of a request that offers no tools (the models listing):
+/// `anthropic-version`, the policy's static headers, the policy's betas.
+pub fn surface_headers(policy: &AccessPolicy) -> Vec<(String, String)> {
+    headers_with_betas(policy, Vec::new())
+}
+
+fn headers_with_betas(
+    policy: &AccessPolicy,
+    request_betas: Vec<&'static str>,
+) -> Vec<(String, String)> {
     let mut headers = vec![("anthropic-version".to_string(), API_VERSION.to_string())];
     let mut betas: Vec<&str> = Vec::new();
     let mut add_beta = |beta: &'static str| {
@@ -118,7 +162,7 @@ pub fn headers(request: &Request, policy: &AccessPolicy) -> Vec<(String, String)
             headers.push((name.to_string(), value.to_string()));
         }
     }
-    for beta in dialect_betas(request) {
+    for beta in request_betas {
         add_beta(beta);
     }
     if !betas.is_empty() {

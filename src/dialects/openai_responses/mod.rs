@@ -26,8 +26,10 @@ use serde_json::Value;
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
-use crate::types::{Request, Response, StreamEvent};
-use crate::wire::{apply_static_headers, BuildContext, Dialect, WireRequest};
+use crate::types::{ModelInfo, Request, Response, StreamEvent};
+use crate::wire::{
+    apply_static_headers, model_infos_from_entries, BuildContext, Dialect, WireRequest,
+};
 
 pub use cache::model_has_cache_options;
 pub use tools::builtin_type;
@@ -64,6 +66,51 @@ impl Dialect for OpenAIResponses {
         wire.endpoint = Some("responses");
         wire.model = Some(cx.model.to_string());
         Ok(wire)
+    }
+
+    /// `openai.py:1625-1653`: `GET /models`, entries under `data`, `id`
+    /// verbatim. The Codex backend: `?client_version=<policy's>` (the
+    /// backend requires it), entries under `models`, the id is `slug`.
+    fn models_request(&self, cx: &BuildContext<'_>) -> Result<WireRequest, Lm15Error> {
+        let mut wire = WireRequest::get("/models");
+        if cx.policy.backend == CODEX_BACKEND {
+            let version = cx.policy.backend_option("client_version").unwrap_or("");
+            wire.params
+                .push(("client_version".into(), version.to_string()));
+        }
+        wire.headers
+            .push(("Content-Type".into(), "application/json".into()));
+        apply_static_headers(&mut wire.headers, cx.policy);
+        Ok(wire)
+    }
+
+    fn parse_models(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<ModelInfo>, Lm15Error> {
+        let data: Value = serde_json::from_slice(body).map_err(|err| {
+            let mut meta =
+                ErrorMeta::new(format!("{}: models body is not JSON: {err}", cx.provider));
+            meta.provider = Some(cx.provider.to_string());
+            Lm15Error::ProviderError(meta)
+        })?;
+        let (key, id_key) = if cx.policy.backend == CODEX_BACKEND {
+            ("models", "slug")
+        } else {
+            ("data", "id")
+        };
+        Ok(model_infos_from_entries(
+            data.get(key),
+            cx.provider,
+            "openai_responses",
+            |entry| {
+                entry
+                    .get(id_key)
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            },
+        ))
     }
 
     fn parse_response(

@@ -22,10 +22,12 @@ const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Ops this shim answers (`capabilities.ops`).
 const OPS: &[&str] = &[
     "build_request",
+    "build_models_request",
     "capabilities",
     "explain_auth",
     "normalize_error",
     "parse_response",
+    "parse_models_response",
     "replay_stream",
     "serde_roundtrip",
     "sigv4_sign",
@@ -220,6 +222,49 @@ fn op_build_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     Ok(transport_request_json(&transport))
 }
 
+/// PROTOCOL.md § build_models_request: the shim constructs `openai-codex`
+/// with account id `test-account` (a non-JWT key carries none).
+fn surface_adapter(
+    msg: &Map<String, Value>,
+    credential: Credential,
+) -> Result<lm15::ProviderLM, Failure> {
+    let provider = field_str(msg, "provider")?;
+    let definition = lm15::registry::lookup(&provider)
+        .ok_or_else(|| Lm15Error::not_configured(format!("unknown provider {provider:?}")))?;
+    let mut builder = lm15::LmBuilder::for_entry(definition).api_key(credential);
+    if let Some(base_url) = msg.get("base_url").and_then(Value::as_str) {
+        builder = builder.base_url(base_url);
+    }
+    if let Some(settings) = settings_of(msg) {
+        builder = builder.settings(settings);
+    }
+    if let Some(clock) = clock_of(msg)? {
+        builder = builder.clock(clock);
+    }
+    if definition.id == "openai-codex" {
+        builder = builder.account_id("test-account");
+    }
+    Ok(builder.build()?)
+}
+
+fn op_build_models_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(msg, credential_of(msg)?)?;
+    Ok(transport_request_json(&lm.models_request()?))
+}
+
+/// PROTOCOL.md § parse_models_response: canonical `model_info` serde
+/// INCLUDING `origin.provider_data`; a status of 400 or more is the
+/// normalized error as an `ok: false` reply.
+fn op_parse_models_response(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = surface_adapter(
+        msg,
+        Credential::api_key("vet-parse-only").map_err(Lm15Error::from)?,
+    )?;
+    let status = msg.get("status").and_then(Value::as_u64).unwrap_or(200) as u16;
+    let models = lm.parse_models(status, &body_of(msg)?)?;
+    Ok(json!({ "models": models.iter().map(|m| m.to_json()).collect::<Vec<_>>() }))
+}
+
 /// A parse-side adapter: the harness gives no credential for these ops,
 /// so a placeholder stands in (never sent; parsing reads no credential).
 fn parse_adapter(msg: &Map<String, Value>) -> Result<lm15::ProviderLM, Failure> {
@@ -349,6 +394,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "explain_auth" => op_explain_auth(msg),
         "build_request" => op_build_request(msg),
         "parse_response" => op_parse_response(msg),
+        "build_models_request" => op_build_models_request(msg),
+        "parse_models_response" => op_parse_models_response(msg),
         "replay_stream" => op_replay_stream(msg),
         "sigv4_sign" => op_sigv4_sign(msg),
         // Module 3b (cloud chains: token exchange, RS256) is not implemented.

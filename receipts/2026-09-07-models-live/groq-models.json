@@ -1,0 +1,111 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "models",
+  "sent": {
+    "method": "GET",
+    "url": "https://api.groq.com/openai/v1/models",
+    "params": {},
+    "headers": {
+      "authorization": "Bearer $GROQ_API_KEY",
+      "content-type": "application/json"
+    },
+    "body": null
+  },
+  "status": 200,
+  "response_headers": {
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cache-control": "private, max-age=0, no-store, no-cache, must-revalidate",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a37a43e918e0f867-YUL",
+    "content-type": "application/json",
+    "date": "Tue, 08 Sep 2026 01:43:57 GMT",
+    "server": "cloudflare",
+    "set-cookie": "__cf_bm=lv9ZULJyR4kQr2_UuOeW7tk1eSa3NirDeZtAofeNCQk-1788831837.6191487-1.0.1.1-BHlcjDlRO83i2VpjybKLbexoj_VJVNew.UzfxuB3GTHVILzU8dlTl7tazlpS_LpntKocXUqreB7n0jCdhTN7U6UqzGRJ5DxODNxutLA.UBq5nN2Yvu875LT1r4TbzaqH; HttpOnly; SameSite=None; Secure; Path=/; Domain=groq.com; Expires=Tue, 08 Sep 2026 02:13:57 GMT",
+    "strict-transport-security": "max-age=15552000",
+    "vary": "Origin",
+    "via": "1.1 google",
+    "x-groq-region": "dls",
+    "x-request-id": "req_01m1zazbezeczrv5z65rq67p4x"
+  },
+  "body": {
+    "entries_omitted": true,
+    "bytes": 7073
+  },
+  "lm15": {
+    "models": [
+      {
+        "id": "openai/gpt-oss-120b",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "meta-llama/llama-prompt-guard-2-86m",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "groq/compound-mini",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "qwen/qwen3.6-27b",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "openai/gpt-oss-safeguard-20b",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "canopylabs/orpheus-v1-english",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "qwen/qwen3.8-27b",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "whisper-large-v3-turbo",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "groq/compound",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "canopylabs/orpheus-arabic-saudi",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "openai/gpt-oss-20b",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "whisper-large-v3",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "meta-llama/llama-prompt-guard-2-22m",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      },
+      {
+        "id": "allam-2-7b",
+        "provider": "groq",
+        "api_family": "openai_chat"
+      }
+    ]
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:43:57 GMT"
+}

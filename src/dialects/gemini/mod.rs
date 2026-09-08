@@ -24,8 +24,8 @@ use serde_json::{Map, Value};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::DialectId;
 use crate::sse::SseEvent;
-use crate::types::{BuiltinTool, Request, Response, StreamEvent, Tool};
-use crate::wire::{BuildContext, Dialect, WireRequest};
+use crate::types::{BuiltinTool, ModelInfo, Request, Response, StreamEvent, Tool};
+use crate::wire::{model_infos_from_entries, BuildContext, Dialect, WireRequest};
 
 use self::config::{cache_plan, generation_config, tool_config};
 use self::contents::{contents, system_instruction};
@@ -267,6 +267,38 @@ impl Dialect for Gemini {
 
     fn api_key_header(&self) -> &'static str {
         "x-goog-api-key"
+    }
+
+    /// `gemini.py:1419-1446`: `GET /models?pageSize=1000` (53 models, no
+    /// `nextPageToken` live 2026-08-31), entries under `models`, the id is
+    /// the wire `name` with `models/` stripped (`build` re-prefixes). No
+    /// `content-type`: the reference's `_auth_headers()` carries none.
+    fn models_request(&self, _cx: &BuildContext<'_>) -> Result<WireRequest, Lm15Error> {
+        let mut wire = WireRequest::get("/models");
+        wire.params.push(("pageSize".into(), "1000".into()));
+        Ok(wire)
+    }
+
+    fn parse_models(
+        &self,
+        cx: &BuildContext<'_>,
+        body: &[u8],
+    ) -> Result<Vec<ModelInfo>, Lm15Error> {
+        let data: Value = serde_json::from_slice(body).map_err(|err| {
+            let mut meta =
+                ErrorMeta::new(format!("{}: models body is not JSON: {err}", cx.provider));
+            meta.provider = Some(cx.provider.to_string());
+            Lm15Error::ProviderError(meta)
+        })?;
+        Ok(model_infos_from_entries(
+            data.get("models"),
+            cx.provider,
+            "gemini_generate_content",
+            |entry| {
+                let name = entry.get("name").and_then(Value::as_str)?;
+                Some(name.strip_prefix("models/").unwrap_or(name).to_string())
+            },
+        ))
     }
 
     fn parse_response(

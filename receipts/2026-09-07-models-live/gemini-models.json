@@ -1,0 +1,309 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "models",
+  "sent": {
+    "method": "GET",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models",
+    "params": {
+      "pageSize": "1000"
+    },
+    "headers": {
+      "x-goog-api-key": "$GEMINI_API_KEY"
+    },
+    "body": null
+  },
+  "status": 200,
+  "response_headers": {
+    "accept-ranges": "none",
+    "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+    "content-type": "application/json; charset=UTF-8",
+    "date": "Tue, 08 Sep 2026 01:43:57 GMT",
+    "server": "scaffolding on HTTPServer2",
+    "server-timing": "gfet4t7; dur=81",
+    "vary": "Origin,Accept-Encoding",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "SAMEORIGIN",
+    "x-xss-protection": "0"
+  },
+  "body": {
+    "entries_omitted": true,
+    "bytes": 26178
+  },
+  "lm15": {
+    "models": [
+      {
+        "id": "gemini-2.5-flash",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-pro",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-flash-preview-tts",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-pro-preview-tts",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemma-4-26b-a4b-it",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemma-4-31b-it",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-flash-latest",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-flash-lite-latest",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-pro-latest",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-flash-lite",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-flash-image",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3-flash-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-pro-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-pro-preview-customtools",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-flash-lite-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-flash-lite",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3-pro-image-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3-pro-image",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "nano-banana-pro-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-flash-image-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-flash-image",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-flash-lite-image",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.5-flash",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.5-flash-lite",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-omni-flash-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-omni-1.1-flash",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.5-transcribe",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.6-flash",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.7-flash",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.8-flash",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "lyria-3-clip-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "lyria-3-pro-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "lyria-3.5",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-flash-tts-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-robotics-er-2-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-computer-use-preview-10-2025",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "antigravity-preview-05-2026",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "deep-research-max-preview-04-2026",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "deep-research-preview-04-2026",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "deep-research-pro-preview-12-2025",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-embedding-001",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-embedding-2-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-embedding-2",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "aqa",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "veo-3.1-generate-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "veo-3.1-fast-generate-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "veo-3.1-lite-generate-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.5-transcribe-live",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-flash-native-audio-latest",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-flash-native-audio-preview-09-2025",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-2.5-flash-native-audio-preview-12-2025",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.1-flash-live-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-robotics-er-2-streaming-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      },
+      {
+        "id": "gemini-3.5-live-translate-preview",
+        "provider": "gemini",
+        "api_family": "gemini_generate_content"
+      }
+    ]
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:43:57 GMT"
+}

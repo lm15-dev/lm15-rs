@@ -1,0 +1,708 @@
+{
+  "port": "lm15-rs 0.5.0",
+  "op": "models",
+  "sent": {
+    "method": "GET",
+    "url": "https://api.openai.com/v1/models",
+    "params": {},
+    "headers": {
+      "authorization": "Bearer $OPENAI_API_KEY",
+      "content-type": "application/json"
+    },
+    "body": null
+  },
+  "status": 200,
+  "response_headers": {
+    "access-control-expose-headers": "CF-Ray",
+    "alt-svc": "h3=\":443\"; ma=86400",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a37a43d04c11efec-YUL",
+    "content-length": "21210",
+    "content-type": "application/json",
+    "date": "Tue, 08 Sep 2026 01:43:54 GMT",
+    "openai-processing-ms": "535",
+    "openai-version": "2020-10-01",
+    "server": "cloudflare",
+    "set-cookie": "__cf_bm=7SU0eQ6dmiN24cm9fiizTfNIq4fi60IhrfZFwKu0y0Q-1788831833.646759-1.0.1.1-KFCpcULx9xh2wYBfpq8tAIr_0._OuS5PnTjhSPaRpn30SVdfNMatGHWg511d2mnTCZd4rjjd4r3WwaveHsBHI3w.ZAE.J96ZZIrjH6awuKYEQJ5xU2af7sTn_rJ3iRF1; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Tue, 08 Sep 2026 02:13:54 GMT",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff",
+    "x-openai-proxy-wasm": "v0.1",
+    "x-request-id": "83abda85-4933-455c-ae3e-f5f95933b203"
+  },
+  "body": {
+    "entries_omitted": true,
+    "bytes": 21210
+  },
+  "lm15": {
+    "models": [
+      {
+        "id": "text-embedding-ada-002",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "whisper-1",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-3.5-turbo",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "tts-1",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-3.5-turbo-16k",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4-0613",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "davinci-002",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "babbage-002",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-3.5-turbo-instruct",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-3.5-turbo-instruct-0914",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-3.5-turbo-1106",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "tts-1-hd",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "tts-1-1106",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "tts-1-hd-1106",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "text-embedding-3-small",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "text-embedding-3-large",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-3.5-turbo-0125",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4-turbo",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4-turbo-2024-04-09",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-2024-05-13",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-2024-07-18",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-2024-08-06",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "omni-moderation-latest",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "omni-moderation-2024-09-26",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o1-2024-12-17",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o1",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "computer-use-preview",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3-mini-2025-01-31",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-2024-11-20",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "computer-use-preview-2025-03-11",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-search-preview-2025-03-11",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-search-preview",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-transcribe",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-transcribe",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o1-pro-2025-03-19",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o1-pro",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-tts",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3-2025-04-16",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o4-mini-2025-04-16",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o4-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4.1-2025-04-14",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4.1",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4.1-mini-2025-04-14",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4.1-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4.1-nano-2025-04-14",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4.1-nano",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-image-1",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3-pro",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3-pro-2025-06-10",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o4-mini-deep-research",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3-deep-research",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-transcribe-diarize",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o3-deep-research-2025-06-26",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "o4-mini-deep-research-2025-06-26",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-chat-latest",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-2025-08-07",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-mini-2025-08-07",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-nano-2025-08-07",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-nano",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-audio-2025-08-28",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-2025-08-28",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-audio",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-codex",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-image-1-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-pro-2025-10-06",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-pro",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-audio-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-audio-mini-2025-10-06",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-search-api",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "sora-2",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "sora-2-pro",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5-search-api-2025-10-14",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.1-chat-latest",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.1-2025-11-13",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.1",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.1-codex",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.1-codex-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.1-codex-max",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-image-1.5",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.2-2025-12-11",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.2",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.2-pro-2025-12-11",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.2-pro",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.2-chat-latest",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-transcribe-2025-12-15",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-transcribe-2025-03-20",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-tts-2025-03-20",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-mini-tts-2025-12-15",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-mini-2025-12-15",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-audio-mini-2025-12-15",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "chatgpt-image-latest",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.2-codex",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.3-codex",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-1.5",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-audio-1.5",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-search-preview",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-4o-search-preview-2025-03-11",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.3-chat-latest",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4-2026-03-05",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4-pro",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4-pro-2026-03-05",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4-nano-2026-03-17",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4-nano",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4-mini-2026-03-17",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.4-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-image-2",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-image-2-2026-04-21",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.5",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.5-2026-04-23",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.5-pro",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.5-pro-2026-04-23",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "chat-latest",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-translate",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-2",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-whisper",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-2.1",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-realtime-2.1-mini",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-transcribe",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-live-transcribe",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      },
+      {
+        "id": "gpt-6-astra",
+        "provider": "openai",
+        "api_family": "openai_responses"
+      }
+    ]
+  },
+  "verdict": "ok",
+  "problems": [],
+  "timestamp": "Tue, 08 Sep 2026 01:43:54 GMT"
+}
