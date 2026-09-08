@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use super::policy::{known_providers, CredentialPolicy};
+use super::policy::known_providers;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthError {
@@ -20,13 +20,6 @@ pub enum AuthError {
         provider: Option<String>,
         message: String,
         hint: Option<String>,
-    },
-    /// A cloud-chain policy (module 3b) this port does not implement.
-    /// Class `NotConfiguredError`, code `not_configured`
-    /// (playbooks/port.md: "a port without 3b answers `NotConfiguredError`").
-    NotImplemented {
-        provider: String,
-        policy: CredentialPolicy,
     },
     /// A stored login that is expired and cannot be sent (AUTH-6:
     /// expired-and-unrefreshable → the `AuthError` class, same hint
@@ -94,7 +87,6 @@ impl AuthError {
     pub fn provider(&self) -> Option<&str> {
         match self {
             AuthError::UnknownProvider { provider }
-            | AuthError::NotImplemented { provider, .. }
             | AuthError::Expired { provider, .. }
             | AuthError::DeviceCodeExpired { provider } => Some(provider),
             AuthError::NotConfigured { provider, .. } | AuthError::Rejected { provider, .. } => {
@@ -139,14 +131,6 @@ impl fmt::Display for AuthError {
                 }
                 Ok(())
             }
-            AuthError::NotImplemented { provider, policy } => write!(
-                f,
-                "{provider}: credential policy {} is a cloud chain (spec/auth.md AUTH-1); \
-                 this port does not implement module 3b (playbooks/port.md) and cannot \
-                 resolve or explain cloud-chain credentials — pass an explicit credential \
-                 to a port with module 3b, or use a non-cloud provider",
-                policy.as_str()
-            ),
             AuthError::Rejected {
                 provider,
                 message,

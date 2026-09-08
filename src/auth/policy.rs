@@ -44,7 +44,7 @@ impl CredentialPolicy {
         }
     }
 
-    /// `aws-chain`, `azure-chain`, `gcp-chain`: module 3b (playbooks/port.md).
+    /// `aws-chain`, `azure-chain`, `gcp-chain`: the cloud chains (`crate::cloud`).
     pub fn is_cloud_chain(self) -> bool {
         matches!(
             self,

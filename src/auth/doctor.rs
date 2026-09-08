@@ -3,7 +3,8 @@
 //!
 //! [`explain_auth`] walks exactly the AUTH-1 chain of the provider's policy
 //! (`key`, `oauth`, `oauth-unless-explicit`) and reports every rung; the
-//! cloud chains (module 3b) are answered with [`AuthError::NotImplemented`].
+//! cloud chains (`aws-chain`, `azure-chain`, `gcp-chain`) are walked
+//! offline by `crate::cloud::chains` (`unprobed` for a network rung).
 //!
 //! Purity note, stated because it is a real trade-off: the walk tests env
 //! vars for presence, so secret values do transit process memory. They are
@@ -192,8 +193,7 @@ impl ExplainOptions {
 /// Walks the AUTH-1 chain and reports every rung (AUTH-7). No network I/O,
 /// no writes; file reads are limited to the stored-login file.
 ///
-/// Errors: an unknown provider ([`AuthError::UnknownProvider`]) or a
-/// cloud-chain provider ([`AuthError::NotImplemented`], module 3b).
+/// Errors: an unknown provider ([`AuthError::UnknownProvider`]).
 pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, AuthError> {
     let policy = access_policy(provider).ok_or_else(|| AuthError::UnknownProvider {
         provider: provider.to_string(),

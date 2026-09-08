@@ -21,7 +21,8 @@
 //!   real path. [`pkce_challenge`] (S256) is the only other primitive
 //!   shipped: no flow here needs a loopback listener, so none is built.
 //!
-//! Module 3b (cloud chains, AUTH-11, SigV4, RS256) lives in `crate::cloud`.
+//! The cloud chains (AUTH-1 `aws-chain` / `azure-chain` / `gcp-chain`,
+//! AUTH-11, SigV4, RS256) live in `crate::cloud`.
 
 mod credential;
 mod device;

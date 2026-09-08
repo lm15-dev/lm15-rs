@@ -1,28 +1,23 @@
-//! lm15 — Rust port, rebuilt module-by-module against the lm15-contract
-//! corpus after the stale v1 implementation was removed (2026-08-31).
+//! lm15 — the Rust port of lm15: one canonical request/response model
+//! over every provider the lm15-contract names, byte-exact against its
+//! corpus (the pinned commit is in `CONTRACT_PIN`).
 //!
-//! Implemented modules (playbooks/port.md order of work):
+//! The map, in playbooks/port.md module order:
 //!
-//! 1. canonical types + serde (`spec/types.md`, `spec/vocabularies.md`,
-//!    `spec/invariants.md`, `docs/serde-rules.md`) — [`types`], [`serde`].
-//! 2. errors (`spec/vocabularies.md` ErrorCode + hierarchy shape) and
-//!    provider error normalization — [`errors`], [`registry`].
-//!
-//! 3a. core auth (`spec/auth.md` AUTH-1/2/5/7/8/10; module 3b cloud chains
-//!    are not implemented) — [`auth`]. [`Credential`] is the one AUTH-2
-//!    value type, exported here and as `auth::Credential`.
-//!
-//! 4. dialects, request side: [`wire`] (the emit path), the full AUTH-10
-//!    policy table ([`auth`]), [`cloud`] (host settings, URL rendering,
-//!    rewrites, SigV4), [`compat`] (preset tables), [`adapter`]
-//!    (`ProviderLM` and the named constructors), [`registry::adapter_for`],
-//!    the four [`dialects`].
-//!
-//! 5. dialects, response side and stream assembly (MAP-1..4, MAP-9):
-//!    `parse_response` / `parse_stream_event` on each dialect, [`sse`]
-//!    (the SSE parser), [`stream`] (the MAP-3/4 coalescer, the MAP-9
-//!    accumulator, `materialize_response`), `ProviderLM::parse_response`,
-//!    `ProviderLM::stream_decoder` / `replay_stream`.
+//! 1. canonical types + serde — [`types`], [`serde`] ([`Canonical`]).
+//! 2. errors and provider error normalization — [`errors`], [`registry`].
+//! 3. auth — [`auth`] (AUTH-1..10: credentials, the policy table, the
+//!    doctor, stored logins with refresh, the login door) and [`cloud`]
+//!    (the cloud chains, AUTH-11, SigV4, RS256, host settings).
+//! 4. dialects, request side — [`wire`] (the emit path), [`compat`] (the
+//!    preset tables), the four [`dialects`], [`adapter`] (`ProviderLM`,
+//!    the named constructors), [`registry::adapter_for`].
+//! 5. response side and stream assembly — [`sse`], [`stream`]; the
+//!    network — [`transport`], [`response_stream`]; the router —
+//!    [`router`] ([`LMRouter`]); the `blocking` feature mirrors the names.
+//! 6. model listing, the files / batch / cache surfaces ([`surfaces`]),
+//!    image / speech / video generation, and live sessions ([`live`]) —
+//!    all methods on [`ProviderLM`].
 
 // `Lm15Error` is the family's one error enum (api-family § Errors); its
 // `ErrorMeta` payload is 136 bytes, over clippy's 128-byte `Result` limit.
