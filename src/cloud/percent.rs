@@ -43,30 +43,6 @@ pub(crate) fn decode_bytes(text: &str) -> Vec<u8> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn encodes_like_quote() {
-        assert_eq!(encode("a b/c", b"/"), "a%20b/c");
-        assert_eq!(encode("ሴ", b""), "%E1%88%B4");
-        assert_eq!(encode("-._~", b""), "-._~");
-        assert_eq!(encode("$delete", b"-_.~"), "%24delete");
-    }
-
-    #[test]
-    fn decodes_like_unquote() {
-        let decode = |s: &str| String::from_utf8(decode_bytes(s)).unwrap();
-        assert_eq!(decode("%E1%88%B4"), "ሴ");
-        assert_eq!(decode("a%2"), "a%2");
-        assert_eq!(decode("100%"), "100%");
-        assert_eq!(decode("%zz"), "%zz");
-        assert_eq!(decode("%+1"), "%+1");
-        assert_eq!(decode_bytes("%41%42"), b"AB");
-    }
-}
-
 /// Percent-decoding of a query component (`%XX` sequences and `+` as a
 /// space); malformed escapes are kept verbatim.
 pub(crate) fn decode(text: &str) -> String {
@@ -99,4 +75,28 @@ pub(crate) fn decode(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encodes_like_quote() {
+        assert_eq!(encode("a b/c", b"/"), "a%20b/c");
+        assert_eq!(encode("ሴ", b""), "%E1%88%B4");
+        assert_eq!(encode("-._~", b""), "-._~");
+        assert_eq!(encode("$delete", b"-_.~"), "%24delete");
+    }
+
+    #[test]
+    fn decodes_like_unquote() {
+        let decode = |s: &str| String::from_utf8(decode_bytes(s)).unwrap();
+        assert_eq!(decode("%E1%88%B4"), "ሴ");
+        assert_eq!(decode("a%2"), "a%2");
+        assert_eq!(decode("100%"), "100%");
+        assert_eq!(decode("%zz"), "%zz");
+        assert_eq!(decode("%+1"), "%+1");
+        assert_eq!(decode_bytes("%41%42"), b"AB");
+    }
 }
