@@ -17,7 +17,9 @@ use serde_json::{json, Value};
 
 use lm15::registry::adapter_for;
 use lm15::wire::settings_from;
-use lm15::{request_from_openai_chat, Canonical, HostSettings, Lm15Error, OpenAIChatCompat, Request};
+use lm15::{
+    request_from_openai_chat, Canonical, HostSettings, Lm15Error, OpenAIChatCompat, Request,
+};
 
 fn contract_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("LM15_CONTRACT_DIR")
@@ -26,7 +28,10 @@ fn contract_dir() -> Option<PathBuf> {
     if dir.join("cases").is_dir() {
         Some(dir)
     } else {
-        eprintln!("contract checkout not found at {}; corpus test not run", dir.display());
+        eprintln!(
+            "contract checkout not found at {}; corpus test not run",
+            dir.display()
+        );
         None
     }
 }
@@ -47,7 +52,10 @@ fn all_cases(dir: &Path) -> Vec<Value> {
 
 fn is_chat_wire_case(case: &Value) -> bool {
     let url = case["request"]["url"].as_str().unwrap_or("");
-    url.split('?').next().unwrap_or("").ends_with("/chat/completions")
+    url.split('?')
+        .next()
+        .unwrap_or("")
+        .ends_with("/chat/completions")
         && case.get("canonical_request").is_some()
         && case["expect_lm15"]["raises"]["op"].as_str() != Some("build_request")
 }
@@ -55,7 +63,12 @@ fn is_chat_wire_case(case: &Value) -> bool {
 fn settings_of(case: &Value) -> Option<HostSettings> {
     let object = case.get("settings")?.as_object()?;
     Some(settings_from(object.iter().map(|(k, v)| {
-        (k.clone(), v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))
+        (
+            k.clone(),
+            v.as_str()
+                .map(String::from)
+                .unwrap_or_else(|| v.to_string()),
+        )
     })))
 }
 
@@ -83,13 +96,27 @@ fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
             None,
         )
         .unwrap_or_else(|e| panic!("{id}: {e}"));
-        let body = if is_ingest_surface { &case["body"] } else { &case["request"]["body"] };
+        let body = if is_ingest_surface {
+            &case["body"]
+        } else {
+            &case["request"]["body"]
+        };
         let result = lm.request_from_openai_chat(body);
         let raises = &case["expect_lm15"]["raises"];
         if raises["op"].as_str() == Some("ingest_openai_chat") {
-            let Err(err) = result else { panic!("{id}: expected a refusal, got a Request") };
-            assert_eq!(err.class_name(), raises["type"].as_str().unwrap(), "{id}: refusal class");
-            assert_eq!(err.code().as_str(), raises["code"].as_str().unwrap(), "{id}: refusal code");
+            let Err(err) = result else {
+                panic!("{id}: expected a refusal, got a Request")
+            };
+            assert_eq!(
+                err.class_name(),
+                raises["type"].as_str().unwrap(),
+                "{id}: refusal class"
+            );
+            assert_eq!(
+                err.code().as_str(),
+                raises["code"].as_str().unwrap(),
+                "{id}: refusal code"
+            );
             refusals += 1;
             continue;
         }
@@ -110,8 +137,11 @@ fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
         }
         assert_eq!(&got, want, "{id}");
     }
-    assert_eq!((round_trips, lossy, foreign, refusals), (118, 21, 28, 10),
-               "case counts moved; move CONTRACT_PIN and these constants together");
+    assert_eq!(
+        (round_trips, lossy, foreign, refusals),
+        (118, 21, 28, 10),
+        "case counts moved; move CONTRACT_PIN and these constants together"
+    );
 }
 
 #[test]
@@ -144,7 +174,9 @@ fn build_then_ingest_is_identity_on_a_rich_request() {
 }
 
 fn unsupported(result: Result<Request, Lm15Error>) -> String {
-    let Err(err) = result else { panic!("expected a refusal, got a Request") };
+    let Err(err) = result else {
+        panic!("expected a refusal, got a Request")
+    };
     assert_eq!(err.class_name(), "UnsupportedFeatureError");
     err.message().to_string()
 }
@@ -170,10 +202,20 @@ fn refused_keys_name_the_key_and_unknown_keys_are_refused_not_dropped() {
 fn preset_conditioned_spellings() {
     let body = json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}], "reasoning": {"effort": "low"}});
     let req = request_from_openai_chat(&body, OpenAIChatCompat::preset("openrouter")).unwrap();
-    assert_eq!(req.config.reasoning.as_ref().unwrap().effort.as_str(), "low");
+    assert_eq!(
+        req.config.reasoning.as_ref().unwrap().effort.as_str(),
+        "low"
+    );
     unsupported(request_from_openai_chat(&body, None));
     let thinking = json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}], "thinking": {"type": "disabled"}});
-    assert!(request_from_openai_chat(&thinking, OpenAIChatCompat::preset("deepseek")).unwrap().config.reasoning.unwrap().is_off());
+    assert!(
+        request_from_openai_chat(&thinking, OpenAIChatCompat::preset("deepseek"))
+            .unwrap()
+            .config
+            .reasoning
+            .unwrap()
+            .is_off()
+    );
     unsupported(request_from_openai_chat(&thinking, None));
 }
 
@@ -192,7 +234,9 @@ fn malformed_input_is_invalid_request_not_a_refusal() {
         json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}], "tool_choice": {"type": "function", "function": {"name": "ghost"}}}),
         json!([]),
     ] {
-        let err = request_from_openai_chat(&bad, None).err().unwrap_or_else(|| panic!("{bad} should be malformed"));
+        let err = request_from_openai_chat(&bad, None)
+            .err()
+            .unwrap_or_else(|| panic!("{bad} should be malformed"));
         assert_eq!(err.class_name(), "InvalidRequestError", "{bad}: {err}");
     }
 }
@@ -201,5 +245,8 @@ fn malformed_input_is_invalid_request_not_a_refusal() {
 fn a_non_chat_binding_refuses() {
     let lm = adapter_for("anthropic", "k", None, None, None).unwrap();
     let body = json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}]});
-    assert_eq!(lm.request_from_openai_chat(&body).unwrap_err().class_name(), "UnsupportedFeatureError");
+    assert_eq!(
+        lm.request_from_openai_chat(&body).unwrap_err().class_name(),
+        "UnsupportedFeatureError"
+    );
 }
