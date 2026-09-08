@@ -18,10 +18,10 @@ use lm15::serde::Canonical;
 use lm15::types::Request;
 
 const PROVIDERS: &[(&str, usize)] = &[
-    ("anthropic", 35),
-    ("deepseek-anthropic", 13),
-    ("moonshotai-anthropic", 13),
-    ("meta-anthropic", 9),
+    ("anthropic", 42),
+    ("deepseek-anthropic", 16),
+    ("moonshotai-anthropic", 18),
+    ("meta-anthropic", 15),
 ];
 
 const API_KEY: &str = "test-key-123";
@@ -73,7 +73,13 @@ fn check_case(path: &PathBuf, provider: &str) -> Result<(), String> {
         .map_err(|e| format!("{id}: adapter: {e}"))?;
     let built = lm.build_request(&request, stream);
 
-    if let Some(raises) = case.pointer("/expect_lm15/raises") {
+    // A refusal pinned at another op (`parse_response`, MAP-9 on the
+    // complete path) builds normally here; `tests/contract_responses.rs`
+    // checks it.
+    let raises = case
+        .pointer("/expect_lm15/raises")
+        .filter(|r| r.get("op").is_none_or(|op| op == "build_request"));
+    if let Some(raises) = raises {
         let err = match built {
             Ok(out) => return Err(format!("{id}: built {} instead of raising", out.url)),
             Err(err) => err,

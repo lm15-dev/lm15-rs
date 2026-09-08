@@ -22,15 +22,15 @@ use lm15::{Canonical, HostSettings, Request};
 /// The providers this dialect serves (module 4 W3) and the number of
 /// request cases each pins at `CONTRACT_PIN`.
 const PROVIDERS: &[(&str, usize)] = &[
-    ("openai_chat", 24),
-    ("deepseek", 10),
-    ("zai", 11),
-    ("moonshotai", 14),
-    ("meta-chat", 9),
+    ("openai_chat", 25),
+    ("deepseek", 12),
+    ("zai", 14),
+    ("moonshotai", 18),
+    ("meta-chat", 11),
     ("azure-chat", 13),
     ("bedrock-chat", 13),
     ("bedrock-mantle-chat", 12),
-    ("xai", 6),
+    ("xai", 10),
 ];
 
 const API_KEY: &str = "test-key-123";
@@ -298,5 +298,5 @@ fn pinned_build_refusals_carry_the_provider() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 9, "pinned build_request refusals at CONTRACT_PIN");
+    assert_eq!(seen, 11, "pinned build_request refusals at CONTRACT_PIN");
 }

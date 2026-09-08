@@ -131,6 +131,6 @@ fn every_request_case_of_the_responses_providers_builds_its_fixture() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 81, "request cases with a canonical_request");
+    assert_eq!(checked, 96, "request cases with a canonical_request");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

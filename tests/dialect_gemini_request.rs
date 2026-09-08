@@ -170,6 +170,6 @@ fn every_gemini_request_case_matches_the_fixture() {
             ));
         }
     }
-    assert_eq!(checked, 34, "gemini cases with a canonical_request");
+    assert_eq!(checked, 41, "gemini cases with a canonical_request");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
