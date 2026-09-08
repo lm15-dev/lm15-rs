@@ -25,6 +25,7 @@ const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Ops this shim answers (`capabilities.ops`).
 const OPS: &[&str] = &[
     "build_request",
+    "ingest_openai_chat",
     "build_models_request",
     "batch_op_build",
     "cache_op_build",
@@ -740,6 +741,14 @@ fn op_parse_response(msg: &Map<String, Value>) -> Result<Value, Failure> {
     Ok(Value::Object(response_result(&response)))
 }
 
+/// PROTOCOL.md § ingest_openai_chat (MAP-12): the case's provider binds
+/// the compat; no credential is read.
+fn op_ingest_openai_chat(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let lm = parse_adapter(msg)?;
+    let request = lm.request_from_openai_chat(field(msg, "body")?)?;
+    Ok(json!({"canonical_request": request.to_json()}))
+}
+
 fn op_replay_stream(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let lm = parse_adapter(msg)?;
     let request = Request::from_json(field(msg, "canonical_request")?)?;
@@ -823,6 +832,7 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "resolve_model" => op_resolve_model(msg),
         "build_request" => op_build_request(msg),
         "parse_response" => op_parse_response(msg),
+        "ingest_openai_chat" => op_ingest_openai_chat(msg),
         "build_models_request" => op_build_models_request(msg),
         "file_op_build" => op_file_op_build(msg),
         "cache_op_build" => op_cache_op_build(msg),

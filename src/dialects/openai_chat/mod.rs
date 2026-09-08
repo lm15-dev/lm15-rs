@@ -15,6 +15,7 @@
 //! provider fact bound to the door, not a compat knob (rule 7).
 
 mod cache;
+pub mod ingest;
 mod messages;
 mod payload;
 pub mod response;
@@ -241,7 +242,7 @@ impl Dialect for OpenAIChat {
 /// The compat this request reads: the binding's `OpenAIChatCompat` (the
 /// empty partial when the binding carries another kind) with the door's
 /// per-model overrides applied (`openai_chat.py:369-375`).
-fn resolve_compat(cx: &BuildContext<'_>, model: &str) -> ResolvedOpenAIChatCompat {
+pub(crate) fn resolve_compat(cx: &BuildContext<'_>, model: &str) -> ResolvedOpenAIChatCompat {
     let partial = cx.compat.openai_chat().unwrap_or(&OpenAIChatCompat::EMPTY);
     if partial.model_overrides.is_empty() {
         partial.resolve()

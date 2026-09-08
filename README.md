@@ -28,8 +28,9 @@ zero failures and no skips added; the two skips are corpus gaps
 | `files`, `batch`, `cache` | the three surfaces, multipart byte for byte, MAP-11 id escaping | 48 / 0, 41 / 0, 11 / 0 |
 | `generation`, `video` | image and speech generation, video jobs (MAP-11) | 20 / 0, 27 / 0 |
 | `live` | the websocket codec (OpenAI Realtime, Gemini Live) | 24 / 0 |
+| `ingest` | MAP-12: a Chat Completions request body → `Request` under one preset's spellings; the 118 recorded chat bodies round-trip (21 pinned lossy), 38 foreign shapes (11 refusals). Provisional; module 4b | 156 / 0 |
 
-Beyond the harness: 397 unit and integration tests, zero `unsafe`, zero
+Beyond the harness: 399 unit and integration tests, zero `unsafe`, zero
 clippy warnings at `-D warnings`; the AUTH-3/4 write side (token refresh
 under the cross-process lock) and the AUTH-9 login door, which no
 direction covers, are proven by `tests/login_refresh.rs` on real files
@@ -226,6 +227,14 @@ deviation is a place where the language forced a different shape; the
 wire is not affected unless the entry says so.
 
 ### The family's shape (playbooks/api-family.md)
+
+- **`request_from_openai_chat(&body, compat)` takes `Option<&OpenAIChatCompat>`**
+  (§ Ingest): a preset is `OpenAIChatCompat::preset("groq")`, `None` is
+  OpenAI's own; the method form `lm.request_from_openai_chat(&body)` uses
+  the binding's compat. Malformed input (MAP-12 rule 6, unpinned) is
+  `Lm15Error::InvalidRequestError` — the class `build_request` gives a
+  `Request` that fails its own invariants — rather than a second error
+  type; refusals are `UnsupportedFeatureError` as pinned.
 
 - **`ProviderLM` is one struct; the `*LM` names are constructors**
   (§ Providers, direct). `AnthropicLM`, `OpenAILM`, `OpenAIChatLM`,

@@ -52,6 +52,7 @@ pub use adapter::{
 pub use auth::{AccessPolicy, Credential, CredentialProvider, HostSpec};
 pub use cloud::hosts::HostSettings;
 pub use compat::{AnthropicCompat, OpenAIChatCompat, OpenAIResponsesCompat};
+pub use dialects::openai_chat::ingest::request_from_openai_chat;
 pub use errors::{normalize_error, ErrorClass, ErrorCode, ErrorMeta, Lm15Error};
 pub use live::LiveSession;
 pub use response_stream::ResponseStream;

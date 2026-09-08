@@ -26,6 +26,8 @@ use serde_json::Value;
 
 use crate::types::ValidationError;
 
+/// The Number-rule coercions (INV-007/008), shared with the MAP-12 decoder.
+pub(crate) use helpers::{float_from_value, int_from_value};
 pub use kinds::{roundtrip, validate, KINDS};
 
 /// The canonical JSON form of a type.

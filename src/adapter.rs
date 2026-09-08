@@ -176,6 +176,30 @@ impl ProviderLM {
         )
     }
 
+    /// MAP-12 (module 4b): a Chat Completions request body → the canonical
+    /// `Request`, under this binding's compat (per-model overrides applied)
+    /// — the inverse of `build_request`'s body on the chat dialect. A
+    /// binding of another dialect refuses: there is no wire to invert.
+    /// See [`crate::request_from_openai_chat`].
+    pub fn request_from_openai_chat(&self, body: &Value) -> Result<Request, Lm15Error> {
+        if self.dialect() != DialectId::OpenaiChat {
+            let mut meta = ErrorMeta::new(format!(
+                "{}: this provider does not speak the Chat Completions wire; nothing to ingest",
+                self.provider()
+            ));
+            meta.provider = Some(self.provider().to_string());
+            return Err(Lm15Error::UnsupportedFeatureError(meta));
+        }
+        let model = body.get("model").and_then(Value::as_str).unwrap_or("");
+        let probe = Request {
+            model: model.to_string(),
+            ..Default::default()
+        };
+        let cx = self.binding.context(&probe);
+        let compat = crate::dialects::openai_chat::resolve_compat(&cx, cx.model);
+        crate::dialects::openai_chat::ingest::ingest(self.provider(), body, &compat)
+    }
+
     /// The canonical `Response` of a complete 2xx body (module 5; MAP-1,
     /// MAP-2). A status of 400 or more is the provider's error, normalized
     /// (`normalize_error`); an in-band error envelope on a 2xx body is the
