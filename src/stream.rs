@@ -494,16 +494,20 @@ pub fn materialize_response<'a>(
     request: &Request,
 ) -> Result<Response, Lm15Error> {
     let mut accumulator = StreamAccumulator::new(request);
+    let mut response: Option<Response> = None;
     for event in events {
+        if let Some(response) = response {
+            return Err(crate::response_stream::trailing(response));
+        }
         if let StreamEvent::Error(error) = event {
             return Err(error_from_detail(&error.error));
         }
         accumulator.push(event);
         if matches!(event, StreamEvent::End(_)) {
-            break;
+            response = Some(accumulator.response()?);
         }
     }
-    accumulator.response()
+    response.ok_or_else(|| crate::response_stream::incomplete(&accumulator))
 }
 
 /// The typed error of a stream error event.

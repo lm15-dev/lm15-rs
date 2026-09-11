@@ -30,7 +30,7 @@ mod doctor;
 mod error;
 mod lock;
 mod login;
-mod policy;
+pub(crate) mod policy;
 mod refresh;
 mod stores;
 pub(crate) mod time;

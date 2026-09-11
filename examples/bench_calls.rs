@@ -11,7 +11,10 @@ use lm15::{Config, LMRouter, Message, Request};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let model = args.first().cloned().unwrap_or_else(|| "gemini:gemini-3.8-flash".into());
+    let model = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "gemini:gemini-3.8-flash".into());
     let router = LMRouter::new();
     if args.iter().any(|a| a == "--noop") {
         println!("{{\"noop\":true}}");

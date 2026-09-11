@@ -154,10 +154,10 @@ impl LMRouter {
         }
     }
 
-    pub fn with_config(config: crate::RouterConfig) -> Self {
-        LMRouter {
-            inner: crate::LMRouter::with_config(config),
-        }
+    pub fn with_config(config: crate::RouterConfig) -> Result<Self, crate::Lm15Error> {
+        Ok(LMRouter {
+            inner: crate::LMRouter::with_config(config)?,
+        })
     }
 
     pub fn config(&self) -> &crate::RouterConfig {
@@ -289,7 +289,8 @@ mod tests {
     #[test]
     fn router_and_adapter_names_mirror_the_async_ones() {
         let router =
-            LMRouter::with_config(crate::RouterConfig::new().env([("OPENAI_API_KEY", "k")]));
+            LMRouter::with_config(crate::RouterConfig::new().env([("OPENAI_API_KEY", "k")]))
+                .unwrap();
         assert_eq!(router.resolve("gpt-4.1-mini").unwrap().provider, "openai");
         let lm = router.lm("gpt-4.1-mini").unwrap();
         assert_eq!(lm.provider(), "openai");

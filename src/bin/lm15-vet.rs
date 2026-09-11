@@ -126,7 +126,7 @@ fn op_resolve_model(msg: &Map<String, Value>) -> Result<Value, Failure> {
         }
         config = config.catalog(catalog);
     }
-    let resolution = lm15::router::LMRouter::with_config(config).resolve(&model)?;
+    let resolution = lm15::router::LMRouter::with_config(config)?.resolve(&model)?;
     Ok(json!({
         "provider": resolution.provider,
         "model": resolution.model,

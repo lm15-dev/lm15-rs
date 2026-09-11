@@ -31,6 +31,11 @@ futures-util = { version = "0.3", default-features = false }
 bytes = "1"
 # Retry-After as an HTTP-date (the reference: email.utils.parsedate_to_datetime).
 httpdate = "1"
+# The warning channel for a stream-source failure after the Response is
+# complete (contract changes/2026-09-11-stream-completion-and-error-metadata
+# § 2; Python's StreamCleanupWarning). The facade only; already in the tree
+# through reqwest.
+log = "0.4"
 # AUTH-11 jwt-rs256 (GCP service accounts, Entra certificates): RSA
 # PKCS#1 v1.5 / SHA-256 from the crypto provider rustls already builds
 # (aws-lc-rs), never a second RSA implementation. Also SHA-1 for the

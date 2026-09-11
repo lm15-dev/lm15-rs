@@ -43,8 +43,9 @@ const CLOUD_RUNG_KINDS: &[&str] = &[
     "gcloud",
 ];
 
-/// The split pinned by the contract at `CONTRACT_PIN` (37 cases).
-const EXPECTED_CORE_CASES: usize = 26;
+/// The split pinned by the contract at `CONTRACT_PIN` (43 cases; the six
+/// AUTH-1 shared-explicit-key cases of 2026-09-09 are core).
+const EXPECTED_CORE_CASES: usize = 32;
 const EXPECTED_CLOUD_CASES: usize = 11;
 
 fn contract_dir() -> Option<PathBuf> {

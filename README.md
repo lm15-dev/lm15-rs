@@ -28,7 +28,7 @@ zero failures and no skips added; the two skips are corpus gaps
 | `files`, `batch`, `cache` | the three surfaces, multipart byte for byte, MAP-11 id escaping | 48 / 0, 41 / 0, 11 / 0 |
 | `generation`, `video` | image and speech generation, video jobs (MAP-11) | 20 / 0, 27 / 0 |
 | `live` | the websocket codec (OpenAI Realtime, Gemini Live) | 24 / 0 |
-| `ingest` | MAP-12: a Chat Completions request body → `Request` under one preset's spellings; the 118 recorded chat bodies round-trip (21 pinned lossy), 38 foreign shapes (10 refusals). Provisional; module 4b | 156 / 0 |
+| `ingest` | MAP-12: a Chat Completions request body → `Request` under one preset's spellings; the 118 recorded chat bodies round-trip (21 pinned lossy), 42 foreign shapes (11 refusals; the SDK's and litellm's dumped message objects, `annotations` → CitationPart). Provisional; module 4b | 160 / 0 |
 
 Beyond the harness: 399 unit and integration tests, zero `unsafe`, zero
 clippy warnings at `-D warnings`; the AUTH-3/4 write side (token refresh
@@ -118,8 +118,16 @@ println!("{}", router.resolve("grok-4")?);
 let router = LMRouter::with_config(
     lm15::RouterConfig::new()
         .api_key("anthropic", std::env::var("MY_KEY")?)
+        .base_url("ollama", "http://gpu-box:11434/v1")
         .setting("bedrock-chat", "region", "us-east-1"),
-);
+)?; // a provider string the config is keyed by must route somewhere
+
+// The OpenAI SDK's / litellm's call, as-is (api-family § Ingest): the
+// model string may be lm15's, litellm's `provider/model`, or a bare name.
+let messages = serde_json::json!([{"role": "user", "content": "hi"}]);
+let response = router
+    .complete_from_openai_chat("gpt-4.1-mini", &messages, &Default::default())
+    .await?;
 
 // The direct adapters remain first-class; the router is the front door.
 let lm = lm15::AnthropicLM::new()?;                              // key from the environment
@@ -235,6 +243,29 @@ wire is not affected unless the entry says so.
   `Lm15Error::InvalidRequestError` — the class `build_request` gives a
   `Request` that fails its own invariants — rather than a second error
   type; refusals are `UnsupportedFeatureError` as pinned.
+
+- **`complete_from_openai_chat(model, &messages, &kwargs)` takes the
+  call's pieces as JSON** (§ Ingest, pending ratification): `messages` is
+  the `messages` array as a `serde_json::Value`, `kwargs` the other
+  keywords as a `JsonObject`; Rust has no `**kwargs`. `stream_from_openai_chat`
+  is the streaming twin (wrap it in `ResponseStream` for the assembled
+  answer); the reference's `stream=True` flag is a Python amendment.
+  `request_from_openai_chat` on the router returns `(Request, Arc<ProviderLM>)`.
+
+- **`LMRouter::with_config` returns `Result`**: every provider string the
+  config is keyed by (`api_key`, `base_url`, `settings`) must route
+  somewhere (AUTH-1; the reference checks at `LMRouter(...)` too). An
+  explicit `api_key` entry serves a sibling provider with an identical
+  env-key declaration (AUTH-1 § Shared explicit keys, ratified 2026-09-09);
+  ambiguity is `NotConfiguredError`, never a choice by map order.
+
+- **`LmBuilder::preset("lmstudio")` names a server dialect** — its wire
+  policy and its address (api-family 2026-09-11). A name with no address
+  row in the dialect (`qwen` on Chat; `qwen`, `deepseek`, `zai` on
+  Responses) is refused at `build` unless `base_url` is given; it is never
+  sent to the OpenAI cloud. Before this date `lmstudio` was an alias of
+  `ollama` here and took ollama's port; it is its own preset now, at
+  `http://localhost:1234/v1`.
 
 - **`ProviderLM` is one struct; the `*LM` names are constructors**
   (§ Providers, direct). `AnthropicLM`, `OpenAILM`, `OpenAIChatLM`,
@@ -353,6 +384,18 @@ wire is not affected unless the entry says so.
   retryable, no provider; `err.lock_paths()` reads the guarded file and
   its lock. The reference's `CredentialLockTimeout` is additionally a
   builtin `TimeoutError`; Rust has no such second channel and needs none.
+- **A stream failure after the `end` event is `log::warn!`ed, not
+  returned** (contract `changes/2026-09-11-stream-completion-and-error-metadata.md`
+  § 2; the reference's `StreamCleanupWarning`). Target `lm15::stream`;
+  `ResponseStream::cleanup_errors()` holds the failures. The Response is
+  complete and is never withheld. A source that runs dry without an `end`
+  event, or yields after it, is `StreamAssemblyError` with `partial`
+  (§ 1). `log` is the facade only; it was already in the tree via reqwest.
+- **HTTP error metadata from headers** (§ 3): `attach_error_metadata`
+  reads the request id from `x-request-id` / `request-id` /
+  `x-amzn-requestid` / `x-amz-request-id` / `x-ms-request-id` when the
+  body has none, and drops a non-finite, negative or unparsable retry
+  hint instead of storing it.
 - **`normalize_error` takes no host settings**: it maps the body through
   the provider's dialect table without constructing an adapter.
 

@@ -68,7 +68,8 @@ fn complete_stream_and_list_models_block_the_calling_thread() {
         RouterConfig::new()
             .env([("OPENAI_API_KEY", "k")])
             .api_key("openai-chat", "k"),
-    );
+    )
+    .unwrap();
     // A base URL is the adapter's business; the router's escape hatch is
     // `lm()`, but here the adapter is built directly with the same names.
     let lm = lm15::OpenAIChatLM::builder()

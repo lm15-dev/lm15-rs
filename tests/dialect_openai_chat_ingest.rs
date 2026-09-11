@@ -72,7 +72,7 @@ fn settings_of(case: &Value) -> Option<HostSettings> {
     })))
 }
 
-/// The 118 round trips (97 exact, 21 pinned lossy) and the 38 foreign
+/// The 118 round trips (97 exact, 21 pinned lossy) and the 42 foreign
 /// shapes at `CONTRACT_PIN`; the counts move with the pin.
 #[test]
 fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
@@ -139,7 +139,7 @@ fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
     }
     assert_eq!(
         (round_trips, lossy, foreign, refusals),
-        (118, 21, 28, 10),
+        (118, 21, 31, 11),
         "case counts moved; move CONTRACT_PIN and these constants together"
     );
 }

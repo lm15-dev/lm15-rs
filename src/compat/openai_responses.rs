@@ -476,6 +476,14 @@ pub const OPENAI_RESPONSES_PRESETS: &[(&str, OpenAIResponsesCompat)] = &[
             Some(ToolResultMedia::Reject), // MAP-10: no receipt on this door (deepseek: its other doors silently degrade)
         ),
     ),
+    // LM Studio: ollama's policy at its own address (compat/openai_chat.rs).
+    (
+        "lmstudio",
+        media(
+            preset(System, MaxTokens, Fmt::None, OpenAICacheControl::None),
+            Some(ToolResultMedia::Reject),
+        ),
+    ),
     (
         "vllm",
         media(
@@ -557,8 +565,17 @@ pub const OPENAI_RESPONSES_PRESETS: &[(&str, OpenAIResponsesCompat)] = &[
 ];
 
 /// `lm15/compat.py:264-271` `OPENAI_RESPONSES_PRESET_BASE_URLS`.
+// A server's OpenAI root is one address whichever OpenAI-shaped path is
+// used; the local engines' roots are the chat table's. A preset that names
+// a server absent here (qwen, deepseek, zai: no documented Responses root)
+// is REFUSED at construction without an explicit base_url — never sent to
+// the OpenAI cloud (`preset_base_url`, api-family 2026-09-11).
 pub const OPENAI_RESPONSES_PRESET_BASE_URLS: &[(&str, &str)] = &[
     ("openai", "https://api.openai.com/v1"),
+    ("ollama", "http://localhost:11434/v1"),
+    ("lmstudio", "http://localhost:1234/v1"),
+    ("vllm", "http://localhost:8000/v1"),
+    ("sglang", "http://localhost:30000/v1"),
     ("openrouter", "https://openrouter.ai/api/v1"),
     ("meta", "https://api.meta.ai/v1"),
     ("moonshotai", "https://api.moonshot.ai/v1"),
@@ -587,6 +604,10 @@ mod tests {
             OpenAIResponsesCompat::preset("responses").unwrap(),
             OpenAIResponsesCompat::preset("openai").unwrap()
         );
-        assert_eq!(OPENAI_RESPONSES_PRESETS.len(), 10);
+        assert_eq!(OPENAI_RESPONSES_PRESETS.len(), 11); // + lmstudio (2026-09-11)
+        assert_eq!(
+            OpenAIResponsesCompat::preset("lmstudio"),
+            OpenAIResponsesCompat::preset("ollama")
+        );
     }
 }

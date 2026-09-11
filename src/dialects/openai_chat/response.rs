@@ -58,17 +58,94 @@ pub fn parse_response(
     body: &[u8],
 ) -> Result<Response, Lm15Error> {
     let data = body_object(provider, body)?;
+    response_from_chat_body(provider, data, Some(&request.model), None)
+}
+
+/// A Chat Completions response body → the canonical `Response` (MAP-12 rule
+/// 9; `lm15/providers/openai_chat.py` `response_from_openai_chat`). The
+/// reading-side twin of `request_from_openai_chat`: `body` is the JSON object
+/// a Chat Completions server (or a client library imitating one — litellm's
+/// `ModelResponse.model_dump()`) returned. It is the same reader
+/// `parse_response` runs on provider traffic. `model` fills `Response.model`
+/// when the body carries none; `choice` names the choice to read — unset, a
+/// body with several choices is refused. Keys the reader does not know are
+/// neither refused nor lost: the whole body is `provider_data`. No compat is
+/// taken: the response shape does not vary by server.
+pub fn response_from_openai_chat(
+    provider: &str,
+    body: &Value,
+    model: Option<&str>,
+    choice: Option<usize>,
+) -> Result<Response, Lm15Error> {
+    let Value::Object(data) = body else {
+        return Err(malformed_body(
+            provider,
+            "a Chat Completions response body is a JSON object",
+        ));
+    };
+    response_from_chat_body(provider, data.clone(), model, choice)
+}
+
+fn malformed_body(provider: &str, message: &str) -> Lm15Error {
+    let mut meta = crate::errors::ErrorMeta::new(format!("{provider}: {message}"));
+    meta.provider = Some(provider.to_string());
+    Lm15Error::InvalidRequestError(meta)
+}
+
+/// The one Chat Completions response reader: `parse_response` for provider
+/// traffic and `response_from_openai_chat` for a foreign body share it.
+/// `choice` names the choice to read; `None` means "the only one", and a
+/// body with several choices is then refused rather than silently reduced
+/// to its first (the reading-side twin of MAP-12's refusal of `n`).
+fn response_from_chat_body(
+    provider: &str,
+    data: JsonObject,
+    model: Option<&str>,
+    choice: Option<usize>,
+) -> Result<Response, Lm15Error> {
     if let Some(Value::Object(error)) = data.get("error") {
         return Err(response_error(provider, error));
     }
 
     let mut parts: Vec<Part> = Vec::new();
     let mut unmapped = Unmapped::default();
-    let choices = array_or_empty(data.get("choices"));
-    let choice = match choices.first() {
+    let choices = match data.get("choices") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(items)) => items.as_slice(),
+        Some(_) => return Err(malformed_body(provider, "choices must be an array")),
+    };
+    let index = match choice {
+        None => {
+            if choices.len() > 1 {
+                return Err(super::text::unsupported(
+                    provider,
+                    format!(
+                        "the body carries {} choices; a canonical Response is one message — \
+                         name the choice to read (choice=i) and read each one, or send no n",
+                        choices.len()
+                    ),
+                ));
+            }
+            0
+        }
+        Some(i) => {
+            if i >= choices.len() {
+                return Err(malformed_body(
+                    provider,
+                    &format!(
+                        "choice={i} but the body carries {} choice(s)",
+                        choices.len()
+                    ),
+                ));
+            }
+            i
+        }
+    };
+    let path = format!("choices[{index}]");
+    let choice = match choices.get(index) {
         Some(Value::Object(choice)) => choice,
         Some(other) => {
-            unmapped.record_shape("choices[0]", other);
+            unmapped.record_shape(path.clone(), other);
             object_or_empty(None)
         }
         None => object_or_empty(None),
@@ -92,18 +169,16 @@ pub fn parse_response(
                         parts.push(Part::Text(TextPart::new(str_or_empty(o.get("text")))));
                     }
                     Value::Object(o) => unmapped.record(
-                        format!("choices[0].message.content[{content_index}]"),
+                        format!("{path}.message.content[{content_index}]"),
                         o.get("type"),
                     ),
-                    other => unmapped.record_shape(
-                        format!("choices[0].message.content[{content_index}]"),
-                        other,
-                    ),
+                    other => unmapped
+                        .record_shape(format!("{path}.message.content[{content_index}]"), other),
                 }
             }
         }
         Some(Value::Null) | None => {}
-        Some(other) => unmapped.record_shape("choices[0].message.content", other),
+        Some(other) => unmapped.record_shape(format!("{path}.message.content"), other),
     }
 
     if let Some(refusal) = str_or_none(message.get("refusal")) {
@@ -114,7 +189,7 @@ pub fn parse_response(
     }
 
     for (call_index, call) in array_or_empty(message.get("tool_calls")).iter().enumerate() {
-        let path = format!("choices[0].message.tool_calls[{call_index}]");
+        let path = format!("{path}.message.tool_calls[{call_index}]");
         let Value::Object(call) = call else {
             unmapped.record_shape(path, call);
             continue;
@@ -158,7 +233,7 @@ pub fn parse_response(
                 match finish_reason_of(&text) {
                     Some(reason) => reason,
                     None => {
-                        unmapped.record_text("choices[0].finish_reason", &text);
+                        unmapped.record_text(format!("{path}.finish_reason"), &text);
                         FinishReason::Stop
                     }
                 }
@@ -171,7 +246,15 @@ pub fn parse_response(
     let logprobs = openai_token_logprobs(object_or_empty(choice.get("logprobs")).get("content"));
     Ok(Response {
         id: id_or_none(data.get("id")),
-        model: str_or_none(data.get("model")).unwrap_or_else(|| request.model.clone()),
+        model: match str_or_none(data.get("model")).or_else(|| model.map(str::to_string)) {
+            Some(m) => m,
+            None => {
+                return Err(malformed_body(
+                    provider,
+                    "the body carries no model; pass model=",
+                ))
+            }
+        },
         message: Message {
             role: Role::Assistant,
             parts,

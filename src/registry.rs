@@ -39,6 +39,27 @@ impl DialectId {
             DialectId::Gemini => "https://generativelanguage.googleapis.com/v1beta",
         }
     }
+
+    /// The one preset name that resolves to [`Self::default_base_url`]
+    /// (api-family 2026-09-11): any other name must supply its server's
+    /// address or be given one.
+    pub fn default_preset(self) -> &'static str {
+        match self {
+            DialectId::OpenaiResponses | DialectId::OpenaiChat => "openai",
+            DialectId::Anthropic => "anthropic",
+            DialectId::Gemini => "",
+        }
+    }
+
+    /// The dialect's name for a message to the user.
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            DialectId::OpenaiResponses => "Responses",
+            DialectId::OpenaiChat => "Chat Completions",
+            DialectId::Anthropic => "Messages",
+            DialectId::Gemini => "generateContent",
+        }
+    }
 }
 
 /// How an entry relates to its dialect adapter.

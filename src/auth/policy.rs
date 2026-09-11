@@ -990,6 +990,56 @@ pub fn access_policy(provider: &str) -> Option<&'static AccessPolicy> {
     ACCESS_POLICIES.iter().find(|p| p.provider == canonical)
 }
 
+/// AUTH-1 § Shared explicit keys (spec/auth.md, ratified 2026-09-09):
+/// which explicit `api_keys` entry serves `provider`. Select an exact
+/// provider entry first (either spelling). Without one, select the single
+/// configured provider whose declared `env_keys` list is identical to the
+/// target's non-empty list, including order — derived from the provider
+/// declarations, never a second family-name table. Thus `openai` supplies
+/// `openai-chat`, but `gemini` does not supply `vertex-express` (overlapping
+/// lists are not identical), and empty lists do not join local servers,
+/// OAuth stores or cloud chains.
+///
+/// Several shared candidates without an exact entry are ambiguous:
+/// `Err(candidates)`, never chosen by map order, never resolved by comparing
+/// secrets or invoking credential providers. `entries` are the configured
+/// provider strings (values are never consulted); the answer is the entry
+/// as configured.
+pub fn shared_api_key_source<'a>(
+    entries: impl IntoIterator<Item = &'a str>,
+    provider: &str,
+) -> Result<Option<&'a str>, Vec<&'a str>> {
+    let target = canonical_provider(provider);
+    let entries: Vec<&str> = entries.into_iter().collect();
+    let exact: Vec<&str> = entries
+        .iter()
+        .copied()
+        .filter(|e| canonical_provider(e) == target)
+        .collect();
+    let mut candidates = exact;
+    if candidates.is_empty() {
+        if let Some(policy) = access_policy(&target) {
+            if !policy.env_keys.is_empty() {
+                candidates = entries
+                    .iter()
+                    .copied()
+                    .filter(|e| {
+                        access_policy(e).is_some_and(|other| other.env_keys == policy.env_keys)
+                    })
+                    .collect();
+            }
+        }
+    }
+    match candidates.len() {
+        0 => Ok(None),
+        1 => Ok(Some(candidates[0])),
+        _ => {
+            candidates.sort_unstable();
+            Err(candidates)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

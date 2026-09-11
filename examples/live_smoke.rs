@@ -122,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = LMRouter::with_config(RouterConfig::new().transport(Recording {
         inner: HttpTransport::new()?,
         log: Arc::clone(&log),
-    }));
+    }))?;
     let mut failures = 0;
     for (provider, env_key, model) in bindings {
         if std::env::var(env_key).is_err() {

@@ -727,6 +727,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "httpdate",
+ "log",
  "reqwest",
  "serde",
  "serde_json",

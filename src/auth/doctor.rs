@@ -219,14 +219,35 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
     let mut steps = Vec::with_capacity(3 + policy.env_keys.len());
     let mut selected = false;
 
-    let explicit = options
-        .api_key_providers
-        .iter()
-        .any(|name| canonical_provider(name) == canonical);
-    if explicit {
+    // AUTH-1 § Shared explicit keys, AUTH-7: the same selection the router
+    // makes; the source configuration key is named when it differs from
+    // the target. Ambiguity is the router's NotConfiguredError, here too.
+    let explicit = super::policy::shared_api_key_source(
+        options.api_key_providers.iter().map(String::as_str),
+        &canonical,
+    )
+    .map_err(|candidates| AuthError::NotConfigured {
+        provider: Some(canonical.clone()),
+        message: format!(
+            "ambiguous explicit credentials for {canonical:?} from {}",
+            candidates
+                .iter()
+                .map(|c| format!("{c:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        hint: Some(format!(
+            "supply one entry under {canonical:?} or keep only one shared entry"
+        )),
+    })?;
+    if let Some(entry) = explicit {
+        let mut source = "explicit api_keys entry".to_string();
+        if canonical_provider(entry) != canonical {
+            source.push_str(&format!(" (via {entry:?}, shared env-key declarations)"));
+        }
         steps.push(Step::new(
             "api_keys",
-            "explicit api_keys entry",
+            source,
             "provided (value never shown)",
             StepState::Selected,
         ));

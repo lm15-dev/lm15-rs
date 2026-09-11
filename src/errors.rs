@@ -534,6 +534,21 @@ impl Lm15Error {
         }
     }
 
+    /// A `stream_assembly` failure: a stream that cannot become a Response
+    /// without inventing a fact (MAP-9 / MAP-3); `partial` is what did
+    /// assemble.
+    pub fn stream_assembly(
+        message: impl Into<String>,
+        partial: Option<Response>,
+        part_index: Option<u64>,
+    ) -> Lm15Error {
+        Lm15Error::StreamAssemblyError(StreamAssembly {
+            meta: ErrorMeta::new(message),
+            partial: partial.map(Box::new),
+            part_index,
+        })
+    }
+
     pub fn unknown_model(message: impl Into<String>, model: impl Into<String>) -> Lm15Error {
         Lm15Error::UnknownModelError(UnknownModel {
             meta: ErrorMeta::new(message),

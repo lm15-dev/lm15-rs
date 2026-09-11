@@ -23,10 +23,10 @@ use crate::compat::{
 };
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::types::{
-    AudioPart, BuiltinTool, CacheConfig, CachePrefix, CacheRetention, Config, DocumentPart,
-    FunctionTool, ImageDetail, ImagePart, JsonObject, Message, Part, Reasoning, ReasoningEffort,
-    ReasoningSummary, RefusalPart, Request, Role, SystemContent, TextPart, ThinkingPart, Tool,
-    ToolCallPart, ToolChoice, ToolChoiceMode, ToolResultPart, ValidationError,
+    AudioPart, BuiltinTool, CacheConfig, CachePrefix, CacheRetention, CitationPart, Config,
+    DocumentPart, FunctionTool, ImageDetail, ImagePart, JsonObject, Message, Part, Reasoning,
+    ReasoningEffort, ReasoningSummary, RefusalPart, Request, Role, SystemContent, TextPart,
+    ThinkingPart, Tool, ToolCallPart, ToolChoice, ToolChoiceMode, ToolResultPart, ValidationError,
 };
 
 // ─── verdict tables (data; the registry is normative) ────────────────
@@ -176,6 +176,93 @@ fn only_keys(provider: &str, obj: &JsonObject, allowed: &[&str], where_: &str) -
         )),
         None => Ok(()),
     }
+}
+
+/// Assistant-row keys that are a client library's object model, not the
+/// wire (litellm's ChatCompletionMessage dumped back into history; MAP-12
+/// addendum 2026-09-08). Their null or empty form carries nothing and reads
+/// as absent; a non-empty one is refused with the key named.
+const CLIENT_OBJECT_KEYS: &[&str] = &["provider_specific_fields", "thinking_blocks", "images"];
+
+/// Null, `[]`, `{}`, or a dict whose every value is null/empty (litellm:
+/// `{"refusal": null}`).
+fn is_empty_value(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(items)) => items.is_empty(),
+        Some(Value::Object(obj)) => obj.values().all(|v| match v {
+            Value::Null => true,
+            Value::Array(items) => items.is_empty(),
+            Value::Object(inner) => inner.is_empty(),
+            _ => false,
+        }),
+        Some(_) => false,
+    }
+}
+
+/// OpenAI's assistant `annotations` (url_citation entries with a span into
+/// the content) → CitationParts; an empty list is nothing (MAP-12 addendum).
+fn annotations(
+    provider: &str,
+    raw: &Value,
+    content_text: Option<&str>,
+    where_: &str,
+) -> R<Vec<Part>> {
+    let Value::Array(entries) = raw else {
+        return Err(malformed(format!("{where_}.annotations must be an array")));
+    };
+    let mut out = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let entry_where = format!("{where_}.annotations[{index}]");
+        let entry = as_object(Some(entry), &entry_where)?;
+        if entry.get("type").and_then(Value::as_str) != Some("url_citation") {
+            let kind = entry.get("type").cloned().unwrap_or(Value::Null);
+            return Err(refuse(
+                provider,
+                &format!("{entry_where} of type {kind}"),
+                "only url_citation annotations have a canonical part (CitationPart)",
+            ));
+        }
+        only_keys(provider, entry, &["type", "url_citation"], &entry_where)?;
+        let spec_where = format!("{entry_where}.url_citation");
+        let spec = as_object(entry.get("url_citation"), &spec_where)?;
+        only_keys(
+            provider,
+            spec,
+            &["url", "title", "start_index", "end_index"],
+            &spec_where,
+        )?;
+        let span = match (
+            content_text,
+            spec.get("start_index").and_then(Value::as_u64),
+            spec.get("end_index").and_then(Value::as_u64),
+        ) {
+            (Some(text), Some(start), Some(end))
+                if start <= end && (end as usize) <= text.chars().count() =>
+            {
+                let s: String = text
+                    .chars()
+                    .skip(start as usize)
+                    .take((end - start) as usize)
+                    .collect();
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+            _ => None,
+        };
+        let url = as_str(present(spec, "url"), &format!("{spec_where}.url"))?.to_string();
+        let title = match present(spec, "title") {
+            None => None,
+            Some(v) => Some(as_str(Some(v), &format!("{spec_where}.title"))?.to_string()),
+        };
+        out.push(Part::Citation(
+            CitationPart::new(Some(url), title, span).map_err(invalid)?,
+        ));
+    }
+    Ok(out)
 }
 
 /// `data:<media_type>;base64,<payload>` → (media_type, payload).
@@ -534,7 +621,8 @@ fn rows(provider: &str, rows: &Value) -> R<Rows> {
                 flush(&mut pending, &mut out.messages)?;
                 only_keys(
                     provider, row,
-                    &["role", "content", "tool_calls", "refusal", "reasoning_content", "name", "audio", "function_call"],
+                    &["role", "content", "tool_calls", "refusal", "reasoning_content", "name", "audio", "function_call",
+                      "annotations", "provider_specific_fields", "thinking_blocks", "images"],
                     &where_,
                 )?;
                 if present(row, "audio").is_some() {
@@ -542,6 +630,13 @@ fn rows(provider: &str, rows: &Value) -> R<Rows> {
                 }
                 if present(row, "function_call").is_some() {
                     return Err(refuse(provider, &format!("{where_}.function_call"), "the deprecated function-calling shape; use tool_calls"));
+                }
+                for key in CLIENT_OBJECT_KEYS {
+                    // A client library's object model (litellm) dumped into history:
+                    // null or empty carries nothing; anything else has no mapping.
+                    if !is_empty_value(row.get(*key)) {
+                        return Err(refuse(provider, &format!("{where_}.{key}"), "a client library's own field with no canonical part; only its empty form reads as absent"));
+                    }
                 }
                 let mut parts: Vec<Part> = Vec::new();
                 if let Some(reasoning) = present(row, "reasoning_content") {
@@ -561,6 +656,10 @@ fn rows(provider: &str, rows: &Value) -> R<Rows> {
                 }
                 if let Some(calls) = present(row, "tool_calls") {
                     parts.extend(tool_calls(provider, calls, &where_)?);
+                }
+                if let Some(raw) = present(row, "annotations") {
+                    let content_text = present(row, "content").and_then(Value::as_str);
+                    parts.extend(annotations(provider, raw, content_text, &where_)?);
                 }
                 if parts.is_empty() {
                     parts.push(Part::text("")); // MAP-2, applied to history

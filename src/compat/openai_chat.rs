@@ -391,9 +391,17 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
             OpenAICacheControl::OpenAI,
         ),
     ),
-    // ollama / LM Studio: max_tokens, no reasoning dial (`:509-517`).
+    // ollama: max_tokens, no reasoning dial (`:509-517`).
     (
         "ollama",
+        preset(MaxTokens, Think::None, OpenAICacheControl::None),
+    ),
+    // LM Studio: ollama's wire policy (lmstudio.ai docs list the same Chat
+    // Completions fields) at its own documented address,
+    // http://localhost:1234/v1. Until 2026-09-11 the name was an alias of
+    // "ollama" and took ollama's port. No live receipt for the policy yet.
+    (
+        "lmstudio",
         preset(MaxTokens, Think::None, OpenAICacheControl::None),
     ),
     // Groq: server-executed builtin tools (`:520-529`).
@@ -567,6 +575,7 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
 pub const OPENAI_CHAT_PRESET_BASE_URLS: &[(&str, &str)] = &[
     ("openai", "https://api.openai.com/v1"),
     ("ollama", "http://localhost:11434/v1"),
+    ("lmstudio", "http://localhost:1234/v1"), // lmstudio.ai docs (Local Server)
     ("groq", "https://api.groq.com/openai/v1"),
     ("openrouter", "https://openrouter.ai/api/v1"),
     ("xai", "https://api.x.ai/v1"),
@@ -638,7 +647,11 @@ mod tests {
                 .builtin_tools,
             OpenAIChatBuiltinTools::Groq
         );
-        assert_eq!(OPENAI_CHAT_PRESETS.len(), 14);
-        assert_eq!(OPENAI_CHAT_PRESET_BASE_URLS.len(), 11);
+        assert_eq!(OPENAI_CHAT_PRESETS.len(), 15); // + lmstudio (2026-09-11)
+        assert_eq!(OPENAI_CHAT_PRESET_BASE_URLS.len(), 12);
+        assert_eq!(
+            OpenAIChatCompat::preset("lmstudio"),
+            OpenAIChatCompat::preset("ollama")
+        );
     }
 }

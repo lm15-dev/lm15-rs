@@ -136,15 +136,18 @@ impl fmt::Debug for TransportResponse {
 
 // ─── Retry-After ─────────────────────────────────────────────────────
 
-/// `Retry-After` as seconds: delta-seconds, or an HTTP-date measured from
-/// now (never negative). The reference's `_retry_after_seconds`.
+/// A retry hint as seconds: delta-seconds, or an HTTP-date measured from
+/// now (never negative). A hint that is not finite, is negative, or does
+/// not parse is DROPPED, never stored: an infinite or NaN `retry_after`
+/// becomes an infinite sleep in the first caller that trusts it (contract
+/// `changes/2026-09-11-stream-completion-and-error-metadata.md` § 3).
 pub fn retry_after_seconds(value: &str) -> Option<f64> {
     let value = value.trim();
     if value.is_empty() {
         return None;
     }
     if let Ok(seconds) = value.parse::<f64>() {
-        return (seconds >= 0.0).then_some(seconds);
+        return (seconds.is_finite() && seconds >= 0.0).then_some(seconds);
     }
     let when = httpdate::parse_http_date(value).ok()?;
     Some(
@@ -154,18 +157,43 @@ pub fn retry_after_seconds(value: &str) -> Option<f64> {
     )
 }
 
-/// Fill `retry_after` from the `Retry-After` header when the provider's
-/// body did not already say (the body-derived value wins).
-pub fn attach_retry_after(error: &mut Lm15Error, headers: &[(String, String)]) {
-    if error.retry_after().is_some() {
-        return;
+/// The response headers a provider's request id lives in when its error
+/// body carried none, in the order they are tried (OpenAI and xAI
+/// `x-request-id`; Anthropic `request-id`; Bedrock `x-amzn-requestid`;
+/// Azure `x-ms-request-id`).
+pub const REQUEST_ID_HEADERS: &[&str] = &[
+    "x-request-id",
+    "request-id",
+    "x-amzn-requestid",
+    "x-amz-request-id",
+    "x-ms-request-id",
+];
+
+/// Fill the HTTP diagnostics the error body did not say; never invent an
+/// absent field. A valid body-derived `retry_after` wins; an invalid one
+/// is dropped before the `Retry-After` header is consulted. A body request
+/// id is never replaced.
+pub fn attach_error_metadata(error: &mut Lm15Error, headers: &[(String, String)]) {
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+            .filter(|v| !v.is_empty())
+    };
+    let body_hint = error
+        .retry_after()
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0);
+    error.meta_mut().retry_after = body_hint;
+    if body_hint.is_none() {
+        if let Some(seconds) = header("retry-after").and_then(retry_after_seconds) {
+            error.meta_mut().retry_after = Some(seconds);
+        }
     }
-    let value = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("retry-after"))
-        .map(|(_, v)| v.as_str());
-    if let Some(seconds) = value.and_then(retry_after_seconds) {
-        error.meta_mut().retry_after = Some(seconds);
+    if error.request_id().is_none_or(str::is_empty) {
+        if let Some(id) = REQUEST_ID_HEADERS.iter().find_map(|name| header(name)) {
+            error.meta_mut().request_id = Some(id.to_string());
+        }
     }
 }
 
@@ -449,14 +477,59 @@ mod tests {
     fn header_value_wins_only_when_the_body_said_nothing() {
         let headers = vec![("Retry-After".to_string(), "7".to_string())];
         let mut err = Lm15Error::RateLimitError(ErrorMeta::new("slow down"));
-        attach_retry_after(&mut err, &headers);
+        attach_error_metadata(&mut err, &headers);
         assert_eq!(err.retry_after(), Some(7.0));
         let mut err = Lm15Error::RateLimitError(ErrorMeta {
             retry_after: Some(2.0),
             ..ErrorMeta::new("slow down")
         });
-        attach_retry_after(&mut err, &headers);
+        attach_error_metadata(&mut err, &headers);
         assert_eq!(err.retry_after(), Some(2.0));
+    }
+
+    #[test]
+    fn invalid_retry_hints_are_dropped_not_stored() {
+        // Contract 2026-09-11 § 3: a non-finite or negative hint would be an
+        // infinite sleep in the first caller that trusts it.
+        for invalid in ["nan", "inf", "-1", "bad", ""] {
+            assert_eq!(retry_after_seconds(invalid), None, "{invalid:?}");
+        }
+        let headers = vec![("retry-after".to_string(), "3".to_string())];
+        for body in [f64::INFINITY, f64::NAN, -1.0] {
+            let mut err = Lm15Error::RateLimitError(ErrorMeta {
+                retry_after: Some(body),
+                ..ErrorMeta::new("wait")
+            });
+            attach_error_metadata(&mut err, &headers);
+            assert_eq!(err.retry_after(), Some(3.0), "{body}");
+        }
+        let mut err = Lm15Error::RateLimitError(ErrorMeta {
+            retry_after: Some(f64::INFINITY),
+            ..ErrorMeta::new("wait")
+        });
+        attach_error_metadata(&mut err, &[]);
+        assert_eq!(err.retry_after(), None);
+    }
+
+    #[test]
+    fn request_id_comes_from_headers_when_the_body_has_none() {
+        for name in REQUEST_ID_HEADERS {
+            let headers = vec![(name.to_uppercase(), "request-1".to_string())];
+            let mut err = Lm15Error::RateLimitError(ErrorMeta::new("wait"));
+            attach_error_metadata(&mut err, &headers);
+            assert_eq!(err.request_id(), Some("request-1"), "{name}");
+        }
+        // A body value is never replaced; absent in both stays absent.
+        let headers = vec![("x-request-id".to_string(), "header-id".to_string())];
+        let mut err = Lm15Error::RateLimitError(ErrorMeta {
+            request_id: Some("body-id".into()),
+            ..ErrorMeta::new("wait")
+        });
+        attach_error_metadata(&mut err, &headers);
+        assert_eq!(err.request_id(), Some("body-id"));
+        let mut err = Lm15Error::RateLimitError(ErrorMeta::new("wait"));
+        attach_error_metadata(&mut err, &[]);
+        assert_eq!(err.request_id(), None);
     }
 
     #[tokio::test]

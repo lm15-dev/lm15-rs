@@ -53,10 +53,14 @@ pub use auth::{AccessPolicy, Credential, CredentialProvider, HostSpec};
 pub use cloud::hosts::HostSettings;
 pub use compat::{AnthropicCompat, OpenAIChatCompat, OpenAIResponsesCompat};
 pub use dialects::openai_chat::ingest::request_from_openai_chat;
+pub use dialects::openai_chat::response_from_openai_chat;
 pub use errors::{normalize_error, ErrorClass, ErrorCode, ErrorMeta, Lm15Error};
 pub use live::LiveSession;
 pub use response_stream::ResponseStream;
-pub use router::{LMRouter, Resolution, RouteRule, RouteSource, RouterConfig, DEFAULT_RULES};
+pub use router::{
+    openai_chat_model_string, LMRouter, Resolution, RouteRule, RouteSource, RouterConfig,
+    DEFAULT_RULES, LITELLM_PROVIDER_PREFIXES,
+};
 pub use serde::Canonical;
 pub use transport::{HttpTransport, Transport, TransportResponse};
 pub use types::*;

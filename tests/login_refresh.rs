@@ -152,6 +152,7 @@ fn router(home: &Path, transport: &Scripted) -> LMRouter {
             .env(env)
             .transport(Arc::new(transport.clone())),
     )
+    .unwrap()
 }
 
 fn request() -> Request {
@@ -540,7 +541,8 @@ async fn xai_device_login_shows_the_code_polls_and_writes_the_store() {
                     .chain([("XAI_API_KEY".to_string(), "ambient".to_string())]),
             )
             .transport(Arc::new(transport.clone())),
-    );
+    )
+    .unwrap();
     assert_eq!(router.resolve("grok-4").unwrap().provider, "xai");
     transport.reply(|_| {
         (200, json!({"id": "c", "object": "chat.completion", "model": "grok-4", "choices": [

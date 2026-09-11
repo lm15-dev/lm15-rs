@@ -14,6 +14,7 @@
 //! `BaseProviderLM.complete` / `_stream_raw`). `LMRouter` is not yet
 //! built.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
@@ -25,7 +26,7 @@ use futures_core::Stream;
 use crate::auth::{AccessPolicy, CredentialProvider};
 use crate::cloud::hosts::{render_base_url, resolve_settings, HostSettings};
 use crate::compat::{
-    preset_base_url, AnthropicCompat, Compat, OpenAIChatCompat, OpenAIResponsesCompat,
+    preset_base_url, preset_key, AnthropicCompat, Compat, OpenAIChatCompat, OpenAIResponsesCompat,
     ANTHROPIC_PRESET_BASE_URLS, OPENAI_CHAT_PRESET_BASE_URLS, OPENAI_RESPONSES_PRESET_BASE_URLS,
 };
 use crate::dialects::dialect_for;
@@ -34,7 +35,7 @@ use crate::registry::{lookup, DialectId, ProviderDefinition};
 use crate::sse::{SseEvent, SseParser};
 use crate::stream::{materialize_response, Coalescer};
 use crate::transport::{
-    attach_retry_after, BodyStream, BoxFuture, HttpTransport, Transport, TransportResponse,
+    attach_error_metadata, BodyStream, BoxFuture, HttpTransport, Transport, TransportResponse,
 };
 use serde_json::Value;
 
@@ -198,6 +199,33 @@ impl ProviderLM {
         let cx = self.binding.context(&probe);
         let compat = crate::dialects::openai_chat::resolve_compat(&cx, cx.model);
         crate::dialects::openai_chat::ingest::ingest(self.provider(), body, &compat)
+    }
+
+    /// MAP-12 rule 9: a Chat Completions response body → the canonical
+    /// `Response` under this binding's provider name and error mapping —
+    /// `parse_response`'s reader, exposed. `model` fills a body that carries
+    /// none; `choice` names one of several choices (unnamed, several is
+    /// refused). See [`crate::response_from_openai_chat`].
+    pub fn response_from_openai_chat(
+        &self,
+        body: &Value,
+        model: Option<&str>,
+        choice: Option<usize>,
+    ) -> Result<Response, Lm15Error> {
+        if self.dialect() != DialectId::OpenaiChat {
+            let mut meta = ErrorMeta::new(format!(
+                "{}: this provider does not speak the Chat Completions wire; nothing to read",
+                self.provider()
+            ));
+            meta.provider = Some(self.provider().to_string());
+            return Err(Lm15Error::UnsupportedFeatureError(meta));
+        }
+        crate::dialects::openai_chat::response::response_from_openai_chat(
+            self.provider(),
+            body,
+            model,
+            choice,
+        )
     }
 
     /// The canonical `Response` of a complete 2xx body (module 5; MAP-1,
@@ -1055,7 +1083,8 @@ impl ProviderLM {
     }
 
     /// The typed error of a non-2xx response: the dialect's normalization
-    /// over the body, `Retry-After` from the headers filling the gap.
+    /// over the body, `Retry-After` and the request id from the headers
+    /// filling what the body did not say (contract 2026-09-11 § 3).
     pub fn http_error(&self, status: u16, headers: &[(String, String)], body: &[u8]) -> Lm15Error {
         http_error(self.provider(), status, headers, body)
     }
@@ -1067,7 +1096,7 @@ fn http_error(provider: &str, status: u16, headers: &[(String, String)], body: &
         Ok(error) => error,
         Err(err) => Lm15Error::ConfigurationError(ErrorMeta::new(err.message)),
     };
-    attach_retry_after(&mut error, headers);
+    attach_error_metadata(&mut error, headers);
     error
 }
 
@@ -1356,7 +1385,7 @@ pub struct LmBuilder {
     provider: &'static str,
     dialect: DialectId,
     policy: &'static AccessPolicy,
-    compat_name: Option<&'static str>,
+    compat_name: Option<Cow<'static, str>>,
     compat: Option<Compat>,
     credentials: Option<BoxedCredentials>,
     base_url: Option<String>,
@@ -1373,7 +1402,7 @@ impl LmBuilder {
             provider: definition.id,
             dialect: definition.dialect,
             policy: definition.access(),
-            compat_name: definition.compat,
+            compat_name: definition.compat.map(Cow::Borrowed),
             compat: None,
             credentials: None,
             base_url: None,
@@ -1418,6 +1447,18 @@ impl LmBuilder {
     /// An explicit compat value, replacing the entry's preset.
     pub fn compat(mut self, compat: Compat) -> Self {
         self.compat = Some(compat);
+        self
+    }
+
+    /// A named server dialect (`"ollama"`, `"lmstudio"`, `"groq"`, …; the
+    /// reference's `compat="name"`): its wire policy from the dialect's
+    /// preset table, and its address (api-family 2026-09-11) — an unknown
+    /// name, or a name whose address this dialect does not know, is refused
+    /// at `build` unless [`Self::base_url`] is given. Replaces the entry's
+    /// preset and any explicit [`Self::compat`].
+    pub fn preset(mut self, name: impl Into<String>) -> Self {
+        self.compat_name = Some(Cow::Owned(name.into()));
+        self.compat = None;
         self
     }
 
@@ -1470,22 +1511,41 @@ impl LmBuilder {
 
         let compat = match self.compat {
             Some(compat) => compat,
-            None => compat_for(self.dialect, self.compat_name)?,
+            None => compat_for(self.dialect, self.compat_name.as_deref())?,
         };
 
         // Base URL precedence (`lm15/providers/base.py:236-278`,
         // `lm15/providers/openai_chat.py:180-186`): explicit, host
-        // template, policy, preset table, dialect default.
+        // template, policy, preset table, dialect default. A preset name
+        // that names a server with no address row in this dialect is
+        // REFUSED (api-family 2026-09-11): a request the user addressed to
+        // a named server is never sent to the OpenAI cloud with whatever
+        // key is around. Only the dialect's own default name resolves to
+        // the cloud default.
         let base_url = match self.base_url {
             Some(explicit) => explicit,
             None => match (&policy.host, policy.base_url) {
                 (Some(host), _) => render_base_url(host, &settings)?,
                 (None, Some(url)) => url.to_string(),
-                (None, None) => self
-                    .compat_name
-                    .and_then(|name| preset_url(self.dialect, name))
-                    .unwrap_or(self.dialect.default_base_url())
-                    .to_string(),
+                (None, None) => match self.compat_name.as_deref() {
+                    None => self.dialect.default_base_url().to_string(),
+                    Some(name) => match preset_url(self.dialect, name) {
+                        Some(url) => url.to_string(),
+                        None if preset_key(name) == self.dialect.default_preset() => {
+                            self.dialect.default_base_url().to_string()
+                        }
+                        None => {
+                            let mut meta = ErrorMeta::new(format!(
+                                "compat {name:?} names a server whose {} address lm15 does not know; \
+                                 pass base_url (the server's OpenAI-compatible root, e.g. \
+                                 \"http://localhost:PORT/v1\")",
+                                self.dialect.wire_name()
+                            ));
+                            meta.provider = Some(provider.to_string());
+                            return Err(Lm15Error::NotConfiguredError(meta));
+                        }
+                    },
+                },
             },
         };
 
@@ -1687,6 +1747,78 @@ mod tests {
             "https://api.openai.com/v1"
         );
         assert!(!format!("{lm:?}").contains("SENTINEL"));
+    }
+
+    #[test]
+    fn a_preset_name_supplies_its_servers_address_never_the_clouds() {
+        // api-family 2026-09-11: lmstudio is its own preset (ollama's
+        // policy at LM Studio's documented port; this port used to send it
+        // to ollama's), the Responses door knows the local roots, and a
+        // named server with no address row is refused, not sent to OpenAI.
+        for name in ["lmstudio", "lm-studio", "LM Studio"] {
+            let chat = OpenAIChatLM::builder()
+                .api_key("k")
+                .preset(name)
+                .build()
+                .unwrap();
+            assert_eq!(chat.base_url(), "http://localhost:1234/v1", "{name}");
+            assert_eq!(
+                chat.compat().openai_chat(),
+                OpenAIChatCompat::preset("ollama"),
+                "{name}"
+            );
+            let responses = OpenAILM::builder()
+                .api_key("k")
+                .preset(name)
+                .build()
+                .unwrap();
+            assert_eq!(responses.base_url(), "http://localhost:1234/v1", "{name}");
+        }
+        for (name, url) in [
+            ("ollama", "http://localhost:11434/v1"),
+            ("vllm", "http://localhost:8000/v1"),
+            ("sglang", "http://localhost:30000/v1"),
+            ("openai", "https://api.openai.com/v1"),
+            ("responses", "https://api.openai.com/v1"),
+        ] {
+            assert_eq!(
+                OpenAILM::builder()
+                    .api_key("k")
+                    .preset(name)
+                    .build()
+                    .unwrap()
+                    .base_url(),
+                url,
+                "{name}"
+            );
+        }
+        for (dialect_builder, name) in [
+            (OpenAIChatLM::builder(), "qwen"),
+            (OpenAIChatLM::builder(), "bedrock"),
+            (OpenAILM::builder(), "deepseek"),
+            (OpenAILM::builder(), "zai"),
+        ] {
+            let err = dialect_builder
+                .api_key("k")
+                .preset(name)
+                .build()
+                .unwrap_err();
+            assert_eq!(err.class_name(), "NotConfiguredError", "{name}");
+            assert!(err.message().contains("pass base_url"), "{name}: {err}");
+        }
+        let lm = OpenAIChatLM::builder()
+            .api_key("k")
+            .preset("qwen")
+            .base_url("http://gateway.internal/v1")
+            .build()
+            .unwrap();
+        assert_eq!(lm.base_url(), "http://gateway.internal/v1");
+        let err = OpenAIChatLM::builder()
+            .api_key("k")
+            .preset("not-a-preset")
+            .build()
+            .unwrap_err();
+        assert_eq!(err.class_name(), "ConfigurationError");
     }
 
     #[test]

@@ -21,6 +21,17 @@ mod payload;
 pub mod response;
 mod text;
 
+/// [`response::response_from_openai_chat`] under the family's provider
+/// name, `openai-chat` (MAP-12 rule 9; the module function of
+/// `playbooks/api-family.md` § Ingest).
+pub fn response_from_openai_chat(
+    body: &serde_json::Value,
+    model: Option<&str>,
+    choice: Option<usize>,
+) -> Result<Response, Lm15Error> {
+    response::response_from_openai_chat("openai-chat", body, model, choice)
+}
+
 use serde_json::Value;
 
 use self::text::unsupported;

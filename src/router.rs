@@ -40,6 +40,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::adapter::{EventStream, LmBuilder, ProviderLM};
+use crate::auth::policy::shared_api_key_source;
 use crate::auth::{
     canonical_provider, AccessPolicy, CredentialPolicy, CredentialProvider, StoredLogin,
 };
@@ -48,7 +49,8 @@ use crate::cloud::hosts::{resolve_settings, HostSettings};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::{lookup, DialectId, EntryKind, ProviderDefinition, PROVIDERS};
 use crate::transport::{HttpTransport, Transport};
-use crate::types::{ModelInfo, Request, Response};
+use crate::types::{JsonObject, ModelInfo, Request, Response};
+use serde_json::Value;
 
 // ─── rules ───────────────────────────────────────────────────────────
 
@@ -225,6 +227,7 @@ pub struct RouterConfig {
     rules: Vec<RouteRule>,
     env: Option<BTreeMap<String, String>>,
     api_keys: BTreeMap<String, SharedCredentials>,
+    base_urls: BTreeMap<String, String>,
     settings: BTreeMap<String, HostSettings>,
     transport: Option<Arc<dyn Transport>>,
     catalog: Vec<ModelInfo>,
@@ -237,6 +240,7 @@ impl Default for RouterConfig {
             rules: DEFAULT_RULES.to_vec(),
             env: None,
             api_keys: BTreeMap::new(),
+            base_urls: BTreeMap::new(),
             settings: BTreeMap::new(),
             transport: None,
             catalog: Vec::new(),
@@ -268,7 +272,9 @@ impl RouterConfig {
 
     /// An explicit credential for a provider (either spelling); beats
     /// every other rung (AUTH-1). A string is the `ApiKey` shorthand; any
-    /// `CredentialProvider` is invoked per request.
+    /// `CredentialProvider` is invoked per request. The entry also serves a
+    /// sibling provider whose declared env-key list is identical (AUTH-1 §
+    /// Shared explicit keys, 2026-09-09): `openai` supplies `openai-chat`.
     pub fn api_key(
         mut self,
         provider: &str,
@@ -276,6 +282,15 @@ impl RouterConfig {
     ) -> Self {
         self.api_keys
             .insert(canonical_provider(provider), Arc::new(credential));
+        self
+    }
+
+    /// The URL a provider's adapter is built with, once, on the router
+    /// (`RouterConfig(base_urls=...)`): exact provider only; never a cloud
+    /// door (its URL is built from host settings — use [`Self::settings`]).
+    pub fn base_url(mut self, provider: &str, url: impl Into<String>) -> Self {
+        self.base_urls
+            .insert(canonical_provider(provider), url.into());
         self
     }
 
@@ -338,9 +353,90 @@ impl RouterConfig {
         }
     }
 
-    fn explicit_credential(&self, provider: &str) -> Option<SharedCredentials> {
-        self.api_keys.get(provider).cloned()
+    /// The explicit entry that serves `provider` (AUTH-1 § Shared explicit
+    /// keys): exact, else the one sibling with an identical env-key
+    /// declaration. Ambiguity is a `NotConfiguredError`, never a choice by
+    /// map order.
+    fn explicit_credential(&self, provider: &str) -> Result<Option<SharedCredentials>, Lm15Error> {
+        match shared_api_key_source(self.api_keys.keys().map(String::as_str), provider) {
+            Ok(None) => Ok(None),
+            Ok(Some(entry)) => Ok(self.api_keys.get(entry).cloned()),
+            Err(candidates) => Err(not_configured(format!(
+                "RouterConfig api_keys: ambiguous credentials for {provider:?} from {}; \
+                 supply one entry under {provider:?} or keep only one shared entry",
+                candidates
+                    .iter()
+                    .map(|c| format!("{c:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))),
+        }
     }
+
+    /// The explicit `base_urls` entry for `provider` (exact provider only;
+    /// a URL is never shared the way a key is).
+    fn explicit_base_url(&self, provider: &str) -> Option<&str> {
+        self.base_urls.get(provider).map(String::as_str)
+    }
+
+    /// Every provider string this config is keyed by (`api_key`,
+    /// `base_url`, `settings`) must name a routable provider: an entry that
+    /// matches nothing is otherwise silently ignored, and the request goes
+    /// out on whatever the environment holds — the wrong account, with
+    /// nothing said (AUTH-1). The check runs when a router is built.
+    fn check_provider_keyed(&self) -> Result<(), Lm15Error> {
+        let known: Vec<&str> = crate::registry::PROVIDERS.iter().map(|d| d.id).collect();
+        for (field, keys) in [
+            ("api_key", self.api_keys.keys().collect::<Vec<_>>()),
+            ("base_url", self.base_urls.keys().collect::<Vec<_>>()),
+            ("settings", self.settings.keys().collect::<Vec<_>>()),
+        ] {
+            for key in keys {
+                if lookup(key).is_some() {
+                    continue;
+                }
+                let close = known
+                    .iter()
+                    .copied()
+                    .filter(|k| similarity(k, key) >= 0.6)
+                    .max_by(|a, b| similarity(a, key).total_cmp(&similarity(b, key)));
+                let hint = close
+                    .map(|c| format!(" Did you mean {c:?}?"))
+                    .unwrap_or_default();
+                return Err(not_configured(format!(
+                    "RouterConfig::{field}: {key:?} is not a provider lm15 routes to.{hint} \
+                     router.resolve(model).provider (or resolve_openai_chat) names the one a \
+                     model string uses; known: {}",
+                    known.join(", ")
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// difflib-style ratio: 2·LCS / (|a| + |b|).
+fn similarity(a: &str, b: &str) -> f64 {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            dp[i][j] = if a[i - 1] == b[j - 1] {
+                dp[i - 1][j - 1] + 1
+            } else {
+                dp[i - 1][j].max(dp[i][j - 1])
+            };
+        }
+    }
+    (2 * dp[a.len()][b.len()]) as f64 / (a.len() + b.len()) as f64
+}
+
+fn not_configured(message: String) -> Lm15Error {
+    Lm15Error::NotConfiguredError(ErrorMeta::new(message))
 }
 
 impl fmt::Debug for RouterConfig {
@@ -354,6 +450,7 @@ impl fmt::Debug for RouterConfig {
                 &self.env.as_ref().map(|m| format!("<{} vars>", m.len())),
             )
             .field("api_keys", &self.api_keys.keys().collect::<Vec<_>>())
+            .field("base_urls", &self.base_urls)
             .field("settings", &self.settings)
             .field("catalog", &self.catalog.len())
             .field("credentials_path", &self.credentials_path)
@@ -378,14 +475,18 @@ impl Default for LMRouter {
 
 impl LMRouter {
     pub fn new() -> Self {
-        LMRouter::with_config(RouterConfig::default())
+        LMRouter::with_config(RouterConfig::default()).expect("an empty config names no provider")
     }
 
-    pub fn with_config(config: RouterConfig) -> Self {
-        LMRouter {
+    /// A router over `config`. Every provider string the config is keyed
+    /// by must name a routable provider; a near miss is named
+    /// (`NotConfiguredError`) rather than silently ignored.
+    pub fn with_config(config: RouterConfig) -> Result<Self, Lm15Error> {
+        config.check_provider_keyed()?;
+        Ok(LMRouter {
             config,
             lms: Mutex::new(BTreeMap::new()),
-        }
+        })
     }
 
     pub fn config(&self) -> &RouterConfig {
@@ -435,6 +536,201 @@ impl LMRouter {
         match self.lm_for(&resolution) {
             Ok(lm) => lm.stream(&routed(request, &resolution)),
             Err(err) => EventStream::failed(resolution.provider, err),
+        }
+    }
+}
+
+// ─── the OpenAI-shaped door (api-family § Ingest) ────────────────────
+
+/// litellm's routing prefixes (`<provider>/<model>`) that name a door lm15
+/// has, copied as data. A prefix absent here is refused by name — never
+/// routed by rule — because litellm's own rule is "a leading known provider
+/// name is the provider", and an unknown one is an error there too. Where
+/// litellm's name covers two lm15 doors (bedrock, vertex_ai: Anthropic or
+/// not, by model) it is left out: choosing would be a guess.
+pub const LITELLM_PROVIDER_PREFIXES: &[(&str, &str)] = &[
+    ("openai", "openai-chat"),
+    ("anthropic", "anthropic"),
+    ("gemini", "gemini"),
+    ("groq", "groq"),
+    ("openrouter", "openrouter"),
+    ("deepseek", "deepseek"),
+    ("xai", "xai"),
+    ("ollama", "ollama"),
+    ("ollama_chat", "ollama"),
+    ("hosted_vllm", "vllm"),
+    ("moonshot", "moonshotai"),
+    ("azure", "azure-chat"),
+];
+
+/// Keyword arguments of `create()` / `completion()` that configure the
+/// CLIENT, not the request: refused with the lm15 place they belong.
+const CLIENT_KEYWORDS: &[(&str, &str)] = &[
+    (
+        "api_key",
+        "RouterConfig::api_key(provider, key) or the environment",
+    ),
+    ("api_base", "RouterConfig::base_url(provider, url)"),
+    ("base_url", "RouterConfig::base_url(provider, url)"),
+    ("timeout", "RouterConfig::transport(...)"),
+    (
+        "num_retries",
+        "your own retry loop over Lm15Error::is_retryable (lm15 never retries)",
+    ),
+    (
+        "max_retries",
+        "your own retry loop over Lm15Error::is_retryable (lm15 never retries)",
+    ),
+    ("headers", "RouterConfig::transport(...)"),
+    ("extra_headers", "RouterConfig::transport(...)"),
+    (
+        "extra_body",
+        "config.extensions on the Request (build it with request_from_openai_chat and edit)",
+    ),
+    ("extra_query", "RouterConfig::transport(...)"),
+    (
+        "cache",
+        "your own cache keyed on the Request (lm15 has no response cache)",
+    ),
+    (
+        "caching",
+        "your own cache keyed on the Request (lm15 has no response cache)",
+    ),
+    ("mock_response", "a scripted Transport"),
+    (
+        "drop_params",
+        "nothing: lm15 refuses what it cannot carry instead of dropping it",
+    ),
+    ("custom_llm_provider", "the model string's prefix"),
+];
+
+/// The lm15 model string for a model string written for the OpenAI SDK or
+/// litellm (`playbooks/api-family.md` § Ingest): an lm15 string
+/// (`provider:model`) is left alone; litellm's `provider/model` maps its
+/// prefix through [`LITELLM_PROVIDER_PREFIXES`] (only the first segment; a
+/// model id may contain slashes itself: `groq/openai/gpt-oss-20b`); a bare
+/// name routes by lm15's rules, except that OpenAI's models go to the Chat
+/// Completions door (`openai-chat:`) — the endpoint both libraries were
+/// using — not the Responses API (see [`LMRouter::resolve_openai_chat`]).
+pub fn openai_chat_model_string(model: &str) -> Result<String, Lm15Error> {
+    if model.contains(':') {
+        return Ok(model.to_string());
+    }
+    let Some((head, rest)) = model.split_once('/') else {
+        return Ok(model.to_string());
+    };
+    if rest.is_empty() {
+        return Ok(model.to_string());
+    }
+    match LITELLM_PROVIDER_PREFIXES
+        .iter()
+        .find(|(prefix, _)| *prefix == head)
+    {
+        Some((_, provider)) => Ok(format!("{provider}:{rest}")),
+        None => {
+            let mut known: Vec<&str> = LITELLM_PROVIDER_PREFIXES.iter().map(|(p, _)| *p).collect();
+            known.sort_unstable();
+            Err(unknown_model(
+                format!(
+                    "could not read {model:?} as a litellm model string: {head:?} is not a provider \
+                     prefix lm15 has a door for (known: {}); write it as lm15's provider:model instead",
+                    known.join(", ")
+                ),
+                model,
+            ))
+        }
+    }
+}
+
+/// `(model, messages, kwargs)` → the Chat Completions body, after refusing
+/// the client keywords by name.
+fn split_openai_chat_call(
+    model: &str,
+    messages: &Value,
+    kwargs: &JsonObject,
+) -> Result<Value, Lm15Error> {
+    for (key, where_) in CLIENT_KEYWORDS {
+        if kwargs.contains_key(*key) {
+            return Err(not_configured(format!(
+                "{key:?} configures the client, not the request; in lm15 it lives in {where_}"
+            )));
+        }
+    }
+    let mut body = JsonObject::new();
+    body.insert("model".into(), Value::String(model.to_string()));
+    body.insert("messages".into(), messages.clone());
+    for (key, value) in kwargs {
+        body.insert(key.clone(), value.clone());
+    }
+    Ok(Value::Object(body))
+}
+
+impl LMRouter {
+    /// [`Self::resolve`] for the OpenAI-shaped door: `model` is read by
+    /// [`openai_chat_model_string`], and a bare OpenAI name goes to Chat
+    /// Completions (`openai-chat`), the endpoint the OpenAI SDK and litellm
+    /// were using. Like `resolve`: no network, no credential invocation, no
+    /// secret values.
+    pub fn resolve_openai_chat(&self, model: &str) -> Result<Resolution, Lm15Error> {
+        let resolution = self.resolve(&openai_chat_model_string(model)?)?;
+        if resolution.source == RouteSource::Rule && resolution.provider == "openai" {
+            return self.resolve(&format!("openai-chat:{}", resolution.model));
+        }
+        Ok(resolution)
+    }
+
+    /// The Request behind [`Self::complete_from_openai_chat`], and the LM it
+    /// routes to. `model` may be written for the OpenAI SDK, for litellm, or
+    /// for lm15; `messages` is the call's `messages` array; `kwargs` its
+    /// other keywords. The body is read with the destination door's own
+    /// spellings when it speaks the Chat Completions wire, else with
+    /// OpenAI's (MAP-12: every key maps, passes through, or is refused by
+    /// name). Client keywords (`api_key`, `timeout`, …) are refused with the
+    /// `RouterConfig` place named.
+    pub fn request_from_openai_chat(
+        &self,
+        model: &str,
+        messages: &Value,
+        kwargs: &JsonObject,
+    ) -> Result<(Request, Arc<ProviderLM>), Lm15Error> {
+        let resolution = self.resolve_openai_chat(model)?;
+        let body = split_openai_chat_call(&resolution.requested, messages, kwargs)?;
+        let lm = self.lm_for(&resolution)?;
+        let request = if lm.dialect() == DialectId::OpenaiChat {
+            lm.request_from_openai_chat(&body)?
+        } else {
+            crate::dialects::openai_chat::ingest::request_from_openai_chat(&body, None)?
+        };
+        Ok((routed(&request, &resolution), lm))
+    }
+
+    /// `client.chat.completions.create(model=, messages=, ...)` or
+    /// `litellm.completion(model=, messages=, ...)` — the same call, answered
+    /// by lm15 as a canonical [`Response`]. See
+    /// [`Self::request_from_openai_chat`] for how the pieces are read;
+    /// [`Self::stream_from_openai_chat`] is the streaming twin (wrap it in
+    /// [`crate::ResponseStream`] for the assembled answer).
+    pub async fn complete_from_openai_chat(
+        &self,
+        model: &str,
+        messages: &Value,
+        kwargs: &JsonObject,
+    ) -> Result<Response, Lm15Error> {
+        let (request, lm) = self.request_from_openai_chat(model, messages, kwargs)?;
+        lm.complete(&request).await
+    }
+
+    /// The streaming twin of [`Self::complete_from_openai_chat`]: typed lm15
+    /// stream events, not OpenAI-shaped chunks.
+    pub fn stream_from_openai_chat(
+        &self,
+        model: &str,
+        messages: &Value,
+        kwargs: &JsonObject,
+    ) -> EventStream {
+        match self.request_from_openai_chat(model, messages, kwargs) {
+            Ok((request, lm)) => lm.stream(&request),
+            Err(err) => EventStream::failed(String::new(), err),
         }
     }
 }
@@ -530,7 +826,10 @@ fn resolution(
 /// explicit entry, for a provider with no declared keys, else the first
 /// set key, else the first declared.
 fn env_key_for(definition: &ProviderDefinition, config: &RouterConfig) -> Option<&'static str> {
-    if config.explicit_credential(definition.id).is_some() {
+    if matches!(
+        config.explicit_credential(definition.id),
+        Ok(Some(_)) | Err(_)
+    ) {
         return None;
     }
     let env_keys = definition.access().env_keys;
@@ -813,8 +1112,19 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         return builder.api_key(login).build();
     }
 
+    if let Some(url) = config.explicit_base_url(provider) {
+        if policy.host.is_some() {
+            return Err(not_configured(format!(
+                "RouterConfig::base_url({provider:?}, ...): a cloud door's URL is built from its host \
+                 settings (resource, region), not given whole; set them with \
+                 RouterConfig::settings({provider:?}, ...) instead."
+            )));
+        }
+        builder = builder.base_url(url);
+    }
+
     let mut credential: Option<Box<dyn CredentialProvider + Send + Sync>> = config
-        .explicit_credential(provider)
+        .explicit_credential(provider)?
         .map(|c| Box::new(c) as Box<dyn CredentialProvider + Send + Sync>);
 
     if let Some(host) = &policy.host {
@@ -898,8 +1208,132 @@ mod tests {
     }
 
     #[test]
+    fn an_explicit_key_serves_its_sibling_and_ambiguity_is_refused() {
+        // spec/auth.md § Shared explicit keys (ratified 2026-09-09).
+        assert_eq!(
+            shared_api_key_source(["openai"], "openai-chat"),
+            Ok(Some("openai"))
+        );
+        assert_eq!(
+            shared_api_key_source(["openai_chat"], "openai"),
+            Ok(Some("openai_chat"))
+        );
+        assert_eq!(
+            shared_api_key_source(["vertex-express"], "gemini"),
+            Ok(None)
+        ); // overlapping, not identical
+        assert_eq!(shared_api_key_source(["ollama"], "vllm"), Ok(None)); // empty env lists never share
+        assert_eq!(
+            shared_api_key_source(["meta", "meta-chat"], "meta-anthropic"),
+            Err(vec!["meta", "meta-chat"])
+        );
+        assert_eq!(
+            shared_api_key_source(["meta", "meta-chat", "meta-anthropic"], "meta-anthropic"),
+            Ok(Some("meta-anthropic"))
+        );
+        let router = LMRouter::with_config(hermetic(&[]).api_key("openai", "k")).unwrap();
+        let r = router.resolve("openai-chat:gpt-4.1-mini").unwrap();
+        assert_eq!(r.env_key, None, "the shared entry is the explicit rung");
+        assert_eq!(
+            router.lm("openai-chat:gpt-4.1-mini").unwrap().provider(),
+            "openai-chat"
+        );
+        let router =
+            LMRouter::with_config(hermetic(&[]).api_key("meta", "a").api_key("meta-chat", "b"))
+                .unwrap();
+        let err = router.lm("meta-anthropic:m").unwrap_err();
+        assert_eq!(err.class_name(), "NotConfiguredError");
+        assert!(err.message().contains("ambiguous"), "{err}");
+        // A provider string this config is keyed by must route somewhere.
+        let err = LMRouter::with_config(hermetic(&[]).api_key("opnai", "k")).unwrap_err();
+        assert_eq!(err.class_name(), "NotConfiguredError");
+        assert!(err.message().contains("Did you mean \"openai\""), "{err}");
+        let err = LMRouter::with_config(hermetic(&[]).base_url("nope", "http://x")).unwrap_err();
+        assert_eq!(err.class_name(), "NotConfiguredError");
+        // base_url: the exact provider's adapter, never a cloud door.
+        let router = LMRouter::with_config(
+            hermetic(&[])
+                .api_key("openai-chat", "k")
+                .base_url("openai_chat", "http://h/v1"),
+        )
+        .unwrap();
+        assert_eq!(
+            router.lm("openai-chat:m").unwrap().base_url(),
+            "http://h/v1"
+        );
+        let router = LMRouter::with_config(
+            hermetic(&[("AWS_REGION", "eu-west-1")])
+                .api_key("bedrock-chat", "bearer")
+                .base_url("bedrock-chat", "http://h/v1"),
+        )
+        .unwrap();
+        let err = router.lm("bedrock-chat:m").unwrap_err();
+        assert!(err.message().contains("host settings"), "{err}");
+    }
+
+    #[test]
+    fn the_openai_shaped_door_reads_the_other_libraries_model_strings() {
+        assert_eq!(
+            openai_chat_model_string("groq/openai/gpt-oss-20b").unwrap(),
+            "groq:openai/gpt-oss-20b"
+        );
+        assert_eq!(
+            openai_chat_model_string("openai-chat:gpt-4o-mini").unwrap(),
+            "openai-chat:gpt-4o-mini"
+        );
+        assert_eq!(
+            openai_chat_model_string("gpt-4o-mini").unwrap(),
+            "gpt-4o-mini"
+        );
+        assert_eq!(
+            openai_chat_model_string("bedrock/anthropic.claude")
+                .unwrap_err()
+                .class_name(),
+            "UnknownModelError"
+        );
+        let router = LMRouter::with_config(
+            hermetic(&[])
+                .api_key("openai", "k")
+                .api_key("anthropic", "k"),
+        )
+        .unwrap();
+        assert_eq!(
+            router.resolve_openai_chat("gpt-4o-mini").unwrap().provider,
+            "openai-chat"
+        );
+        assert_eq!(
+            router
+                .resolve_openai_chat("anthropic/claude-sonnet-4-5")
+                .unwrap()
+                .provider,
+            "anthropic"
+        );
+        let messages = serde_json::json!([{"role": "user", "content": "hi"}]);
+        let mut kwargs = JsonObject::new();
+        kwargs.insert("api_key".into(), Value::String("x".into()));
+        let err = router
+            .request_from_openai_chat("gpt-4o-mini", &messages, &kwargs)
+            .unwrap_err();
+        assert!(err.message().contains("configures the client"), "{err}");
+        let mut kwargs = JsonObject::new();
+        kwargs.insert("max_completion_tokens".into(), Value::from(5));
+        let (request, lm) = router
+            .request_from_openai_chat("gpt-4o-mini", &messages, &kwargs)
+            .unwrap();
+        assert_eq!(lm.provider(), "openai-chat");
+        assert_eq!(request.model, "gpt-4o-mini");
+        assert_eq!(request.config.max_tokens, Some(5));
+        // An Anthropic destination reads the same body with OpenAI's spellings.
+        let (request, lm) = router
+            .request_from_openai_chat("anthropic/claude-sonnet-4-5", &messages, &kwargs)
+            .unwrap();
+        assert_eq!(lm.provider(), "anthropic");
+        assert_eq!(request.model, "claude-sonnet-4-5");
+    }
+
+    #[test]
     fn prefix_rung_splits_on_the_first_colon_and_accepts_both_spellings() {
-        let router = LMRouter::with_config(hermetic(&[("OPENAI_API_KEY", "k")]));
+        let router = LMRouter::with_config(hermetic(&[("OPENAI_API_KEY", "k")])).unwrap();
         let r = router.resolve("openai:ft:gpt-4.1:org").unwrap();
         assert_eq!(r.source, RouteSource::Prefix);
         assert_eq!(r.provider, "openai");
@@ -925,7 +1359,7 @@ mod tests {
 
     #[test]
     fn rule_rung_first_match_wins_and_reports_the_rule() {
-        let router = LMRouter::with_config(hermetic(&[]));
+        let router = LMRouter::with_config(hermetic(&[])).unwrap();
         let r = router.resolve("claude-haiku-4-5").unwrap();
         assert_eq!(r.provider, "anthropic");
         assert_eq!(r.rule.unwrap().prefix, "claude-");
@@ -941,7 +1375,7 @@ mod tests {
         );
         let r = router.resolve("gemini-2.5-flash").unwrap();
         assert_eq!(r.env_key, Some("GEMINI_API_KEY"));
-        let router = LMRouter::with_config(hermetic(&[("GOOGLE_API_KEY", "k")]));
+        let router = LMRouter::with_config(hermetic(&[("GOOGLE_API_KEY", "k")])).unwrap();
         assert_eq!(
             router.resolve("gemini-2.5-flash").unwrap().env_key,
             Some("GOOGLE_API_KEY")
@@ -950,7 +1384,7 @@ mod tests {
 
     #[test]
     fn unroutable_strings_explain_themselves() {
-        let router = LMRouter::with_config(hermetic(&[]));
+        let router = LMRouter::with_config(hermetic(&[])).unwrap();
         let err = router.resolve("").unwrap_err();
         assert_eq!(err.class_name(), "UnknownModelError");
         assert_eq!(err.code().as_str(), "unknown_model");
@@ -989,7 +1423,7 @@ mod tests {
             info("alias-only", "deepseek", &["deepseek-chat"]),
             info("nowhere-1", "nowhere", &[]),
         ]);
-        let router = LMRouter::with_config(config);
+        let router = LMRouter::with_config(config).unwrap();
         let r = router.resolve("llama-70b").unwrap();
         assert_eq!(r.source, RouteSource::Catalog);
         assert_eq!(r.model, "llama-3.3-70b-versatile");
@@ -1024,7 +1458,7 @@ mod tests {
         // Explicit beats env; env keys in declared order; placeholder last.
         let config = hermetic(&[("GEMINI_API_KEY", ""), ("GOOGLE_API_KEY", "g")])
             .api_key("openai_chat", "explicit");
-        let router = LMRouter::with_config(config);
+        let router = LMRouter::with_config(config).unwrap();
         assert_eq!(router.resolve("openai-chat:m").unwrap().env_key, None);
         let lm = router.lm("openai-chat:m").unwrap();
         let built = lm
@@ -1075,7 +1509,8 @@ mod tests {
             ("AWS_REGION", "eu-west-1"),
             ("AWS_EC2_METADATA_DISABLED", "true"),
             ("HOME", "/nonexistent"),
-        ]));
+        ]))
+        .unwrap();
         let lm = router.lm("bedrock-chat:m").unwrap();
         let request = Request::new("m", vec![crate::Message::user("hi").unwrap()]).unwrap();
         // … and a synchronous build before `prepare` says so, typed.
@@ -1091,7 +1526,8 @@ mod tests {
                 "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
             ),
             ("HOME", "/nonexistent"),
-        ]));
+        ]))
+        .unwrap();
         let lm = router.lm("bedrock-chat:m").unwrap();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1111,7 +1547,8 @@ mod tests {
         // Rung 0 (an explicit entry) works without 3b.
         let router = LMRouter::with_config(
             hermetic(&[("AWS_REGION", "eu-west-1")]).api_key("bedrock-chat", "bearer"),
-        );
+        )
+        .unwrap();
         let lm = router.lm("bedrock-chat:m").unwrap();
         assert_eq!(lm.settings()["region"], "eu-west-1");
         assert_eq!(
@@ -1122,7 +1559,8 @@ mod tests {
         // AWS profile is the last fallback before that: HOME is pinned).
         let router = LMRouter::with_config(
             hermetic(&[("HOME", "/nonexistent")]).api_key("bedrock-chat", "bearer"),
-        );
+        )
+        .unwrap();
         let err = router.lm("bedrock-chat:m").unwrap_err();
         assert_eq!(err.class_name(), "NotConfiguredError");
         assert!(err.message().contains("AWS_REGION"), "{err}");
@@ -1131,13 +1569,14 @@ mod tests {
             hermetic(&[("AWS_REGION", "eu-west-1")])
                 .api_key("bedrock-chat", "bearer")
                 .setting("bedrock-chat", "region", "us-east-1"),
-        );
+        )
+        .unwrap();
         assert_eq!(
             router.lm("bedrock-chat:m").unwrap().settings()["region"],
             "us-east-1"
         );
         // A `key` policy on a host: env key + settings.
-        let router = LMRouter::with_config(hermetic(&[("GOOGLE_API_KEY", "g")]));
+        let router = LMRouter::with_config(hermetic(&[("GOOGLE_API_KEY", "g")])).unwrap();
         let lm = router.lm("vertex-express:gemini-2.5-flash").unwrap();
         assert!(
             lm.base_url().contains("aiplatform.googleapis.com"),
@@ -1179,7 +1618,8 @@ mod tests {
         );
         let router = LMRouter::with_config(
             hermetic(&[("ANTHROPIC_API_KEY", "ambient")]).credentials_path(&path),
-        );
+        )
+        .unwrap();
         let r = router.resolve("claude-code:claude-x").unwrap();
         assert_eq!(r.env_key, None);
         assert!(
@@ -1199,7 +1639,8 @@ mod tests {
         assert!(err.message().contains("/login"), "{err}");
         let router = LMRouter::with_config(
             hermetic(&[("ANTHROPIC_API_KEY", "ambient")]).credentials_path(&path),
-        );
+        )
+        .unwrap();
         let err = router.lm("claude-code:claude-x").unwrap_err();
         assert_eq!(err.class_name(), "NotConfiguredError");
         assert_eq!(err.provider(), Some("claude-code"));
@@ -1211,7 +1652,7 @@ mod tests {
             "codex.json",
             r#"{"tokens":{"access_token":"a.b.c","refresh_token":"r","account_id":"acct-file"},"last_refresh":"2020-01-01T00:00:00Z"}"#,
         );
-        let router = LMRouter::with_config(hermetic(&[]).credentials_path(&path));
+        let router = LMRouter::with_config(hermetic(&[]).credentials_path(&path)).unwrap();
         let lm = router.lm("openai-codex:gpt-5-codex").unwrap();
         let request =
             Request::new("gpt-5-codex", vec![crate::Message::user("hi").unwrap()]).unwrap();
@@ -1244,11 +1685,13 @@ mod tests {
             hermetic(&[("XAI_API_KEY", "env")])
                 .api_key("xai", "explicit")
                 .credentials_path(&usable),
-        );
+        )
+        .unwrap();
         assert_eq!(bearer(&router), "Bearer explicit");
         // The stored login beats the env key (it spends no money).
         let router =
-            LMRouter::with_config(hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&usable));
+            LMRouter::with_config(hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&usable))
+                .unwrap();
         assert_eq!(bearer(&router), "Bearer stored");
         // An unusable login (expired, no refresh) lets the env key through.
         let unusable = write_login(
@@ -1256,7 +1699,8 @@ mod tests {
             &format!(r#"{{"xai":{{"type":"oauth","access":"stale","expires":{expired}}}}}"#),
         );
         let router =
-            LMRouter::with_config(hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&unusable));
+            LMRouter::with_config(hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&unusable))
+                .unwrap();
         assert_eq!(bearer(&router), "Bearer env");
         // A usable-but-expired login (refresh token present) is selected by
         // AUTH-1 (never the env key). `build_request` by hand skips the
@@ -1271,7 +1715,8 @@ mod tests {
         );
         let router = LMRouter::with_config(
             hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&refreshable),
-        );
+        )
+        .unwrap();
         let err = router
             .lm("grok-4")
             .unwrap()
@@ -1280,7 +1725,8 @@ mod tests {
         assert_eq!(err.class_name(), "AuthError");
         assert!(err.message().contains("refresh"), "{err}");
         // Nothing anywhere: the login hint.
-        let router = LMRouter::with_config(hermetic(&[]).credentials_path("/nonexistent/xai.json"));
+        let router =
+            LMRouter::with_config(hermetic(&[]).credentials_path("/nonexistent/xai.json")).unwrap();
         let err = router.lm("grok-4").unwrap_err();
         assert_eq!(err.class_name(), "NotConfiguredError");
         assert!(err.message().contains("login"), "{err}");
@@ -1293,7 +1739,7 @@ mod tests {
         let text = format!("{config:?}");
         assert!(!text.contains("SENTINEL"), "{text}");
         assert!(text.contains("\"openai\""), "{text}");
-        let router = LMRouter::with_config(config);
+        let router = LMRouter::with_config(config).unwrap();
         assert!(!format!("{router:?}").contains("SENTINEL"));
     }
 }

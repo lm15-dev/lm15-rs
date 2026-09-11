@@ -206,7 +206,7 @@ pub fn preset_key(name: &str) -> String {
         "openai_chat" | "chat" | "chat_completions" | "responses" | "openai_responses" => {
             "openai".into()
         }
-        "lmstudio" | "lm_studio" => "ollama".into(),
+        "lm_studio" => "lmstudio".into(),
         "dashscope_qwen" => "qwen".into(),
         "z_ai" => "zai".into(),
         _ => key,
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn preset_keys_normalize_and_alias() {
-        assert_eq!(preset_key("LM-Studio"), "ollama");
+        assert_eq!(preset_key("LM-Studio"), "lmstudio");
         assert_eq!(preset_key("z.ai"), "zai");
         assert_eq!(preset_key("openai_chat"), "openai");
         assert_eq!(preset_key("bedrock-mantle"), "bedrock_mantle");
@@ -253,7 +253,7 @@ mod tests {
     fn every_preset_name_resolves_to_a_base_url_when_listed() {
         assert_eq!(
             preset_base_url(OPENAI_CHAT_PRESET_BASE_URLS, "LM Studio"),
-            Some("http://localhost:11434/v1")
+            Some("http://localhost:1234/v1")
         );
         assert_eq!(
             preset_base_url(ANTHROPIC_PRESET_BASE_URLS, "anthropic"),
