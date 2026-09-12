@@ -30,15 +30,183 @@ use crate::adapter::LiveCodec;
 use crate::auth::{select_scheme, AuthScheme, Credential};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::types::{
-    LiveClientAudioEvent, LiveClientEndAudioEvent, LiveClientEvent, LiveClientImageEvent,
-    LiveClientInterruptEvent, LiveClientTextEvent, LiveClientToolResultEvent, LiveClientTurnEvent,
-    LiveServerEvent, Part,
+    base64_decode, ErrorDetail, LiveClientAudioEvent, LiveClientEndAudioEvent, LiveClientEvent,
+    LiveClientImageEvent, LiveClientInterruptEvent, LiveClientTextEvent, LiveClientToolResultEvent,
+    LiveClientTurnEvent, LiveServerEvent, Part, ToolCallInfo, Usage,
 };
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 fn transport_error(message: String) -> Lm15Error {
     Lm15Error::TransportError(ErrorMeta::new(message))
+}
+
+// ─── Turn: half-duplex ergonomics over the event stream ──────────────
+//
+// A live session is FULL-duplex; `recv` is the primary surface. `turn()`
+// serves the half-duplex idiom (send, then listen until the turn ends).
+// The boundary and the bill are contract rules LIVE-1 and LIVE-2
+// (changes/2026-09-11-job-handles-live-turns-profiles.md), not this
+// port's habit.
+
+/// What ended a [`Turn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEnd {
+    TurnEnd,
+    Interrupted,
+    Error,
+    /// The model is waiting for YOUR tool result (`result()` returns here).
+    ToolCall,
+}
+
+impl TurnEnd {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TurnEnd::TurnEnd => "turn_end",
+            TurnEnd::Interrupted => "interrupted",
+            TurnEnd::Error => "error",
+            TurnEnd::ToolCall => "tool_call",
+        }
+    }
+}
+
+/// One materialized turn. `usage` is the field-wise sum of every `usage`
+/// and `turn_end` event the turn saw (a counter absent on either side
+/// stays absent, INV-029). Materializing buffers text and audio in memory
+/// until the turn ends; for latency-sensitive playback iterate events.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Turn {
+    pub ended_by: TurnEnd,
+    pub text: String,
+    pub audio: Vec<u8>,
+    pub audio_media_type: Option<String>,
+    pub tool_calls: Vec<ToolCallInfo>,
+    pub usage: Option<Usage>,
+    pub error: Option<ErrorDetail>,
+    pub events: Vec<LiveServerEvent>,
+}
+
+impl Turn {
+    pub fn ok(&self) -> bool {
+        self.ended_by == TurnEnd::TurnEnd
+    }
+}
+
+/// Field-wise sum of two Usage values from one session; absent on either
+/// side is unknown in the sum, never zero (INV-029).
+pub fn sum_usage(acc: Option<Usage>, more: &Usage) -> Usage {
+    let Some(acc) = acc else {
+        return *more;
+    };
+    let add = |a: Option<u64>, b: Option<u64>| match (a, b) {
+        (Some(a), Some(b)) => Some(a + b),
+        _ => None,
+    };
+    Usage {
+        input_tokens: add(acc.input_tokens, more.input_tokens),
+        output_tokens: add(acc.output_tokens, more.output_tokens),
+        total_tokens: add(acc.total_tokens, more.total_tokens),
+        cache_read_tokens: add(acc.cache_read_tokens, more.cache_read_tokens),
+        cache_write_tokens: add(acc.cache_write_tokens, more.cache_write_tokens),
+        reasoning_tokens: add(acc.reasoning_tokens, more.reasoning_tokens),
+        input_audio_tokens: add(acc.input_audio_tokens, more.input_audio_tokens),
+        output_audio_tokens: add(acc.output_audio_tokens, more.output_audio_tokens),
+    }
+}
+
+/// Materialize one turn's events (the reference's `_materialize_turn`).
+pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Turn {
+    let mut text = String::new();
+    let mut audio = Vec::new();
+    let mut audio_media_type = None;
+    let mut tool_calls = Vec::new();
+    let mut usage: Option<Usage> = None;
+    let mut error = None;
+    for event in &events {
+        match event {
+            LiveServerEvent::Text(e) => text.push_str(&e.text),
+            LiveServerEvent::Audio(e) => {
+                if let Ok(bytes) = base64_decode(&e.data) {
+                    audio.extend_from_slice(&bytes);
+                }
+                if audio_media_type.is_none() {
+                    audio_media_type = e.media_type.clone();
+                }
+            }
+            LiveServerEvent::ToolCall(e) => tool_calls.push(ToolCallInfo {
+                id: e.id.clone(),
+                name: e.name.clone(),
+                input: e.input.clone(),
+            }),
+            // A turn's bill is every usage-bearing event it saw (LIVE-2).
+            LiveServerEvent::TurnEnd(e) => usage = Some(sum_usage(usage.take(), &e.usage)),
+            LiveServerEvent::Usage(e) => usage = Some(sum_usage(usage.take(), &e.usage)),
+            LiveServerEvent::Error(e) => error = Some(e.error.clone()),
+            LiveServerEvent::ToolCallDelta(_) | LiveServerEvent::Interrupted(_) => {}
+        }
+    }
+    let ended_by = match events.last() {
+        Some(LiveServerEvent::TurnEnd(_)) => TurnEnd::TurnEnd,
+        Some(LiveServerEvent::Interrupted(_)) => TurnEnd::Interrupted,
+        Some(LiveServerEvent::ToolCall(_)) => TurnEnd::ToolCall,
+        _ => TurnEnd::Error,
+    };
+    Turn {
+        ended_by,
+        text,
+        audio,
+        audio_media_type,
+        tool_calls,
+        usage,
+        error,
+        events,
+    }
+}
+
+/// Iterator over one turn's server events. Ends itself after yielding the
+/// terminal event (`turn_end` / `interrupted` / `error`) — the same
+/// self-ending idiom as `stream()`. A `tool_call` is yielded mid-iteration
+/// (you hold the session, so you can answer and keep iterating);
+/// `result()` cannot answer for you, so it returns at a `tool_call` instead
+/// of deadlocking against a model that is waiting for your result.
+pub struct TurnView<'a> {
+    session: &'a mut LiveSession,
+    done: bool,
+}
+
+impl TurnView<'_> {
+    /// The next event of this turn; `None` once the terminal event has been
+    /// yielded, or when the socket closed with nothing more to yield.
+    pub async fn next(&mut self) -> Result<Option<LiveServerEvent>, Lm15Error> {
+        if self.done {
+            return Ok(None);
+        }
+        let Some(event) = self.session.recv().await? else {
+            self.done = true;
+            return Ok(None);
+        };
+        if matches!(
+            event,
+            LiveServerEvent::TurnEnd(_)
+                | LiveServerEvent::Interrupted(_)
+                | LiveServerEvent::Error(_)
+        ) {
+            self.done = true;
+        }
+        Ok(Some(event))
+    }
+
+    pub async fn result(mut self) -> Result<Turn, Lm15Error> {
+        let mut events = Vec::new();
+        while let Some(event) = self.next().await? {
+            let is_call = matches!(event, LiveServerEvent::ToolCall(_));
+            events.push(event);
+            if is_call {
+                break;
+            }
+        }
+        Ok(materialize_turn(events))
+    }
 }
 
 /// An open live session.
@@ -242,6 +410,19 @@ impl LiveSession {
                 }
                 Some(raw) => self.pending.extend(self.codec.decode(&raw)?),
             }
+        }
+    }
+
+    /// One turn (LIVE-1, LIVE-2; api-family § Beyond chat): iterate its
+    /// events with [`TurnView::next`] until `turn_end` / `interrupted` /
+    /// `error`, or [`TurnView::result`] for the materialized [`Turn`]. A
+    /// `tool_call` is yielded mid-turn and does not end iteration;
+    /// `result()` returns at it (you must answer with `send_tool_result`).
+    /// The session itself stays open.
+    pub fn turn(&mut self) -> TurnView<'_> {
+        TurnView {
+            session: self,
+            done: false,
         }
     }
 

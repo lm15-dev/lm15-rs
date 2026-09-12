@@ -33,6 +33,7 @@ pub mod cloud;
 pub mod compat;
 pub mod dialects;
 pub mod errors;
+pub mod jobs;
 pub mod live;
 pub mod registry;
 pub mod response_stream;
@@ -55,7 +56,8 @@ pub use compat::{AnthropicCompat, OpenAIChatCompat, OpenAIResponsesCompat};
 pub use dialects::openai_chat::ingest::request_from_openai_chat;
 pub use dialects::openai_chat::response_from_openai_chat;
 pub use errors::{normalize_error, ErrorClass, ErrorCode, ErrorMeta, Lm15Error};
-pub use live::LiveSession;
+pub use jobs::{BatchJob, VideoJob, WaitError, WaitOptions};
+pub use live::{LiveSession, Turn, TurnEnd, TurnView};
 pub use response_stream::ResponseStream;
 pub use router::{
     openai_chat_model_string, LMRouter, Resolution, RouteRule, RouteSource, RouterConfig,

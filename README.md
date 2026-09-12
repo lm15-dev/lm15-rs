@@ -471,10 +471,17 @@ wire is not affected unless the entry says so.
 - **Live sessions are `tokio-tungstenite`** (rustls, the OS trust
   store); the socket is per-language idiom, the codec is the contract.
   The session decodes eagerly and skips housekeeping frames; the
-  reference's `turn()` sugar and pending-queue mechanics are not
-  reproduced (out of contract scope). Likewise the reference's
-  `VideoJob` handle sugar (`video_generate` / `video_job`): the four
-  video operations are the surface here.
+  reference's pending-queue mechanics are not reproduced. `session.turn()`
+  (LIVE-1) and `TurnView::result()` (LIVE-2: the bill sums every
+  usage-bearing event) are family surface since 2026-09-11
+  (`changes/2026-09-11-job-handles-live-turns-profiles.md`, pending
+  ratification), as are the job handles: `lm.batch(...)` / `batch_job(id)`
+  / `batches()` → `BatchJob`, `lm.video_generate(...)` / `video_job(id)` /
+  `video_jobs()` → `VideoJob`, on an `Arc<ProviderLM>`. `wait(WaitOptions)`
+  is the only thing that waits; a deadline that elapses is
+  `WaitError::Elapsed` (the caller's own deadline; no ErrorCode), a failed
+  job returns `Ok` with its status. The pure verbs are unchanged and are
+  what the harness pins.
 
 ### Dialects (all four)
 
@@ -627,9 +634,9 @@ tool call on the complete path became the contract on 2026-09-07
   `credential_source`, `external_account_authorized_user`,
   `gdch_service_account`. Each answers the typed `NotConfiguredError`
   naming the gap and the fix; none falls through silently.
-- Rung 0 and catalog discovery (stated above); the `VideoJob` and live
-  `turn()` sugar (stated above); the profile layers of
-  `lm15/profiles.py`.
+- Rung 0 and catalog discovery (stated above); the profile layers of
+  `lm15/profiles.py` (deprecated in the reference, never ported:
+  `changes/2026-09-11-job-handles-live-turns-profiles.md` § 3).
 
 ## Layout
 
