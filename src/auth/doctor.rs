@@ -315,6 +315,41 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
 /// The cloud-chain walk (module 3b): `cloud::chains::explain` over an
 /// offline context built from the options, plus the resolved host
 /// settings (explicit, env, the cloud profile, defaults) for the report.
+#[cfg(not(feature = "native"))]
+fn explain_cloud(
+    policy: &'static crate::auth::AccessPolicy,
+    canonical: &str,
+    options: &ExplainOptions,
+) -> Result<Report, AuthError> {
+    // The wire codec build: no profile files, CLIs or metadata endpoints to
+    // walk. The report says so, rung by rung absent, as the router refuses.
+    let explicit = options
+        .api_key_providers
+        .iter()
+        .any(|name| canonical_provider(name) == canonical);
+    let steps = vec![
+        Step {
+            kind: "api_keys".into(),
+            source: "explicit api_keys entry".into(),
+            detail: if explicit { "provided (value never shown)" } else { "not provided" }.into(),
+            state: if explicit { StepState::Selected } else { StepState::Absent },
+        },
+        Step {
+            kind: policy.credential_policy.as_str().into(),
+            source: format!("{} (profile files, CLIs, metadata endpoints)", policy.credential_policy.as_str()),
+            detail: "not available in this build (no `native` feature)".into(),
+            state: StepState::Absent,
+        },
+    ];
+    Ok(Report {
+        provider: canonical.to_string(),
+        steps,
+        configured: explicit,
+        settings: Vec::new(),
+    })
+}
+
+#[cfg(feature = "native")]
 fn explain_cloud(
     policy: &'static crate::auth::AccessPolicy,
     canonical: &str,

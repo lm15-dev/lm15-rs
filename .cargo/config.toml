@@ -1,0 +1,6 @@
+# The wasm32 target links with LLVM's wasm-ld, which the Rust toolchain
+# here does not ship. `tools/wasm-ld` finds one (via nix) on whichever
+# machine builds; nothing machine-specific is written down.
+[target.wasm32-unknown-unknown]
+linker = "tools/wasm-ld"
+rustflags = ["-C", "linker-flavor=wasm-ld"]

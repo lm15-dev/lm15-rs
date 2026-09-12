@@ -35,7 +35,7 @@ use crate::registry::{lookup, DialectId, ProviderDefinition};
 use crate::sse::{SseEvent, SseParser};
 use crate::stream::{materialize_response, Coalescer};
 use crate::transport::{
-    attach_error_metadata, BodyStream, BoxFuture, HttpTransport, Transport, TransportResponse,
+    attach_error_metadata, BodyStream, BoxFuture, Transport, TransportResponse,
 };
 use serde_json::Value;
 
@@ -966,6 +966,7 @@ impl ProviderLM {
 
     /// Open a live session: connect the socket, send the setup frames,
     /// wait for the wire's acknowledgement where it has one.
+    #[cfg(feature = "native")]
     pub async fn live(&self, config: &LiveConfig) -> Result<crate::live::LiveSession, Lm15Error> {
         self.ready().await?;
         let codec = self.live_codec(config)?;
@@ -1551,7 +1552,7 @@ impl LmBuilder {
 
         let transport = match self.transport {
             Some(transport) => transport,
-            None => HttpTransport::shared()?,
+            None => crate::transport::default_transport()?,
         };
 
         Ok(ProviderLM {

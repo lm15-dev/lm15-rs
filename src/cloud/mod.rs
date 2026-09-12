@@ -8,9 +8,11 @@
 //! The cloud credential chains (module 3b) are not here; the signer takes
 //! an explicit `AwsCredentials` value.
 
+#[cfg(feature = "native")]
 pub mod chains;
 pub mod hosts;
 pub mod ini;
 pub mod percent;
+#[cfg(feature = "native")]
 pub mod rs256;
 pub mod sigv4;

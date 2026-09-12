@@ -24,10 +24,12 @@ hmac = "0.12"
 # (rustls-platform-verifier), the same store the reference's
 # ssl.create_default_context() reads; no compression features, so the
 # provider sends identity bodies, as the reference asks for.
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "stream"], optional = true }
 tokio = { version = "1", features = ["time", "rt"] }
 futures-core = "0.3"
-futures-util = { version = "0.3", default-features = false }
+# `alloc` is stated here: reqwest turned it on through feature unification,
+# and the codec build (no reqwest) needs `.boxed()` too.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 bytes = "1"
 # Retry-After as an HTTP-date (the reference: email.utils.parsedate_to_datetime).
 httpdate = "1"
@@ -40,21 +42,45 @@ log = "0.4"
 # PKCS#1 v1.5 / SHA-256 from the crypto provider rustls already builds
 # (aws-lc-rs), never a second RSA implementation. Also SHA-1 for the
 # Entra x5t thumbprint (a legacy digest used only as a certificate id).
-aws-lc-rs = "1"
+aws-lc-rs = { version = "1", optional = true }
 # Live sessions (module 9): the websocket under the codec, over the same
 # rustls provider and the OS trust store.
-tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"], optional = true }
 
 [features]
-default = []
+default = ["native"]
+# The host I/O: the reqwest transport, the websocket under live sessions,
+# the cloud credential chains' RSA (aws-lc-rs). Off, the crate is the wire
+# codec alone — every type, dialect, compat preset, request builder,
+# parser and stream accumulator — and compiles for wasm32-unknown-unknown,
+# where the host (a page) supplies the network. Same split as the
+# TypeScript port's `lm15/browser` (docs/browser.md there).
+native = ["dep:reqwest", "dep:aws-lc-rs", "dep:tokio-tungstenite"]
 # api-family rule 4: the same names, blocking, for programs without an
 # async runtime (`lm15::blocking`). Owns one tokio runtime thread.
-blocking = ["tokio/rt-multi-thread"]
+blocking = ["native", "tokio/rt-multi-thread"]
+# The C ABI the browser glue calls (examples in lm15-ts): JSON in, JSON
+# out, over linear memory. Builds a cdylib; no wasm-bindgen.
+wasm = []
 
 [dev-dependencies]
 tokio-tungstenite = "0.30"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "test-util"] }
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [[bin]]
 name = "lm15-vet"
 path = "src/bin/lm15-vet.rs"
+required-features = ["native"]
+
+# The browser artifact: `cargo build --profile wasm --lib --no-default-features
+# --features wasm --target wasm32-unknown-unknown`. Size over speed — a page
+# downloads it — and one codegen unit for LTO to see the whole codec.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = true

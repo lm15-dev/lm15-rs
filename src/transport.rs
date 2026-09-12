@@ -25,17 +25,25 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(feature = "native")]
+use std::sync::OnceLock;
+#[cfg(feature = "native")]
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures_core::Stream;
 use futures_util::StreamExt;
+#[cfg(feature = "native")]
 use tokio::time::{sleep, Sleep};
 
-use crate::errors::{ErrorMeta, Lm15Error};
-use crate::wire::{full_url, TransportRequest};
+#[cfg(feature = "native")]
+use crate::errors::ErrorMeta;
+use crate::errors::Lm15Error;
+#[cfg(feature = "native")]
+use crate::wire::full_url;
+use crate::wire::TransportRequest;
 
 /// A boxed future, the return type of [`Transport::send`].
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -197,6 +205,38 @@ pub fn attach_error_metadata(error: &mut Lm15Error, headers: &[(String, String)]
     }
 }
 
+
+/// The process-wide default transport: [`HttpTransport::shared`] with the
+/// `native` feature; without it (the wasm codec build) a [`NoTransport`],
+/// so an adapter still builds and does every pure thing — build a request,
+/// parse a body, decode a stream — and only a *send* is the typed
+/// `NotConfiguredError` naming the fix: the host supplies the network.
+pub fn default_transport() -> Result<Arc<dyn Transport>, Lm15Error> {
+    #[cfg(feature = "native")]
+    {
+        Ok(HttpTransport::shared()?)
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        Ok(Arc::new(NoTransport))
+    }
+}
+
+/// A transport that sends nothing: the codec build's default. Every send
+/// is a `NotConfiguredError` that says so.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoTransport;
+
+impl Transport for NoTransport {
+    fn send(&self, request: TransportRequest) -> BoxFuture<'_, Result<TransportResponse, Lm15Error>> {
+        let message = format!(
+            "{} {}: this build has no transport (the wire codec only, no `native` feature); the host does the network — build the request, send it yourself, parse the body",
+            request.method, request.url
+        );
+        Box::pin(async move { Err(Lm15Error::NotConfiguredError(crate::errors::ErrorMeta::new(message))) })
+    }
+}
+
 // ─── The reqwest transport ───────────────────────────────────────────
 
 /// The default transport: a `reqwest` client (rustls, OS trust store,
@@ -204,12 +244,14 @@ pub fn attach_error_metadata(error: &mut Lm15Error, headers: &[(String, String)]
 /// reference's `trust_env=True`). One instance owns one connection pool;
 /// [`HttpTransport::shared`] is the process-wide one every adapter uses
 /// unless given another.
+#[cfg(feature = "native")]
 #[derive(Clone)]
 pub struct HttpTransport {
     client: reqwest::Client,
     read_timeout: Duration,
 }
 
+#[cfg(feature = "native")]
 impl HttpTransport {
     /// A transport with the reference's defaults.
     pub fn new() -> Result<Self, Lm15Error> {
@@ -297,6 +339,7 @@ impl HttpTransport {
     }
 }
 
+#[cfg(feature = "native")]
 impl Transport for HttpTransport {
     fn send(
         &self,
@@ -306,6 +349,7 @@ impl Transport for HttpTransport {
     }
 }
 
+#[cfg(feature = "native")]
 impl fmt::Debug for HttpTransport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HttpTransport")
@@ -316,6 +360,7 @@ impl fmt::Debug for HttpTransport {
 
 /// Builds an [`HttpTransport`].
 #[derive(Debug, Clone)]
+#[cfg(feature = "native")]
 pub struct HttpTransportBuilder {
     connect_timeout: Duration,
     read_timeout: Duration,
@@ -324,6 +369,7 @@ pub struct HttpTransportBuilder {
     no_proxy: bool,
 }
 
+#[cfg(feature = "native")]
 impl HttpTransportBuilder {
     pub fn connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
@@ -374,14 +420,17 @@ impl HttpTransportBuilder {
     }
 }
 
+#[cfg(feature = "native")]
 fn transport_error(message: String) -> Lm15Error {
     Lm15Error::TransportError(ErrorMeta::new(message))
 }
 
+#[cfg(feature = "native")]
 fn invalid(message: String) -> Lm15Error {
     Lm15Error::ConfigurationError(ErrorMeta::new(message))
 }
 
+#[cfg(feature = "native")]
 fn reqwest_error(err: reqwest::Error) -> Lm15Error {
     // The Display of a reqwest error carries the URL; the message is not
     // pinned, but a credential never travels in a URL (query keys ride
@@ -410,12 +459,14 @@ fn reqwest_error(err: reqwest::Error) -> Lm15Error {
 
 /// A body stream that fails when one chunk takes longer than `timeout`
 /// to arrive. The timer restarts after each chunk.
+#[cfg(feature = "native")]
 struct IdleTimeout<S> {
     inner: S,
     timeout: Duration,
     sleep: Pin<Box<Sleep>>,
 }
 
+#[cfg(feature = "native")]
 impl<S> IdleTimeout<S> {
     fn new(inner: S, timeout: Duration) -> Self {
         IdleTimeout {
@@ -426,6 +477,7 @@ impl<S> IdleTimeout<S> {
     }
 }
 
+#[cfg(feature = "native")]
 impl<S> Stream for IdleTimeout<S>
 where
     S: Stream<Item = Result<Bytes, Lm15Error>> + Unpin,

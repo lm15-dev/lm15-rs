@@ -34,7 +34,7 @@ use super::refresh::{
 };
 use super::stores::LocalOAuthCredential;
 use crate::errors::{ErrorMeta, Lm15Error};
-use crate::transport::{BoxFuture, HttpTransport, Transport};
+use crate::transport::{BoxFuture, Transport};
 
 /// RFC 8628 §3.5: `slow_down` grows the interval by five seconds unless
 /// the server names one.
@@ -430,7 +430,7 @@ pub async fn login(
 pub async fn login_xai(options: LoginOptions) -> Result<LocalOAuthCredential, AuthError> {
     let transport: Arc<dyn Transport> = match options.transport {
         Some(transport) => transport,
-        None => HttpTransport::shared().map_err(|err| AuthError::Rejected {
+        None => crate::transport::default_transport().map_err(|err| AuthError::Rejected {
             provider: Some("xai".into()),
             message: err.message().to_string(),
             hint: None,

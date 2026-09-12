@@ -44,11 +44,12 @@ use crate::auth::policy::shared_api_key_source;
 use crate::auth::{
     canonical_provider, AccessPolicy, CredentialPolicy, CredentialProvider, StoredLogin,
 };
+#[cfg(feature = "native")]
 use crate::cloud::chains::{profile_setting, ChainContext, ChainProvider};
 use crate::cloud::hosts::{resolve_settings, HostSettings};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::{lookup, DialectId, EntryKind, ProviderDefinition, PROVIDERS};
-use crate::transport::{HttpTransport, Transport};
+use crate::transport::Transport;
 use crate::types::{JsonObject, ModelInfo, Request, Response};
 use serde_json::Value;
 
@@ -1068,7 +1069,7 @@ fn refreshing_login(provider: &str, config: &RouterConfig) -> Result<StoredLogin
     };
     let transport: Arc<dyn Transport> = match &config.transport {
         Some(transport) => Arc::clone(transport),
-        None => HttpTransport::shared()?,
+        None => crate::transport::default_transport()?,
     };
     Ok(login.refreshing(transport, lock_dir))
 }
@@ -1127,6 +1128,7 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         .explicit_credential(provider)?
         .map(|c| Box::new(c) as Box<dyn CredentialProvider + Send + Sync>);
 
+    #[cfg(feature = "native")]
     if let Some(host) = &policy.host {
         // A cloud door (AUTH-10): settings from config, then env, then the
         // cloud's own profile (AWS region, GCP project), then defaults.
@@ -1137,7 +1139,7 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         let now = crate::auth::time_now();
         let transport: Arc<dyn Transport> = match &config.transport {
             Some(transport) => Arc::clone(transport),
-            None => HttpTransport::shared()?,
+            None => crate::transport::default_transport()?,
         };
         let mut ctx = ChainContext::online(env_map.clone(), transport, now);
         let mut given = config.settings.get(provider).cloned().unwrap_or_default();
@@ -1160,6 +1162,22 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         if credential.is_none() && policy.is_cloud_chain() {
             ctx.settings = settings;
             credential = Some(Box::new(ChainProvider::new(policy, ctx)));
+        }
+    }
+    #[cfg(not(feature = "native"))]
+    if let Some(host) = &policy.host {
+        // The wire codec build has no cloud profile files, CLIs or metadata
+        // endpoints: settings come from config and env; the credential must
+        // be explicit (a cloud chain cannot run here).
+        let env_map = config.env_map();
+        let given = config.settings.get(provider).cloned().unwrap_or_default();
+        let settings = resolve_settings(Some(host), &given, Some(&env_map), provider)?;
+        builder = builder.settings(settings);
+        if credential.is_none() && policy.is_cloud_chain() {
+            return Err(Lm15Error::NotConfiguredError(ErrorMeta::new(format!(
+                "{provider}: the {} credential chain is not available in this build (no `native` feature: no profile files, CLIs or metadata endpoints); pass an explicit credential",
+                policy.credential_policy.as_str()
+            ))));
         }
     }
 

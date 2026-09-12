@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# LLVM's wasm-ld for the wasm32 target (see .cargo/config.toml): the one
+# on PATH if any, else nixpkgs' lld through nix. Prints nothing itself —
+# rustc reads the linker's output as diagnostics.
+set -euo pipefail
+if command -v wasm-ld >/dev/null 2>&1; then
+    exec wasm-ld "$@"
+fi
+exec nix shell nixpkgs#lld --command wasm-ld "$@"

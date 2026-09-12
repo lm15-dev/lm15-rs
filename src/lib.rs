@@ -34,6 +34,7 @@ pub mod compat;
 pub mod dialects;
 pub mod errors;
 pub mod jobs;
+#[cfg(feature = "native")]
 pub mod live;
 pub mod registry;
 pub mod response_stream;
@@ -44,6 +45,8 @@ pub mod stream;
 pub mod surfaces;
 pub mod transport;
 pub mod types;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 pub mod wire;
 
 pub use adapter::{
@@ -57,6 +60,7 @@ pub use dialects::openai_chat::ingest::request_from_openai_chat;
 pub use dialects::openai_chat::response_from_openai_chat;
 pub use errors::{normalize_error, ErrorClass, ErrorCode, ErrorMeta, Lm15Error};
 pub use jobs::{BatchJob, VideoJob, WaitError, WaitOptions};
+#[cfg(feature = "native")]
 pub use live::{LiveSession, Turn, TurnEnd, TurnView};
 pub use response_stream::ResponseStream;
 pub use router::{
@@ -64,6 +68,8 @@ pub use router::{
     DEFAULT_RULES, LITELLM_PROVIDER_PREFIXES,
 };
 pub use serde::Canonical;
-pub use transport::{HttpTransport, Transport, TransportResponse};
+#[cfg(feature = "native")]
+pub use transport::HttpTransport;
+pub use transport::{Transport, TransportResponse};
 pub use types::*;
 pub use wire::TransportRequest;
