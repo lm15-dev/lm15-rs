@@ -188,10 +188,16 @@ fn run(op: &str, msg: &Map<String, Value>) -> Result<Value, Lm15Error> {
 /// only parses — a parser sends nothing), `base_url`, `settings`, `now`.
 fn adapter(msg: &Map<String, Value>, needs_key: bool) -> Result<ProviderLM, Lm15Error> {
     let provider = msg.get("provider").and_then(Value::as_str).ok_or_else(|| configuration("provider must be a string"))?;
-    let key = match msg.get("api_key").and_then(Value::as_str) {
-        Some(key) if !key.is_empty() => key.to_string(),
-        _ if needs_key => return Err(configuration(format!("{provider}: api_key must be a non-empty string (the page's placeholder is fine for a preview)"))),
-        _ => "wasm-parse-only".to_string(),
+    // The credential as the vet protocol spells it: a `credential` object
+    // (an API key, a bearer token, AWS credentials — SigV4 is pure Rust and
+    // signs here too), else `api_key`, else a placeholder for a parser.
+    let credential: crate::auth::Credential = match msg.get("credential") {
+        Some(value @ Value::Object(_)) => crate::auth::Credential::from_json(value).map_err(|err| configuration(format!("credential: {}", err.message)))?,
+        _ => match msg.get("api_key").and_then(Value::as_str) {
+            Some(key) if !key.is_empty() => crate::auth::Credential::api_key(key).map_err(Lm15Error::from)?,
+            _ if needs_key => return Err(configuration(format!("{provider}: api_key must be a non-empty string (the page's placeholder is fine for a preview)"))),
+            _ => crate::auth::Credential::api_key("wasm-parse-only").map_err(Lm15Error::from)?,
+        },
     };
     let clock: Option<Box<dyn Clock + Send + Sync>> = match msg.get("now").and_then(Value::as_str) {
         Some(text) => Some(Box::new(FixedClock(
@@ -204,7 +210,7 @@ fn adapter(msg: &Map<String, Value>, needs_key: bool) -> Result<ProviderLM, Lm15
             .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())))
             .collect()
     });
-    crate::registry::adapter_for(provider, key, msg.get("base_url").and_then(Value::as_str), settings, clock)
+    crate::registry::adapter_for(provider, credential, msg.get("base_url").and_then(Value::as_str), settings, clock)
 }
 
 fn request_of(msg: &Map<String, Value>) -> Result<Request, Lm15Error> {
