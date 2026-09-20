@@ -43,6 +43,20 @@ pub fn resolve_settings(
     env: Option<&BTreeMap<String, String>>,
     provider: &str,
 ) -> Result<HostSettings, Lm15Error> {
+    resolve_settings_with_endpoint(host, given, env, provider, None)
+}
+
+/// Resolve settings while allowing an endpoint to replace root-only settings.
+pub fn resolve_settings_with_endpoint(
+    host: Option<&HostSpec>,
+    given: &HostSettings,
+    env: Option<&BTreeMap<String, String>>,
+    provider: &str,
+    endpoint: Option<&str>,
+) -> Result<HostSettings, Lm15Error> {
+    if let Some(endpoint) = endpoint {
+        join_endpoint(endpoint, "")?;
+    }
     let Some(host) = host else {
         return Ok(given.clone());
     };
@@ -62,6 +76,18 @@ pub fn resolve_settings(
             value = setting.default.map(str::to_string);
         }
         let Some(value) = value else {
+            let placeholder = format!("{{{}}}", setting.name);
+            let (root, path) = split_template(host.base_url);
+            let root_only = root.contains(&placeholder)
+                && !path.contains(&placeholder)
+                && !host
+                    .required_headers
+                    .iter()
+                    .any(|(_, name)| *name == setting.name)
+                && !(setting.name == "region" && host.sigv4_service.is_some());
+            if endpoint.is_some() && root_only {
+                continue;
+            }
             let hint = if setting.env.is_empty() {
                 format!("pass settings={{\"{}\": ...}}", setting.name)
             } else {
@@ -112,6 +138,14 @@ fn is_dns_label(value: &str) -> bool {
 /// authority — `/`, `@`, `?`, `#`, whitespace, `.` — is refused.
 /// `project` is percent-encoded (it lands in a path).
 pub fn render_base_url(host: &HostSpec, settings: &HostSettings) -> Result<String, Lm15Error> {
+    resolve_base_url(host, settings, None)
+}
+
+pub fn resolve_base_url(
+    host: &HostSpec,
+    settings: &HostSettings,
+    endpoint: Option<&str>,
+) -> Result<String, Lm15Error> {
     let mut values: BTreeMap<&str, String> = BTreeMap::new();
     for (name, value) in settings {
         values.insert(name.as_str(), value.clone());
@@ -133,9 +167,125 @@ pub fn render_base_url(host: &HostSpec, settings: &HostSettings) -> Result<Strin
             values.insert("location_host", location_host(location));
         }
     }
-    render_template(host.base_url, |name| values.get(name).cloned()).map_err(|missing| {
-        Lm15Error::not_configured(format!("host base URL needs setting {missing:?}"))
+    let template = if endpoint.is_some() {
+        split_template(host.base_url).1
+    } else {
+        host.base_url
+    };
+    let rendered =
+        render_template(template, |name| values.get(name).cloned()).map_err(|missing| {
+            Lm15Error::not_configured(format!("host base URL needs setting {missing:?}"))
+        })?;
+    match endpoint {
+        Some(endpoint) => join_endpoint(endpoint, &rendered),
+        None => Ok(rendered),
+    }
+}
+
+fn split_template(template: &str) -> (&str, &str) {
+    let start = template.find("://").map(|n| n + 3).unwrap_or(0);
+    let end = template[start..]
+        .find('/')
+        .map(|n| n + start)
+        .unwrap_or(template.len());
+    (&template[..end], &template[end..])
+}
+
+pub fn endpoint_from_env<'a>(
+    host: &HostSpec,
+    env: &'a BTreeMap<String, String>,
+) -> Option<(&'static str, &'a str)> {
+    host.endpoint_env.iter().find_map(|name| {
+        env.get(*name)
+            .map(|value| (*name, value.trim()))
+            .filter(|(_, value)| !value.is_empty())
     })
+}
+
+/// Append a door path once, including endpoints that already carry its prefix.
+/// Configuration is validated without echoing a possibly secret-bearing URL.
+pub fn join_endpoint(endpoint: &str, path: &str) -> Result<String, Lm15Error> {
+    let endpoint = endpoint.trim();
+    let bad = || {
+        Lm15Error::not_configured(
+            "endpoint must be an http(s) URL with a host, without userinfo, query or fragment",
+        )
+    };
+    if endpoint
+        .bytes()
+        .any(|b| b.is_ascii_control() || b.is_ascii_whitespace() || b == b'\\')
+        || endpoint.contains(['?', '#'])
+    {
+        return Err(bad());
+    }
+    let (scheme, rest) = endpoint.split_once("://").ok_or_else(bad)?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return Err(bad());
+    }
+    let scheme = scheme.to_ascii_lowercase();
+    let (authority, given) = rest.split_once('/').unwrap_or((rest, ""));
+    if authority.is_empty() || authority.contains('@') {
+        return Err(bad());
+    }
+    // Authority is ASCII DNS/IPv4 or bracketed IPv6, with an optional numeric port.
+    let (host, port) = if authority.starts_with('[') {
+        let end = authority.find(']').ok_or_else(bad)?;
+        let host = &authority[1..end];
+        if host.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(bad());
+        }
+        let tail = &authority[end + 1..];
+        if !tail.is_empty() && !tail.starts_with(':') {
+            return Err(bad());
+        }
+        (host, tail.strip_prefix(':'))
+    } else {
+        let (host, port) = authority
+            .split_once(':')
+            .map(|(h, p)| (h, Some(p)))
+            .unwrap_or((authority, None));
+        if host.is_empty()
+            || !host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
+        {
+            return Err(bad());
+        }
+        (host, port)
+    };
+    if host.is_empty() || port.is_some_and(|p| p.parse::<u16>().is_err()) {
+        return Err(bad());
+    }
+    // Only trailing slashes are normalized. Interior empty segments and
+    // percent escapes can be meaningful to a gateway and must stay verbatim.
+    let given = given.trim_end_matches('/');
+    let door = path.trim_matches('/');
+    let overlap = (1..=door.len())
+        .rev()
+        .find(|&n| {
+            door.is_char_boundary(n)
+                && (n == door.len() || door.as_bytes()[n] == b'/')
+                && given.ends_with(&door[..n])
+                && (given.len() == n || given.as_bytes()[given.len() - n - 1] == b'/')
+        })
+        .unwrap_or(0);
+    let joined = if door.is_empty() {
+        given.to_string()
+    } else if overlap != 0 {
+        format!("{}{door}", &given[..given.len() - overlap])
+    } else if given.is_empty() {
+        door.to_string()
+    } else {
+        format!("{given}/{door}")
+    };
+    Ok(format!(
+        "{scheme}://{authority}{}",
+        if joined.is_empty() {
+            String::new()
+        } else {
+            format!("/{joined}")
+        }
+    ))
 }
 
 /// `str.format(**values)` over `{name}` placeholders; the first missing

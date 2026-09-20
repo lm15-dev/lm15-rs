@@ -4,10 +4,11 @@
 use super::config::Config;
 use super::json::{non_empty, opt_non_empty, JsonObject, VResult, ValidationError};
 use super::message::{Message, SystemContent};
-use super::parts::{CitationPart, Part, ToolCallPart};
+use super::parts::{CitationPart, DataPart, Part, ToolCallPart};
 use super::tools::{validate_tools, Tool};
 use super::usage::{TokenLogprob, Usage};
 use super::vocab::{FinishReason, Role};
+use super::{Adaptation, JudgmentMethod};
 
 /// A complete request to a model.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -72,6 +73,8 @@ pub struct Response {
     pub finish_reason: FinishReason,
     pub usage: Usage,
     pub logprobs: Option<Vec<TokenLogprob>>,
+    pub logprobs_complete: bool,
+    pub adaptations: Vec<Adaptation>,
     pub provider_data: Option<JsonObject>,
 }
 
@@ -86,6 +89,7 @@ impl Response {
             ));
         }
         self.usage.validate()?;
+        self.adaptations.iter().try_for_each(Adaptation::validate)?;
         if let Some(logprobs) = &self.logprobs {
             logprobs.iter().try_for_each(TokenLogprob::validate)?;
         }
@@ -143,9 +147,45 @@ impl Response {
             .collect()
     }
 
-    /// The response text parsed as JSON, when it is pure text.
+    /// The first structured answer part, with its measurement metadata.
+    pub fn data_part(&self) -> Option<&DataPart> {
+        self.message.parts.iter().find_map(|part| match part {
+            Part::Data(data) => Some(data),
+            _ => None,
+        })
+    }
+
+    /// A structured value, falling back to JSON text for ordinary schemas.
+    pub fn data(&self) -> Option<serde_json::Value> {
+        self.json()
+    }
+
+    pub fn probabilities(&self) -> Option<&JsonObject> {
+        self.data_part()?.probabilities.as_ref()
+    }
+
+    pub fn method(&self) -> Option<JudgmentMethod> {
+        self.data_part()?.method
+    }
+
+    pub fn expected_level(&self, field: &str) -> Option<f64> {
+        self.data_part()?.expected_level(field)
+    }
+
+    pub fn expected(&self, field: &str) -> Option<f64> {
+        self.expected_level(field)
+    }
+
+    /// Structured value (including null), otherwise parsed response text.
     pub fn json(&self) -> Option<serde_json::Value> {
+        if let Some(data) = self.data_part() {
+            return Some(data.value.clone());
+        }
         serde_json::from_str(self.text()?.trim()).ok()
+    }
+
+    pub fn parse_json(&self, default: serde_json::Value) -> serde_json::Value {
+        self.json().unwrap_or(default)
     }
 }
 
@@ -192,6 +232,8 @@ mod tests {
             finish_reason: FinishReason::Stop,
             usage: Usage::default(),
             logprobs: None,
+            logprobs_complete: true,
+            adaptations: Vec::new(),
             provider_data: None,
         };
         assert!(response.validate().is_err());

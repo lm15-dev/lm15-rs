@@ -87,6 +87,22 @@ pub enum OpenAIChatBuiltinTools {
     Groq,
 }
 
+/// Named-token scoring is proven only on vLLM >= 0.29 (MAP-14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum OpenAIChatTokenScoring {
+    #[default]
+    None,
+    LogprobTokenIds,
+}
+impl OpenAIChatTokenScoring {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::LogprobTokenIds => "logprob_token_ids",
+        }
+    }
+}
+
 /// `lm15/compat.py:350` `OpenAIChatUserField`: which request field carries
 /// `Config.user_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -134,6 +150,7 @@ pub struct OpenAIChatCompat {
     pub user_field: Option<Knob<OpenAIChatUserField>>,
     pub forced_tool_choice: Option<Knob<OpenAIChatForcedToolChoice>>,
     pub json_schema: Option<Knob<OpenAIChatJsonSchema>>,
+    pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
@@ -155,6 +172,7 @@ pub struct ChatModelOverride {
     pub user_field: Option<Knob<OpenAIChatUserField>>,
     pub forced_tool_choice: Option<Knob<OpenAIChatForcedToolChoice>>,
     pub json_schema: Option<Knob<OpenAIChatJsonSchema>>,
+    pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub tool_result_media: Option<Knob<ToolResultMedia>>,
 }
@@ -172,6 +190,7 @@ impl ChatModelOverride {
         user_field: None,
         forced_tool_choice: None,
         json_schema: None,
+        token_scoring: None,
         reasoning_efforts: None,
         tool_result_media: None,
     };
@@ -194,6 +213,7 @@ impl OpenAIChatCompat {
         user_field: None,
         forced_tool_choice: None,
         json_schema: None,
+        token_scoring: None,
         reasoning_efforts: None,
         routing: None,
         extensions: None,
@@ -232,6 +252,7 @@ impl OpenAIChatCompat {
                 user_field,
                 forced_tool_choice,
                 json_schema,
+                token_scoring,
                 reasoning_efforts,
                 tool_result_media
             );
@@ -276,6 +297,7 @@ impl OpenAIChatCompat {
             user_field: Knob::resolve(self.user_field, OpenAIChatUserField::User),
             forced_tool_choice: Knob::resolve(self.forced_tool_choice, SendReject::Send),
             json_schema: Knob::resolve(self.json_schema, SendReject::Send),
+            token_scoring: Knob::resolve(self.token_scoring, OpenAIChatTokenScoring::None),
             reasoning_efforts: self.reasoning_efforts,
             routing: self.routing.clone(),
             extensions: self.extensions.clone(),
@@ -301,6 +323,7 @@ pub struct ResolvedOpenAIChatCompat {
     pub user_field: OpenAIChatUserField,
     pub forced_tool_choice: OpenAIChatForcedToolChoice,
     pub json_schema: OpenAIChatJsonSchema,
+    pub token_scoring: OpenAIChatTokenScoring,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
@@ -334,6 +357,12 @@ const fn preset(
     }
 }
 
+const fn scoring_preset() -> OpenAIChatCompat {
+    let mut value = preset(MaxTokens, Think::ReasoningEffort, OpenAICacheControl::None);
+    value.token_scoring = Some(Set(OpenAIChatTokenScoring::LogprobTokenIds));
+    value
+}
+
 /// A preset's extra knobs over the seven common ones. A const item cannot
 /// use struct-update syntax over a value with a destructor (`extensions`),
 /// so the overrides are applied field by field.
@@ -364,6 +393,9 @@ const fn with(
     if knobs.reasoning_efforts.is_some() {
         compat.reasoning_efforts = knobs.reasoning_efforts;
     }
+    if knobs.token_scoring.is_some() {
+        compat.token_scoring = knobs.token_scoring;
+    }
     if knobs.tool_result_media.is_some() {
         compat.tool_result_media = knobs.tool_result_media;
     }
@@ -391,10 +423,10 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
             OpenAICacheControl::OpenAI,
         ),
     ),
-    // ollama: max_tokens, no reasoning dial (`:509-517`).
+    // Ollama translates reasoning_effort to its native think control (MAP-13.7).
     (
         "ollama",
-        preset(MaxTokens, Think::None, OpenAICacheControl::None),
+        preset(MaxTokens, Think::ReasoningEffort, OpenAICacheControl::None),
     ),
     // LM Studio: ollama's wire policy (lmstudio.ai docs list the same Chat
     // Completions fields) at its own documented address,
@@ -432,10 +464,7 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
             &[],
         ),
     ),
-    (
-        "vllm",
-        preset(MaxTokens, Think::ReasoningEffort, OpenAICacheControl::None),
-    ),
+    ("vllm", scoring_preset()),
     (
         "sglang",
         preset(MaxTokens, Think::ReasoningEffort, OpenAICacheControl::None),
@@ -650,8 +679,11 @@ mod tests {
         assert_eq!(OPENAI_CHAT_PRESETS.len(), 15); // + lmstudio (2026-09-11)
         assert_eq!(OPENAI_CHAT_PRESET_BASE_URLS.len(), 12);
         assert_eq!(
-            OpenAIChatCompat::preset("lmstudio"),
             OpenAIChatCompat::preset("ollama")
+                .unwrap()
+                .resolve()
+                .thinking_format,
+            Think::ReasoningEffort
         );
     }
 }

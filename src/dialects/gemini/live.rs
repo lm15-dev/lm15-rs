@@ -226,6 +226,7 @@ pub fn decode(cx: &BuildContext<'_>, frame: &[u8]) -> Vec<LiveServerEvent> {
         let class = stream_error_class(&provider_code, &message);
         return vec![LiveServerEvent::Error(LiveServerErrorEvent {
             error: ErrorDetail {
+                http_response: Default::default(),
                 code: class.code(),
                 message: if message.is_empty() {
                     provider_code.clone()

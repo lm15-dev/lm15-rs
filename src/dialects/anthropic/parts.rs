@@ -74,11 +74,12 @@ fn blocks(parts: &[Part], cx: &PartContext<'_>) -> Result<Vec<Value>, Lm15Error>
 /// (`lm15/providers/anthropic.py:459-465`); media parts keep their blocks
 /// after it instead of being dropped by a text-only rendering.
 fn developer_blocks(parts: &[Part], cx: &PartContext<'_>) -> Result<Vec<Value>, Lm15Error> {
-    let mut texts: Vec<&str> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
     let mut media = Vec::new();
     for part in parts {
         match part {
-            Part::Text(t) => texts.push(&t.text),
+            Part::Text(t) => texts.push(t.text.clone()),
+            Part::Data(d) => texts.push(d.value.to_string()),
             other => {
                 if let Some(block) = block(other, cx)? {
                     media.push(block);
@@ -102,6 +103,7 @@ pub fn text_block(text: &str) -> Value {
 fn block(part: &Part, cx: &PartContext<'_>) -> Result<Option<Value>, Lm15Error> {
     Ok(Some(match part {
         Part::Text(t) => text_block(&t.text),
+        Part::Data(d) => text_block(&d.value.to_string()),
         Part::Image(image) => json!({"type": "image", "source": image_source(image, cx.refuse)?}),
         Part::Document(document) => {
             json!({"type": "document", "source": document_source(document, cx.refuse)?})
@@ -161,6 +163,7 @@ fn tool_result_content(parts: &[Part], cx: &PartContext<'_>) -> Result<Vec<Value
         .iter()
         .map(|part| match part {
             Part::Text(t) => Ok(text_block(&t.text)),
+            Part::Data(d) => Ok(text_block(&d.value.to_string())),
             Part::Image(image) => {
                 Ok(json!({"type": "image", "source": image_source(image, cx.refuse)?}))
             }
@@ -286,7 +289,7 @@ fn media_source(
         );
     }
     if let Some(path) = path {
-        let bytes = std::fs::read(path).map_err(|err| {
+        let bytes = crate::adaptation::read_media(path).map_err(|err| {
             refuse.invalid_request(format!(
                 "{part_type} part path {} cannot be read: {err}",
                 path.display()

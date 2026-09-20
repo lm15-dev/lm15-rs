@@ -180,6 +180,7 @@ impl Canonical for CachedPrefix {
         let r = Reader::new(value, "CachedPrefix")?;
         let cached = CachedPrefix {
             prefix: Request::from_json(r.req("prefix")?)?,
+            provider: r.opt_str("provider")?.map(|p| p.replace('_', "-")),
             resource: r
                 .lenient_object("resource")
                 .map(|o| CacheInfo::from_json(&Value::Object(o.clone())))
@@ -192,6 +193,7 @@ impl Canonical for CachedPrefix {
     fn to_json(&self) -> Value {
         let mut o = Obj::new();
         o.set("prefix", self.prefix.to_json());
+        o.opt("provider", self.provider.clone());
         o.opt("resource", self.resource.as_ref().map(Canonical::to_json));
         o.finish()
     }

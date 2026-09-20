@@ -76,26 +76,23 @@ fn thinking_config(request: &Request, cx: &BuildContext<'_>) -> Result<Option<Va
             // MAP-7 rule 4 / MAP-5: the Gemini 3 class has no full off
             // switch; 3.7 Flash accepted `thinkingBudget: 0` and still spent
             // 58 tokens (live 2026-09-02) — a silent paid no-op.
-            return Err(unsupported(
-                cx,
-                format!(
-                    "reasoning cannot be disabled on {} — the Gemini 3 class has no full off switch (thinkingBudget 0 is accepted but not honoured); use effort='low' or a 2.5 model",
-                    cx.model
-                ),
-            ));
+            crate::adaptation::adapt("config.reasoning.effort",crate::adaptation::AdaptationAction::Substituted,Some(Value::from("off")),Some(Value::from("minimal")),"the Gemini 3 class has no off switch; the lowest level was sent and thinking spend remains visible in usage")?;
+            thinking.insert("thinkingLevel".into(), Value::from("minimal"));
+            return Ok(Some(Value::Object(thinking)));
         }
         thinking.insert("thinkingBudget".into(), Value::from(0));
         return Ok(Some(Value::Object(thinking)));
     }
     match reasoning.summary {
         Some(ReasoningSummary::Concise) | Some(ReasoningSummary::Detailed) => {
-            return Err(unsupported(
-                cx,
-                format!(
-                    "reasoning.summary={:?} is an OpenAI detail level; GenerateContent has includeThoughts only (use 'auto')",
-                    reasoning.summary.map(|s| s.as_str()).unwrap_or_default()
-                ),
-            ));
+            crate::adaptation::adapt(
+                "config.reasoning.summary",
+                crate::adaptation::AdaptationAction::Substituted,
+                reasoning.summary.map(|s| Value::from(s.as_str())),
+                Some(Value::from("auto")),
+                "GenerateContent has includeThoughts only, not summary detail levels",
+            )?;
+            thinking.insert("includeThoughts".into(), Value::Bool(true));
         }
         // MAP-7 rule 7: `includeThoughts` only when asked.
         Some(ReasoningSummary::Auto) => {
@@ -110,13 +107,8 @@ fn thinking_config(request: &Request, cx: &BuildContext<'_>) -> Result<Option<Va
     } else if level_class {
         match reasoning.effort {
             ReasoningEffort::Xhigh | ReasoningEffort::Max => {
-                return Err(unsupported(
-                    cx,
-                    format!(
-                        "reasoning.effort={:?} has no thinkingLevel on the Gemini 3 class (minimal|low|medium|high); 'high' is the ceiling",
-                        reasoning.effort.as_str()
-                    ),
-                ));
+                crate::adaptation::adapt("config.reasoning.effort",crate::adaptation::AdaptationAction::Clamped,Some(Value::from(reasoning.effort.as_str())),Some(Value::from("high")),"the Gemini 3 class has thinkingLevel minimal|low|medium|high; high is the ceiling")?;
+                thinking.insert("thinkingLevel".into(), Value::from("high"));
             }
             effort => {
                 thinking.insert(
@@ -149,6 +141,7 @@ pub fn generation_config(
     request: &Request,
     cx: &BuildContext<'_>,
 ) -> Result<JsonObject, Lm15Error> {
+    crate::judgments::note_unmeasurable_probabilities(request, cx.provider)?;
     let config = &request.config;
     let mut out = Map::new();
     if let Some(temperature) = config.temperature {
@@ -162,6 +155,15 @@ pub fn generation_config(
     }
     if let Some(top_k) = config.top_k {
         out.insert("topK".into(), Value::from(top_k));
+    }
+    if let Some(v) = config.seed {
+        out.insert("seed".into(), Value::from(v));
+    }
+    if let Some(v) = config.frequency_penalty {
+        out.insert("frequencyPenalty".into(), gemini_number(v));
+    }
+    if let Some(v) = config.presence_penalty {
+        out.insert("presencePenalty".into(), gemini_number(v));
     }
     if !config.stop.is_empty() {
         out.insert(
@@ -187,7 +189,11 @@ pub fn generation_config(
             Value::String("application/json".into()),
         );
         if format.get("type").and_then(Value::as_str) == Some("json_schema") {
-            let schema = format.get("schema").cloned().unwrap_or(Value::Null);
+            let mut schema = format.get("schema").cloned().unwrap_or(Value::Null);
+            let found = crate::judgments::judgments_in_schema(&schema);
+            if let Some(obj) = schema.as_object() {
+                schema = Value::Object(crate::judgments::gemini_schema(obj, &found));
+            }
             out.insert(schema_field(&schema).into(), schema);
         }
     }
@@ -208,10 +214,13 @@ pub fn tool_config(request: &Request, cx: &BuildContext<'_>) -> Result<Option<Va
         // on 2.5 and 3.7 with the preference set. The outcome is not
         // observable from usage, so the MAP-6 fallback exception does not
         // apply — raise.
-        return Err(unsupported(
-            cx,
-            "tool_choice.parallel=false is not supported — GenerateContent has no parallel-tool-calls knob and returns several calls regardless (OpenAI and Anthropic carry it)".into(),
-        ));
+        crate::adaptation::adapt(
+            "config.tool_choice.parallel",
+            crate::adaptation::AdaptationAction::Dropped,
+            Some(Value::Bool(false)),
+            None,
+            "GenerateContent has no parallel-tool-calls knob and may return several calls",
+        )?;
     }
     let mut mode = match choice.mode {
         ToolChoiceMode::None => "NONE",
@@ -288,16 +297,22 @@ pub fn cache_plan(request: &Request, cx: &BuildContext<'_>) -> Result<CachePlan,
         return Ok(plan);
     }
     if cache.key.is_some() {
-        return Err(unsupported(
-            cx,
-            "cache.key is not supported — GenerateContent has no cache affinity key; use cache.resource with a stored cache (lm.cache(prefix))".into(),
-        ));
+        crate::adaptation::adapt(
+            "config.cache.key",
+            crate::adaptation::AdaptationAction::Dropped,
+            cache.key.clone().map(Value::String),
+            None,
+            "GenerateContent has no cache affinity key; implicit caching applies",
+        )?;
     }
     if cache.retention.is_some_and(|r| r != CacheRetention::Short) {
-        return Err(unsupported(
-            cx,
-            "cache.retention is not supported in-request — lifetime belongs to the stored cache (cache_create(..., ttl_seconds=...) / cache_update)".into(),
-        ));
+        crate::adaptation::adapt(
+            "config.cache.retention",
+            crate::adaptation::AdaptationAction::Dropped,
+            Some(Value::from("long")),
+            None,
+            "cache lifetime belongs to the stored cache, not this request",
+        )?;
     }
     if let Some(resource) = &cache.resource {
         plan.resource = Some(cache_resource(resource));

@@ -178,6 +178,8 @@ pub struct HostSetting {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostSpec {
     pub base_url: &'static str,
+    /// Vendor endpoint variables, in precedence order (AUTH-10).
+    pub endpoint_env: &'static [&'static str],
     pub settings: &'static [HostSetting],
     pub paths: &'static [(&'static str, &'static str)],
     pub model_in: ModelPlacement,
@@ -192,6 +194,7 @@ impl HostSpec {
     pub const fn new(base_url: &'static str) -> HostSpec {
         HostSpec {
             base_url,
+            endpoint_env: &[],
             settings: &[],
             paths: &[],
             model_in: ModelPlacement::Body,
@@ -707,6 +710,10 @@ pub const AWS_ANTHROPIC: AccessPolicy = AccessPolicy {
         settings: &[AWS_REGION, AWS_WORKSPACE],
         required_headers: &[("anthropic-workspace-id", "workspace")],
         sigv4_service: Some("aws-external-anthropic"),
+        endpoint_env: &[
+            "AWS_ENDPOINT_URL_AWS_EXTERNAL_ANTHROPIC",
+            "AWS_ENDPOINT_URL",
+        ],
         ..HostSpec::new("https://aws-external-anthropic.{region}.api.aws/v1")
     }),
     ..policy(
@@ -725,6 +732,7 @@ pub const BEDROCK_ANTHROPIC: AccessPolicy = AccessPolicy {
     host: Some(HostSpec {
         settings: &[AWS_REGION],
         sigv4_service: Some("bedrock-mantle"),
+        endpoint_env: &["AWS_ENDPOINT_URL_BEDROCK_MANTLE", "AWS_ENDPOINT_URL"],
         ..HostSpec::new("https://bedrock-mantle.{region}.api.aws/anthropic/v1")
     }),
     ..policy(
@@ -743,6 +751,7 @@ pub const BEDROCK_CHAT: AccessPolicy = AccessPolicy {
     host: Some(HostSpec {
         settings: &[AWS_REGION],
         sigv4_service: Some("bedrock"),
+        endpoint_env: &["AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "AWS_ENDPOINT_URL"],
         ..HostSpec::new("https://bedrock-runtime.{region}.amazonaws.com/openai/v1")
     }),
     ..policy(
@@ -761,6 +770,7 @@ pub const BEDROCK_MANTLE_CHAT: AccessPolicy = AccessPolicy {
     host: Some(HostSpec {
         settings: &[AWS_REGION],
         sigv4_service: Some("bedrock-mantle"),
+        endpoint_env: &["AWS_ENDPOINT_URL_BEDROCK_MANTLE", "AWS_ENDPOINT_URL"],
         ..HostSpec::new("https://bedrock-mantle.{region}.api.aws/v1")
     }),
     ..policy(
@@ -774,6 +784,7 @@ pub const BEDROCK_MANTLE_CHAT: AccessPolicy = AccessPolicy {
 };
 
 const AZURE_OPENAI_HOST: HostSpec = HostSpec {
+    endpoint_env: &["AZURE_OPENAI_ENDPOINT"],
     settings: &[AZURE_OPENAI_RESOURCE, AZURE_AUTHORITY, AZURE_SCOPE],
     ..HostSpec::new("https://{resource}.openai.azure.com/openai/v1")
 };
@@ -819,6 +830,7 @@ pub const AZURE_ANTHROPIC: AccessPolicy = AccessPolicy {
     backend: "azure-foundry",
     host: Some(HostSpec {
         settings: &[AZURE_FOUNDRY_RESOURCE, AZURE_AUTHORITY, AZURE_SCOPE],
+        endpoint_env: &["ANTHROPIC_FOUNDRY_BASE_URL"],
         ..HostSpec::new("https://{resource}.services.ai.azure.com/anthropic/v1")
     }),
     ..policy(
@@ -940,6 +952,24 @@ pub const SGLANG: AccessPolicy = AccessPolicy {
     )
 };
 
+/// TypeSafe System One (Jev): judgments and models, no streaming.
+pub const TYPESAFE: AccessPolicy = AccessPolicy {
+    base_url: Some("https://api.typesafe.ai"),
+    ..policy(
+        "typesafe",
+        EndpointSupport {
+            complete: true,
+            models: true,
+            stream: false,
+            ..EndpointSupport::CHAT
+        },
+        Key,
+        &["bearer"],
+        &["TYPESAFE_API_KEY"],
+        &[Bearer],
+    )
+};
+
 /// The table, in the reference's declaration order (`lm15/access.py`).
 pub const ACCESS_POLICIES: &[AccessPolicy] = &[
     ANTHROPIC_API,
@@ -973,6 +1003,7 @@ pub const ACCESS_POLICIES: &[AccessPolicy] = &[
     OLLAMA,
     VLLM,
     SGLANG,
+    TYPESAFE,
 ];
 
 pub use crate::registry::canonical_provider;
@@ -1049,7 +1080,7 @@ mod tests {
         let mut names = known_providers();
         names.dedup();
         assert_eq!(names.len(), ACCESS_POLICIES.len());
-        assert_eq!(ACCESS_POLICIES.len(), 31);
+        assert_eq!(ACCESS_POLICIES.len(), 32);
     }
 
     #[test]

@@ -46,7 +46,7 @@ use crate::auth::{
 };
 #[cfg(feature = "native")]
 use crate::cloud::chains::{profile_setting, ChainContext, ChainProvider};
-use crate::cloud::hosts::{resolve_settings, HostSettings};
+use crate::cloud::hosts::{resolve_settings_with_endpoint, HostSettings};
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::{lookup, DialectId, EntryKind, ProviderDefinition, PROVIDERS};
 use crate::transport::Transport;
@@ -77,6 +77,7 @@ const fn rule(prefix: &'static str, provider: &'static str, note: &'static str) 
 /// A convenience, not a registry of truth: a new model family needs a
 /// release, a catalog, or the `provider:` prefix.
 pub const DEFAULT_RULES: &[RouteRule] = &[
+    rule("jev", "typesafe", "TypeSafe System One judgment models"),
     rule("claude-", "anthropic", "Anthropic Claude family"),
     rule(
         "gpt-",
@@ -154,6 +155,14 @@ pub struct Resolution {
     pub model_info: Option<ModelInfo>,
     /// The compat preset name when routed through a bound registry entry.
     pub compat: Option<&'static str>,
+    /// Application declaration, not a receipted built-in provider.
+    pub declared: bool,
+    pub declared_env_keys: Vec<String>,
+    pub declared_compat: Option<crate::compat::Compat>,
+    pub declaration_note: Option<String>,
+    pub base_url: Option<String>,
+    pub credential: Option<String>,
+    pub credential_policy: String,
 }
 
 impl Resolution {
@@ -177,10 +186,33 @@ impl Resolution {
                 }
             }
         }
+        if self.declared {
+            parts.push("declared by RouterConfig (no built-in receipts)".into());
+            if let Some(note) = &self.declaration_note {
+                if !note.is_empty() {
+                    parts.push(note.clone());
+                }
+            }
+            if !self.declared_env_keys.is_empty() {
+                parts.push(format!(
+                    "declared key variables: {}",
+                    self.declared_env_keys.join(", ")
+                ));
+            }
+        }
+        if let Some(url) = &self.base_url {
+            parts.push(format!("endpoint {url}"));
+        }
         if let Some(compat) = self.compat {
             parts.push(format!("compat preset {compat:?}"));
         }
         parts.push(format!("wire model {:?}", self.model));
+        if let Some(name) = &self.credential {
+            parts.push(format!(
+                "named credential {name:?}; default chain is not walked"
+            ));
+            return format!("{}.", parts.join("; "));
+        }
         let definition = lookup(&self.provider);
         let policy = definition.map(|d| d.access().credential_policy);
         match policy {
@@ -221,6 +253,112 @@ impl fmt::Display for Resolution {
 
 type SharedCredentials = Arc<dyn CredentialProvider + Send + Sync>;
 
+/// A provider local to one router. Its compat is an application declaration,
+/// never a claim that the built-in provider corpus measured this server.
+#[derive(Clone)]
+pub struct DeclaredProvider {
+    pub id: String,
+    pub aliases: Vec<String>,
+    pub base_url: String,
+    pub env_keys: Vec<String>,
+    pub placeholder_key: Option<String>,
+    pub compat: crate::compat::Compat,
+    pub note: String,
+    factory: Option<Arc<dyn Fn(LmBuilder) -> Result<ProviderLM, Lm15Error> + Send + Sync>>,
+}
+
+impl DeclaredProvider {
+    pub fn chat(
+        id: impl Into<String>,
+        base_url: impl Into<String>,
+        compat: crate::compat::OpenAIChatCompat,
+    ) -> Self {
+        Self::new(
+            id.into(),
+            base_url.into(),
+            crate::compat::Compat::OpenAIChat(compat),
+        )
+    }
+    pub fn responses(
+        id: impl Into<String>,
+        base_url: impl Into<String>,
+        compat: crate::compat::OpenAIResponsesCompat,
+    ) -> Self {
+        Self::new(
+            id.into(),
+            base_url.into(),
+            crate::compat::Compat::OpenAIResponses(compat),
+        )
+    }
+    pub fn anthropic(
+        id: impl Into<String>,
+        base_url: impl Into<String>,
+        compat: crate::compat::AnthropicCompat,
+    ) -> Self {
+        Self::new(
+            id.into(),
+            base_url.into(),
+            crate::compat::Compat::Anthropic(compat),
+        )
+    }
+    fn new(id: String, base_url: String, compat: crate::compat::Compat) -> Self {
+        Self {
+            id: canonical_provider(&id),
+            base_url,
+            compat,
+            aliases: Vec::new(),
+            env_keys: Vec::new(),
+            placeholder_key: None,
+            note: String::new(),
+            factory: None,
+        }
+    }
+    pub fn aliases(mut self, aliases: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.aliases = aliases
+            .into_iter()
+            .map(|s| canonical_provider(&s.into()))
+            .collect();
+        self
+    }
+    pub fn env_keys(mut self, keys: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.env_keys = keys.into_iter().map(Into::into).collect();
+        self
+    }
+    pub fn placeholder_key(mut self, key: impl Into<String>) -> Self {
+        self.placeholder_key = Some(key.into());
+        self
+    }
+    pub fn factory(
+        mut self,
+        factory: impl Fn(LmBuilder) -> Result<ProviderLM, Lm15Error> + Send + Sync + 'static,
+    ) -> Self {
+        self.factory = Some(Arc::new(factory));
+        self
+    }
+    fn template(&self) -> &'static ProviderDefinition {
+        lookup(match &self.compat {
+            crate::compat::Compat::OpenAIChat(_) => "openai-chat",
+            crate::compat::Compat::OpenAIResponses(_) => "openai",
+            crate::compat::Compat::Anthropic(_) => "anthropic",
+            crate::compat::Compat::None => "openai-chat",
+        })
+        .expect("built-in dialect declaration")
+    }
+}
+
+impl fmt::Debug for DeclaredProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DeclaredProvider")
+            .field("id", &self.id)
+            .field("aliases", &self.aliases)
+            .field("base_url_supplied", &!self.base_url.is_empty())
+            .field("env_keys", &self.env_keys)
+            .field("compat", &self.compat)
+            .field("factory", &self.factory.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Everything the router consults. All explicit, nothing discovered
 /// behind your back.
 #[derive(Clone)]
@@ -233,6 +371,13 @@ pub struct RouterConfig {
     transport: Option<Arc<dyn Transport>>,
     catalog: Vec<ModelInfo>,
     credentials_path: Option<PathBuf>,
+    providers: Vec<DeclaredProvider>,
+    configuration_errors: Vec<String>,
+    adaptations: crate::adaptation::AdaptationPolicy,
+    credentials: BTreeMap<String, String>,
+    timeouts: crate::transport::Timeouts,
+    max_connections: usize,
+    budget_explicit: bool,
 }
 
 impl Default for RouterConfig {
@@ -246,6 +391,13 @@ impl Default for RouterConfig {
             transport: None,
             catalog: Vec::new(),
             credentials_path: None,
+            providers: Vec::new(),
+            configuration_errors: Vec::new(),
+            adaptations: crate::adaptation::AdaptationPolicy::Note,
+            credentials: BTreeMap::new(),
+            timeouts: crate::transport::Timeouts::default(),
+            max_connections: crate::transport::DEFAULT_MAX_CONNECTIONS,
+            budget_explicit: false,
         }
     }
 }
@@ -253,6 +405,46 @@ impl Default for RouterConfig {
 impl RouterConfig {
     pub fn new() -> Self {
         RouterConfig::default()
+    }
+
+    pub fn providers(mut self, providers: impl IntoIterator<Item = DeclaredProvider>) -> Self {
+        self.providers = providers.into_iter().collect();
+        self
+    }
+
+    pub fn adaptations(mut self, policy: crate::adaptation::AdaptationPolicy) -> Self {
+        self.adaptations = policy;
+        self
+    }
+
+    pub fn credential(mut self, provider: &str, name: impl Into<String>) -> Self {
+        self.credentials
+            .insert(canonical_provider(provider), name.into());
+        self
+    }
+    pub fn timeouts(mut self, timeouts: crate::transport::Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self.budget_explicit = true;
+        self
+    }
+    pub fn max_connections(mut self, maximum: usize) -> Self {
+        self.max_connections = maximum;
+        self.budget_explicit = true;
+        self
+    }
+
+    fn canonical(&self, provider: &str) -> String {
+        let name = canonical_provider(provider);
+        self.providers
+            .iter()
+            .find(|d| d.id == name || d.aliases.contains(&name))
+            .map(|d| d.id.clone())
+            .unwrap_or(name)
+    }
+
+    fn declared(&self, provider: &str) -> Option<&DeclaredProvider> {
+        let name = self.canonical(provider);
+        self.providers.iter().find(|d| d.id == name)
     }
 
     /// The prefix rules, replacing [`DEFAULT_RULES`].
@@ -281,14 +473,20 @@ impl RouterConfig {
         provider: &str,
         credential: impl CredentialProvider + Send + Sync + 'static,
     ) -> Self {
-        self.api_keys
-            .insert(canonical_provider(provider), Arc::new(credential));
+        if self
+            .api_keys
+            .insert(canonical_provider(provider), Arc::new(credential))
+            .is_some()
+        {
+            self.configuration_errors.push(format!(
+                "duplicate api_key entry for {provider:?} (including underscore aliases)"
+            ));
+        }
         self
     }
 
-    /// The URL a provider's adapter is built with, once, on the router
-    /// (`RouterConfig(base_urls=...)`): exact provider only; never a cloud
-    /// door (its URL is built from host settings — use [`Self::settings`]).
+    /// The trusted endpoint root for this provider, including cloud doors.
+    /// A cloud door retains its policy and appends its rendered door path.
     pub fn base_url(mut self, provider: &str, url: impl Into<String>) -> Self {
         self.base_urls
             .insert(canonical_provider(provider), url.into());
@@ -359,6 +557,42 @@ impl RouterConfig {
     /// declaration. Ambiguity is a `NotConfiguredError`, never a choice by
     /// map order.
     fn explicit_credential(&self, provider: &str) -> Result<Option<SharedCredentials>, Lm15Error> {
+        if let Some(value) = self.api_keys.get(&self.canonical(provider)) {
+            return Ok(Some(value.clone()));
+        }
+        let declared_keys = self.declared(provider).map(|d| d.env_keys.clone());
+        let keys = declared_keys.unwrap_or_else(|| {
+            lookup(provider)
+                .map(|d| d.access().env_keys.iter().map(|s| s.to_string()).collect())
+                .unwrap_or_default()
+        });
+        if !keys.is_empty() {
+            let candidates: Vec<_> = self
+                .api_keys
+                .iter()
+                .filter(|(name, _)| {
+                    let other = self
+                        .declared(name)
+                        .map(|d| d.env_keys.clone())
+                        .unwrap_or_else(|| {
+                            lookup(name)
+                                .map(|d| {
+                                    d.access().env_keys.iter().map(|s| s.to_string()).collect()
+                                })
+                                .unwrap_or_default()
+                        });
+                    other == keys
+                })
+                .collect();
+            if candidates.len() == 1 {
+                return Ok(Some(candidates[0].1.clone()));
+            }
+            if candidates.len() > 1 {
+                return Err(not_configured(format!(
+                    "ambiguous shared api_keys for {provider:?}; supply an exact entry"
+                )));
+            }
+        }
         match shared_api_key_source(self.api_keys.keys().map(String::as_str), provider) {
             Ok(None) => Ok(None),
             Ok(Some(entry)) => Ok(self.api_keys.get(entry).cloned()),
@@ -386,6 +620,47 @@ impl RouterConfig {
     /// out on whatever the environment holds — the wrong account, with
     /// nothing said (AUTH-1). The check runs when a router is built.
     fn check_provider_keyed(&self) -> Result<(), Lm15Error> {
+        if let Some(error) = self.configuration_errors.first() {
+            return Err(not_configured(error.clone()));
+        }
+        for endpoint in self.base_urls.values() {
+            crate::cloud::hosts::join_endpoint(endpoint, "")?;
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for d in &self.providers {
+            if matches!(d.compat, crate::compat::Compat::None)
+                || (d.placeholder_key.is_some() && !d.env_keys.is_empty())
+            {
+                return Err(not_configured(format!(
+                    "{}: declare a dialect compat and either env keys or a keyless placeholder",
+                    d.id
+                )));
+            }
+            for name in std::iter::once(&d.id).chain(d.aliases.iter()) {
+                if name.is_empty()
+                    || name.contains([':', '/', ' '])
+                    || lookup(name).is_some()
+                    || !names.insert(name.clone())
+                {
+                    return Err(not_configured(format!("declared provider id/alias {name:?} is invalid or collides with another provider")));
+                }
+            }
+            crate::cloud::hosts::join_endpoint(&d.base_url, "")?;
+        }
+        for (provider, name) in &self.credentials {
+            if !matches!(
+                name.as_str(),
+                "platform" | "workload" | "environment" | "cli"
+            ) || !lookup(provider).is_some_and(|d| d.access().is_cloud_chain())
+            {
+                return Err(not_configured(format!("{provider}: named credential {name:?} requires a cloud chain and one of platform, workload, environment, cli")));
+            }
+            if self.explicit_credential(provider)?.is_some() {
+                return Err(not_configured(format!(
+                    "{provider}: credential and api_key are mutually exclusive"
+                )));
+            }
+        }
         let known: Vec<&str> = crate::registry::PROVIDERS.iter().map(|d| d.id).collect();
         for (field, keys) in [
             ("api_key", self.api_keys.keys().collect::<Vec<_>>()),
@@ -393,7 +668,7 @@ impl RouterConfig {
             ("settings", self.settings.keys().collect::<Vec<_>>()),
         ] {
             for key in keys {
-                if lookup(key).is_some() {
+                if lookup(key).is_some() || self.declared(key).is_some() {
                     continue;
                 }
                 let close = known
@@ -451,7 +726,10 @@ impl fmt::Debug for RouterConfig {
                 &self.env.as_ref().map(|m| format!("<{} vars>", m.len())),
             )
             .field("api_keys", &self.api_keys.keys().collect::<Vec<_>>())
-            .field("base_urls", &self.base_urls)
+            .field(
+                "base_url_providers",
+                &self.base_urls.keys().collect::<Vec<_>>(),
+            )
             .field("settings", &self.settings)
             .field("catalog", &self.catalog.len())
             .field("credentials_path", &self.credentials_path)
@@ -482,8 +760,53 @@ impl LMRouter {
     /// A router over `config`. Every provider string the config is keyed
     /// by must name a routable provider; a near miss is named
     /// (`NotConfiguredError`) rather than silently ignored.
-    pub fn with_config(config: RouterConfig) -> Result<Self, Lm15Error> {
+    pub fn with_config(mut config: RouterConfig) -> Result<Self, Lm15Error> {
+        for definition in &mut config.providers {
+            definition.id = canonical_provider(&definition.id);
+            definition.aliases = definition
+                .aliases
+                .iter()
+                .map(|name| canonical_provider(name))
+                .collect();
+        }
         config.check_provider_keyed()?;
+        if config.transport.is_some() && config.budget_explicit {
+            return Err(not_configured("custom transport and router connection budgets are mutually exclusive; configure the transport itself".into()));
+        }
+        let mut keys = BTreeMap::new();
+        for (name, credential) in std::mem::take(&mut config.api_keys) {
+            let name = config.canonical(&name);
+            if keys.insert(name.clone(), credential).is_some() {
+                return Err(not_configured(format!(
+                    "duplicate api_key aliases for {name:?}"
+                )));
+            }
+        }
+        config.api_keys = keys;
+        config.catalog = std::mem::take(&mut config.catalog)
+            .into_iter()
+            .map(|mut info| {
+                info.provider = config.canonical(&info.provider);
+                info
+            })
+            .collect();
+        config.base_urls = std::mem::take(&mut config.base_urls)
+            .into_iter()
+            .map(|(k, v)| (config.canonical(&k), v))
+            .collect();
+        config.settings = std::mem::take(&mut config.settings)
+            .into_iter()
+            .map(|(k, v)| (config.canonical(&k), v))
+            .collect();
+        #[cfg(feature = "native")]
+        if config.transport.is_none() {
+            config.transport = Some(Arc::new(
+                crate::transport::HttpTransport::builder()
+                    .timeouts(config.timeouts)
+                    .max_connections(config.max_connections)
+                    .build()?,
+            ));
+        }
         Ok(LMRouter {
             config,
             lms: Mutex::new(BTreeMap::new()),
@@ -518,6 +841,100 @@ impl LMRouter {
         let lm = Arc::new(build_lm(&resolution.provider, &self.config)?);
         lms.insert(resolution.provider.clone(), Arc::clone(&lm));
         Ok(lm)
+    }
+
+    pub fn plan(&self, request: &Request) -> Result<Vec<crate::adaptation::Adaptation>, Lm15Error> {
+        let resolution = self.resolve(&request.model)?;
+        // Planning uses a parse-only binding: no credential resolution, files,
+        // commands, metadata endpoints or provider transport are consulted.
+        let mut builder = if let Some(d) = self.config.declared(&resolution.provider) {
+            LmBuilder::for_entry(d.template())
+                .provider_name(&d.id)
+                .provider_aliases(&d.aliases)
+                .compat(d.compat.clone())
+                .base_url(&d.base_url)
+        } else {
+            LmBuilder::for_entry(lookup(&resolution.provider).expect("resolved provider"))
+        };
+        builder = builder
+            .api_key("plan-only")
+            .adaptations(self.config.adaptations);
+        builder.plan(&routed(request, &resolution))
+    }
+
+    pub fn explain_auth(&self, model: &str) -> Result<crate::auth::Report, Lm15Error> {
+        let resolution = self.resolve(model)?;
+        if let Some(d) = self.config.declared(&resolution.provider) {
+            let explicit = self.config.explicit_credential(&d.id)?;
+            let chosen = d
+                .env_keys
+                .iter()
+                .find(|k| self.config.env_value(k).is_some());
+            let (kind, label, configured) = if let Some(credential) = explicit {
+                let source = credential
+                    .source()
+                    .unwrap_or_else(crate::auth::CredentialSource::callable);
+                (source.kind, source.label, true)
+            } else if let Some(key) = chosen {
+                (format!("env:{key}"), format!("env ${key}"), true)
+            } else if d.placeholder_key.is_some() {
+                (
+                    "placeholder".into(),
+                    "declared local-server placeholder".into(),
+                    true,
+                )
+            } else {
+                (
+                    "api_keys".into(),
+                    "no declared credential present".into(),
+                    false,
+                )
+            };
+            return Ok(crate::auth::Report {
+                provider: d.id.clone(),
+                steps: vec![crate::auth::Step {
+                    kind,
+                    source: label,
+                    detail: "application declaration; no built-in provider receipts".into(),
+                    state: if configured {
+                        crate::auth::StepState::Selected
+                    } else {
+                        crate::auth::StepState::Absent
+                    },
+                }],
+                configured,
+                settings: Vec::new(),
+                named_credential: None,
+                base_url: resolution.base_url,
+                endpoint_source: Some("RouterConfig declaration".into()),
+            });
+        }
+        let mut options = crate::auth::ExplainOptions::default();
+        options.env = Some(self.config.env_map().into_iter().collect());
+        options.api_key_providers = self.config.api_keys.keys().cloned().collect();
+        options.callable_providers = self
+            .config
+            .api_keys
+            .iter()
+            .filter(|(_, c)| c.source().is_some_and(|s| s.kind == "callable"))
+            .map(|(k, _)| k.clone())
+            .collect();
+        options.credentials_path = self.config.credentials_path.clone();
+        options.settings = self.config.settings.get(&resolution.provider).cloned();
+        options.credential = self.config.credentials.get(&resolution.provider).cloned();
+        options.base_url = self
+            .config
+            .explicit_base_url(&resolution.provider)
+            .map(str::to_string);
+        crate::auth::explain_auth(&resolution.provider, &options).map_err(Lm15Error::from)
+    }
+
+    pub fn doctor(&self, model: &str) -> Result<String, Lm15Error> {
+        Ok(format!(
+            "{}\n{}",
+            self.resolve(model)?.describe(),
+            self.explain_auth(model)?.describe()
+        ))
     }
 
     pub async fn complete(&self, request: &Request) -> Result<Response, Lm15Error> {
@@ -673,7 +1090,13 @@ impl LMRouter {
     /// were using. Like `resolve`: no network, no credential invocation, no
     /// secret values.
     pub fn resolve_openai_chat(&self, model: &str) -> Result<Resolution, Lm15Error> {
-        let resolution = self.resolve(&openai_chat_model_string(model)?)?;
+        let normalized = match model.split_once('/') {
+            Some((head, rest)) if self.config.declared(head).is_some() => {
+                format!("{}:{rest}", self.config.canonical(head))
+            }
+            _ => openai_chat_model_string(model)?,
+        };
+        let resolution = self.resolve(&normalized)?;
         if resolution.source == RouteSource::Rule && resolution.provider == "openai" {
             return self.resolve(&format!("openai-chat:{}", resolution.model));
         }
@@ -794,6 +1217,7 @@ fn adapter_name(definition: &ProviderDefinition) -> &'static str {
             DialectId::OpenaiChat => "OpenAIChatLM",
             DialectId::Anthropic => "AnthropicLM",
             DialectId::Gemini => "GeminiLM",
+            DialectId::Typesafe => "TypeSafeLM",
         },
     }
 }
@@ -820,6 +1244,47 @@ fn resolution(
             EntryKind::AdapterOwned => None,
             EntryKind::Bound | EntryKind::Hosted => definition.compat,
         },
+        declared: false,
+        declared_env_keys: Vec::new(),
+        declared_compat: None,
+        declaration_note: None,
+        base_url: config.explicit_base_url(definition.id).map(str::to_string),
+        credential: config.credentials.get(definition.id).cloned(),
+        credential_policy: definition.access().credential_policy.as_str().into(),
+    }
+}
+
+fn declared_resolution(
+    requested: &str,
+    model: &str,
+    d: &DeclaredProvider,
+    source: RouteSource,
+    rule: Option<RouteRule>,
+    model_info: Option<ModelInfo>,
+    config: &RouterConfig,
+) -> Resolution {
+    Resolution {
+        requested: requested.into(),
+        model: model.into(),
+        provider: d.id.clone(),
+        adapter: adapter_name(d.template()),
+        source,
+        rule,
+        env_key: None,
+        model_info,
+        compat: None,
+        declared: true,
+        declared_env_keys: d.env_keys.clone(),
+        declared_compat: Some(d.compat.clone()),
+        declaration_note: Some(d.note.clone()),
+        base_url: Some(
+            config
+                .explicit_base_url(&d.id)
+                .unwrap_or(&d.base_url)
+                .into(),
+        ),
+        credential: None,
+        credential_policy: "key".into(),
     }
 }
 
@@ -827,6 +1292,9 @@ fn resolution(
 /// explicit entry, for a provider with no declared keys, else the first
 /// set key, else the first declared.
 fn env_key_for(definition: &ProviderDefinition, config: &RouterConfig) -> Option<&'static str> {
+    if config.credentials.contains_key(definition.id) {
+        return None;
+    }
     if matches!(
         config.explicit_credential(definition.id),
         Ok(Some(_)) | Err(_)
@@ -851,6 +1319,19 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
 
     // Rung 1: explicit provider prefix (split on the FIRST colon).
     if let Some((head, rest)) = model.split_once(':') {
+        if let Some(definition) = config.declared(head) {
+            if !rest.is_empty() {
+                return Ok(declared_resolution(
+                    model,
+                    rest,
+                    definition,
+                    RouteSource::Prefix,
+                    None,
+                    None,
+                    config,
+                ));
+            }
+        }
         if let Some(definition) = lookup(head) {
             if !rest.is_empty() {
                 return Ok(resolution(
@@ -919,6 +1400,17 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
                 ));
             }
             let info = narrowed[0];
+            if let Some(definition) = config.declared(&info.provider) {
+                return Ok(declared_resolution(
+                    model,
+                    &info.id,
+                    definition,
+                    RouteSource::Catalog,
+                    None,
+                    Some(info.clone()),
+                    config,
+                ));
+            }
             let Some(definition) = lookup(&info.provider) else {
                 return Err(unknown_model(
                     format!(
@@ -952,6 +1444,17 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
     // Rung 3: built-in prefix rules, first match wins.
     for rule in &config.rules {
         if model.starts_with(rule.prefix) {
+            if let Some(definition) = config.declared(rule.provider) {
+                return Ok(declared_resolution(
+                    model,
+                    model,
+                    definition,
+                    RouteSource::Rule,
+                    Some(*rule),
+                    None,
+                    config,
+                ));
+            }
             let Some(definition) = lookup(rule.provider) else {
                 return Err(unknown_model(
                     format!(
@@ -1092,11 +1595,43 @@ pub(crate) fn provider_from_environment(provider: &str) -> Result<ProviderLM, Lm
 }
 
 fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Error> {
+    if let Some(d) = config.declared(provider) {
+        let credentials = match config.explicit_credential(&d.id)? {
+            Some(c) => c,
+            None => d
+                .env_keys
+                .iter()
+                .find_map(|key| config.env_value(key))
+                .or_else(|| d.placeholder_key.clone())
+                .map(|key| Arc::new(key) as SharedCredentials)
+                .ok_or_else(|| {
+                    not_configured(format!(
+                        "{}: no explicit api_key or declared environment credential ({})",
+                        d.id,
+                        d.env_keys.join(", ")
+                    ))
+                })?,
+        };
+        let mut builder = LmBuilder::for_entry(d.template())
+            .provider_name(&d.id)
+            .provider_aliases(&d.aliases)
+            .compat(d.compat.clone())
+            .base_url(config.explicit_base_url(&d.id).unwrap_or(&d.base_url))
+            .api_key(credentials)
+            .adaptations(config.adaptations);
+        if let Some(t) = &config.transport {
+            builder = builder.transport_shared(t.clone());
+        }
+        return match &d.factory {
+            Some(factory) => factory(builder),
+            None => builder.build(),
+        };
+    }
     let definition = lookup(provider).expect("a resolution names a registry entry");
     let policy = definition.access();
     let provider = definition.id;
     let env = |key: &str| config.env_value(key);
-    let mut builder = LmBuilder::for_entry(definition);
+    let mut builder = LmBuilder::for_entry(definition).adaptations(config.adaptations);
     if let Some(transport) = &config.transport {
         builder = builder.transport_shared(Arc::clone(transport));
     }
@@ -1113,16 +1648,20 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         return builder.api_key(login).build();
     }
 
-    if let Some(url) = config.explicit_base_url(provider) {
-        if policy.host.is_some() {
-            return Err(not_configured(format!(
-                "RouterConfig::base_url({provider:?}, ...): a cloud door's URL is built from its host \
-                 settings (resource, region), not given whole; set them with \
-                 RouterConfig::settings({provider:?}, ...) instead."
-            )));
-        }
+    let env_map = config.env_map();
+    let endpoint = config
+        .explicit_base_url(provider)
+        .map(str::to_string)
+        .or_else(|| {
+            policy.host.as_ref().and_then(|host| {
+                crate::cloud::hosts::endpoint_from_env(host, &env_map)
+                    .map(|(_, value)| value.to_string())
+            })
+        });
+    if let Some(url) = &endpoint {
         builder = builder.base_url(url);
     }
+    builder = builder.env(env_map.clone());
 
     let mut credential: Option<Box<dyn CredentialProvider + Send + Sync>> = config
         .explicit_credential(provider)?
@@ -1157,11 +1696,20 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
                 }
             }
         }
-        let settings = resolve_settings(Some(host), &given, Some(&env_map), provider)?;
+        let settings = resolve_settings_with_endpoint(
+            Some(host),
+            &given,
+            Some(&env_map),
+            provider,
+            endpoint.as_deref(),
+        )?;
         builder = builder.settings(settings.clone());
         if credential.is_none() && policy.is_cloud_chain() {
             ctx.settings = settings;
-            credential = Some(Box::new(ChainProvider::new(policy, ctx)));
+            credential = Some(match config.credentials.get(provider) {
+                Some(name) => Box::new(ChainProvider::named(policy, ctx, name)?),
+                None => Box::new(ChainProvider::new(policy, ctx)),
+            });
         }
     }
     #[cfg(not(feature = "native"))]
@@ -1171,7 +1719,13 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         // be explicit (a cloud chain cannot run here).
         let env_map = config.env_map();
         let given = config.settings.get(provider).cloned().unwrap_or_default();
-        let settings = resolve_settings(Some(host), &given, Some(&env_map), provider)?;
+        let settings = resolve_settings_with_endpoint(
+            Some(host),
+            &given,
+            Some(&env_map),
+            provider,
+            endpoint.as_deref(),
+        )?;
         builder = builder.settings(settings);
         if credential.is_none() && policy.is_cloud_chain() {
             return Err(Lm15Error::NotConfiguredError(ErrorMeta::new(format!(
@@ -1191,11 +1745,14 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
     }
 
     if credential.is_none() {
-        credential = policy
-            .env_keys
-            .iter()
-            .find_map(|key| config.env_value(key))
-            .map(|value| Box::new(value) as Box<dyn CredentialProvider + Send + Sync>);
+        credential = policy.env_keys.iter().find_map(|key| {
+            config.env_value(key).map(|value| {
+                Box::new(crate::auth::SourcedCredential {
+                    provider: value,
+                    source: crate::auth::CredentialSource::environment(key),
+                }) as Box<dyn CredentialProvider + Send + Sync>
+            })
+        });
     }
 
     if credential.is_none() {
@@ -1285,8 +1842,9 @@ mod tests {
                 .base_url("bedrock-chat", "http://h/v1"),
         )
         .unwrap();
-        let err = router.lm("bedrock-chat:m").unwrap_err();
-        assert!(err.message().contains("host settings"), "{err}");
+        let lm = router.lm("bedrock-chat:m").unwrap();
+        assert_eq!(lm.base_url(), "http://h/v1/openai/v1");
+        assert_eq!(lm.settings()["region"], "eu-west-1");
     }
 
     #[test]

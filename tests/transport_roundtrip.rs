@@ -102,9 +102,9 @@ async fn serve(script: Script) -> (String, mpsc::Receiver<Served>, oneshot::Rece
     (base, served_rx, closed_rx)
 }
 
-/// A transport that shortens every request's idle timeout: what a user
-/// does to override the dialects' 60 s / 120 s (a request's own value
-/// wins over the transport default, as in the reference).
+/// An explicit per-request idle-timeout override wins over the shared
+/// connection budget. Dialect builders themselves inherit that budget;
+/// they must not insert a fixed 60 s / 120 s timeout.
 struct Impatient(HttpTransport);
 
 impl Transport for Impatient {
@@ -169,6 +169,10 @@ async fn complete_sends_the_built_request_and_parses_the_body() {
     assert!(head.contains("user-agent: lm15/reqwest"), "{head}");
     // The bytes on the wire are the bytes `build_request` produced.
     let built = lm.build_request(&req, false).unwrap();
+    assert_eq!(
+        built.read_timeout, None,
+        "the dialect inherits the configured transport budget"
+    );
     assert_eq!(got.request_body, built.body_bytes());
 }
 
@@ -282,6 +286,12 @@ async fn provider_error_on_a_stream_is_the_first_and_only_item() {
     let mut stream = lm.stream(&req);
     let err = stream.next().await.unwrap().unwrap_err();
     assert_eq!(err.class(), ErrorClass::AuthError);
+    let source = err
+        .credential_source()
+        .expect("wire auth errors name the credential sent");
+    assert_eq!(source.rung(), "api_keys");
+    assert_eq!(source.named, None);
+    assert!(!format!("{err} {err:?}").contains("test-key"));
     assert!(stream.next().await.is_none());
 }
 

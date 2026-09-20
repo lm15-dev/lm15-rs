@@ -45,7 +45,11 @@ fn serde_vectors_round_trip_exactly() {
         serde_json::from_str(&fs::read_to_string(dir.join("serde/canonical.json")).unwrap())
             .unwrap();
     let cases = corpus["cases"].as_array().unwrap();
-    assert!(cases.len() >= 115);
+    assert_eq!(
+        cases.len(),
+        129,
+        "all canonical vectors at the target CONTRACT_PIN"
+    );
     let mut failures = Vec::new();
     for case in cases {
         let id = case["id"].as_str().unwrap();
@@ -107,6 +111,6 @@ fn error_cases_normalize_to_pinned_class_and_code() {
             }
         }
     }
-    assert!(total >= 84);
+    assert_eq!(total, 87, "all error vectors at the target CONTRACT_PIN");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

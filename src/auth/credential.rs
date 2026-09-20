@@ -206,16 +206,9 @@ impl fmt::Debug for Credential {
             Credential::BearerToken { expires_at, .. } => {
                 write!(f, "BearerToken(<redacted>{})", tail(*expires_at))
             }
-            // The key id is not secret; the rest is.
-            Credential::AwsCredentials {
-                access_key_id,
-                expires_at,
-                ..
-            } => write!(
-                f,
-                "AwsCredentials(access_key_id={access_key_id:?}, <redacted>{})",
-                tail(*expires_at)
-            ),
+            Credential::AwsCredentials { expires_at, .. } => {
+                write!(f, "AwsCredentials(<redacted>{})", tail(*expires_at))
+            }
         }
     }
 }
@@ -265,7 +258,14 @@ pub fn select_scheme(
             policy_schemes.iter().find(|s| accepted.contains(s))
         }
     };
-    found.copied().ok_or_else(|| {
+    let found = found.copied();
+    if matches!(found, Some(AuthScheme::ApiKey | AuthScheme::XApiKey))
+        && policy_schemes.contains(&AuthScheme::Bearer)
+        && matches!(credential, Credential::ApiKey { value } if is_jwt(value))
+    {
+        return Ok(AuthScheme::Bearer);
+    }
+    found.ok_or_else(|| {
         let join = |schemes: &[AuthScheme]| {
             schemes
                 .iter()
@@ -286,6 +286,98 @@ pub fn select_scheme(
     })
 }
 
+/// A JWS compact token, identified only on hybrid key/bearer doors (AUTH-2).
+pub fn is_jwt(value: &str) -> bool {
+    let segments: Vec<_> = value.split('.').collect();
+    if segments.len() != 3
+        || segments.iter().any(|s| {
+            s.is_empty()
+                || !s
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+    {
+        return false;
+    }
+    super::stores::base64url_decode(segments[0])
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|v| v.as_object().is_some_and(|o| o.contains_key("alg")))
+}
+
+/// Secret-free identity provenance (AUTH-1). This is never credential JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialSource {
+    pub kind: String,
+    pub label: String,
+    pub named: Option<String>,
+    pub expires_at: Option<i64>,
+}
+
+impl CredentialSource {
+    /// The chain's fixture rung name (`kind` on doctor steps).
+    pub fn rung(&self) -> &str {
+        &self.kind
+    }
+    pub fn explicit() -> Self {
+        Self {
+            kind: "api_keys".into(),
+            label: "an explicit api_key".into(),
+            named: None,
+            expires_at: None,
+        }
+    }
+    pub fn callable() -> Self {
+        Self {
+            kind: "callable".into(),
+            label: "an application-supplied callable (identity not inspected)".into(),
+            named: None,
+            expires_at: None,
+        }
+    }
+    pub fn environment(name: &str) -> Self {
+        Self {
+            kind: format!("env:{name}"),
+            label: format!("env ${name}"),
+            named: None,
+            expires_at: None,
+        }
+    }
+    pub fn describe(&self) -> String {
+        let mut text = format!("{} ({})", self.label, self.kind);
+        if let Some(name) = &self.named {
+            text.push_str(&format!("; named credential {name:?}"));
+        }
+        if let Some(expiry) = self.expires_at {
+            text.push_str(&format!("; expires {}", format_rfc3339(expiry)));
+        }
+        text
+    }
+}
+
+/// Attach a known source to a provider without examining or caching its values.
+pub struct SourcedCredential<P> {
+    pub provider: P,
+    pub source: CredentialSource,
+}
+impl<P: CredentialProvider> CredentialProvider for SourcedCredential<P> {
+    fn credential(&self) -> Result<Credential, AuthError> {
+        self.provider.credential()
+    }
+    fn source(&self) -> Option<CredentialSource> {
+        Some(self.source.clone())
+    }
+    fn prepare(&self) -> Option<crate::transport::BoxFuture<'_, Result<(), AuthError>>> {
+        self.provider.prepare()
+    }
+}
+impl<P> fmt::Debug for SourcedCredential<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SourcedCredential")
+            .field("source", &self.source)
+            .finish_non_exhaustive()
+    }
+}
+
 // ─── credential providers (AUTH-2) ───────────────────────────────────
 
 /// Supplies a credential value per request (the single-method interface
@@ -293,6 +385,22 @@ pub fn select_scheme(
 /// time and never caches the result; caching belongs to the provider.
 pub trait CredentialProvider {
     fn credential(&self) -> Result<Credential, AuthError>;
+
+    /// Resolve the value and its provenance together. Stateful providers may
+    /// override this to snapshot both under one lock.
+    fn credential_with_source(&self) -> Result<(Credential, Option<CredentialSource>), AuthError> {
+        let value = self.credential()?;
+        let mut source = self.source();
+        if let Some(source) = source.as_mut() {
+            source.expires_at = value.expires_at();
+        }
+        Ok((value, source))
+    }
+
+    /// Identity provenance only; never invokes the provider or inspects its secret.
+    fn source(&self) -> Option<CredentialSource> {
+        Some(CredentialSource::callable())
+    }
 
     /// An asynchronous step the adapter awaits before building a request:
     /// a cloud chain resolves or refreshes its cached credential here
@@ -306,6 +414,12 @@ pub trait CredentialProvider {
 
 /// A value is its own provider.
 impl CredentialProvider for Credential {
+    fn source(&self) -> Option<CredentialSource> {
+        Some(CredentialSource {
+            expires_at: self.expires_at(),
+            ..CredentialSource::explicit()
+        })
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         Ok(self.clone())
     }
@@ -313,24 +427,45 @@ impl CredentialProvider for Credential {
 
 /// A string is the `ApiKey` shorthand.
 impl CredentialProvider for str {
+    fn source(&self) -> Option<CredentialSource> {
+        Some(CredentialSource::explicit())
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         Credential::api_key(self)
     }
 }
 
 impl CredentialProvider for String {
+    fn source(&self) -> Option<CredentialSource> {
+        Some(CredentialSource::explicit())
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         Credential::api_key(self.as_str())
     }
 }
 
 impl<T: CredentialProvider + ?Sized> CredentialProvider for &T {
+    fn credential_with_source(&self) -> Result<(Credential, Option<CredentialSource>), AuthError> {
+        (**self).credential_with_source()
+    }
+    fn source(&self) -> Option<CredentialSource> {
+        (**self).source()
+    }
+    fn prepare(&self) -> Option<crate::transport::BoxFuture<'_, Result<(), AuthError>>> {
+        (**self).prepare()
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         (**self).credential()
     }
 }
 
 impl<T: CredentialProvider + ?Sized> CredentialProvider for Box<T> {
+    fn credential_with_source(&self) -> Result<(Credential, Option<CredentialSource>), AuthError> {
+        (**self).credential_with_source()
+    }
+    fn source(&self) -> Option<CredentialSource> {
+        (**self).source()
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         (**self).credential()
     }
@@ -340,6 +475,12 @@ impl<T: CredentialProvider + ?Sized> CredentialProvider for Box<T> {
 }
 
 impl<T: CredentialProvider + ?Sized> CredentialProvider for std::sync::Arc<T> {
+    fn credential_with_source(&self) -> Result<(Credential, Option<CredentialSource>), AuthError> {
+        (**self).credential_with_source()
+    }
+    fn source(&self) -> Option<CredentialSource> {
+        (**self).source()
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         (**self).credential()
     }
@@ -361,6 +502,9 @@ impl StaticCredential {
 }
 
 impl CredentialProvider for StaticCredential {
+    fn source(&self) -> Option<CredentialSource> {
+        self.0.source()
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         Ok(self.0.clone())
     }

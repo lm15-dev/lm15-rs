@@ -41,6 +41,17 @@ pub(super) fn build_payload(
     compat: &ResolvedOpenAIChatCompat,
     provider: &str,
 ) -> Result<Map<String, Value>, Lm15Error> {
+    crate::dialects::content::validate_slots(
+        request,
+        provider,
+        "openai_chat",
+        compat.tool_result_media,
+    )?;
+    if stream || compat.token_scoring == crate::compat::OpenAIChatTokenScoring::None {
+        crate::judgments::note_unmeasurable_probabilities(request, provider)?;
+    }
+    let prepared = prepare(request, compat, provider)?;
+    let request = &prepared;
     let config = &request.config;
     let mut payload = Map::new();
     payload.insert("model".into(), Value::String(model.into()));
@@ -62,6 +73,15 @@ pub(super) fn build_payload(
     }
     if let Some(top_p) = config.top_p {
         payload.insert("top_p".into(), json!(top_p));
+    }
+    if let Some(v) = config.seed {
+        payload.insert("seed".into(), json!(v));
+    }
+    if let Some(v) = config.frequency_penalty {
+        payload.insert("frequency_penalty".into(), json!(v));
+    }
+    if let Some(v) = config.presence_penalty {
+        payload.insert("presence_penalty".into(), json!(v));
     }
     if config.top_k.is_some() {
         // No wire slot on Chat Completions (port.md rule 4: a raise or an
@@ -85,7 +105,7 @@ pub(super) fn build_payload(
     }
     if !request.tools.is_empty() {
         let mut tools: Vec<Value> = Vec::with_capacity(request.tools.len());
-        for tool in &request.tools {
+        for (index, tool) in request.tools.iter().enumerate() {
             tools.push(match tool {
                 Tool::Function(function) => {
                     let mut inner = Map::new();
@@ -102,13 +122,21 @@ pub(super) fn build_payload(
                     }
                     json!({"type": "function", "function": inner})
                 }
-                Tool::Builtin(builtin) => builtin_tool(builtin, compat, provider)?,
+                Tool::Builtin(builtin) => {
+                    builtin_tool(builtin, compat, provider).map_err(|mut e| {
+                        e.meta_mut().feature = Some(format!("tools[{index}]"));
+                        e
+                    })?
+                }
             });
         }
         payload.insert("tools".into(), Value::Array(tools));
     }
     if let Some(choice) = &config.tool_choice {
-        let wire = tool_choice(choice, request, provider)?;
+        let wire = tool_choice(choice, request, provider).map_err(|mut e| {
+            e.meta_mut().feature = Some("config.tool_choice.allowed".into());
+            e
+        })?;
         if compat.forced_tool_choice == SendReject::Reject
             && (choice.mode != ToolChoiceMode::Auto || !choice.allowed.is_empty())
         {
@@ -250,6 +278,88 @@ pub(super) fn build_payload(
         passthrough(&mut payload, extensions);
     }
     Ok(payload)
+}
+
+fn prepare(
+    request: &Request,
+    compat: &ResolvedOpenAIChatCompat,
+    provider: &str,
+) -> Result<Request, Lm15Error> {
+    use crate::adaptation::{
+        adapt, clamp_effort, drop_value, prepare_openai_cache, refusal, summary_auto,
+        AdaptationAction::*,
+    };
+    let mut out = request.clone();
+    prepare_openai_cache(&mut out, compat.cache_control, provider)?;
+    let c = &mut out.config;
+    drop_value(
+        "config.top_k",
+        &mut c.top_k,
+        "the Chat Completions wire has no top_k field; server-native top_k belongs in extensions",
+    )?;
+    if compat.json_schema == SendReject::Reject
+        && c.response_format
+            .as_ref()
+            .is_some_and(|f| f.get("type").and_then(Value::as_str) == Some("json_schema"))
+    {
+        drop_value(
+            "config.response_format",
+            &mut c.response_format,
+            "this server accepts json_schema without applying it; describe the shape in the prompt",
+        )?;
+    }
+    if compat.thinking_format == OpenAIChatThinkingFormat::None {
+        if let Some(r) = c.reasoning.take() {
+            adapt(
+                "config.reasoning.effort",
+                Dropped,
+                Some(json!(r.effort.as_str())),
+                None,
+                "this server has no reasoning dial; the model chooses",
+            )?;
+        }
+    } else if let Some(r) = &mut c.reasoning {
+        drop_value(
+            "config.reasoning.thinking_budget",
+            &mut r.thinking_budget,
+            "the chat wire has no thinking token budget; effort carries the intent",
+        )?;
+        summary_auto(r)?;
+        if let Some(levels) = compat.reasoning_efforts {
+            clamp_effort(r, levels)?;
+        }
+    }
+    if compat.forced_tool_choice == SendReject::Reject {
+        if let Some(choice) = &mut c.tool_choice {
+            if choice.mode == ToolChoiceMode::Required {
+                return Err(refusal(provider,"config.tool_choice.mode","required tool choice is silently ignored by this server; the program depends on a tool call"));
+            }
+            if choice.mode == ToolChoiceMode::None {
+                adapt(
+                    "config.tool_choice.mode",
+                    ClientSide,
+                    Some(json!("none")),
+                    Some(json!("no tools sent")),
+                    "this server ignores tool_choice=none; no tools were sent",
+                )?;
+                out.tools.clear();
+                choice.mode = ToolChoiceMode::Auto;
+            }
+            if !choice.allowed.is_empty() {
+                adapt(
+                    "config.tool_choice.allowed",
+                    ClientSide,
+                    Some(json!(choice.allowed)),
+                    Some(json!(choice.allowed)),
+                    "this server ignores allowlists; only the allowed tools were sent",
+                )?;
+                out.tools
+                    .retain(|t| choice.allowed.iter().any(|n| n == t.name()));
+                choice.allowed.clear();
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn passthrough(payload: &mut Map<String, Value>, extensions: &JsonObject) {

@@ -112,6 +112,7 @@ impl Coalescer {
                 self.started = true;
                 vec![
                     StreamEvent::Start(StreamStartEvent {
+                        adaptations: Vec::new(),
                         id: None,
                         model: self.model.clone(),
                     }),
@@ -132,6 +133,7 @@ impl Coalescer {
         let mut out = Vec::new();
         if !self.started {
             out.push(StreamEvent::Start(StreamStartEvent {
+                adaptations: Vec::new(),
                 id: None,
                 model: self.model,
             }));
@@ -173,6 +175,7 @@ struct ToolCallMeta {
 #[derive(Debug)]
 pub struct StreamAccumulator {
     request_model: String,
+    judgments: Vec<crate::judgments::Judgment>,
     started_id: Option<String>,
     started_model: Option<String>,
     finish_reason: Option<FinishReason>,
@@ -187,12 +190,16 @@ pub struct StreamAccumulator {
     message_continuation: Vec<ContinuationState>,
     part_continuation: BTreeMap<u64, Vec<ContinuationState>>,
     logprobs: Vec<TokenLogprob>,
+    logprobs_complete: bool,
+    adaptations: Vec<crate::types::Adaptation>,
     provider_data: Option<JsonObject>,
 }
 
 impl StreamAccumulator {
     pub fn new(request: &Request) -> Self {
-        StreamAccumulator::for_model(request.model.clone())
+        let mut out = StreamAccumulator::for_model(request.model.clone());
+        out.judgments = crate::judgments::request_judgments(request);
+        out
     }
 
     /// An accumulator knowing only the request's model (the fallback
@@ -200,6 +207,7 @@ impl StreamAccumulator {
     pub fn for_model(model: impl Into<String>) -> Self {
         StreamAccumulator {
             request_model: model.into(),
+            judgments: Vec::new(),
             started_id: None,
             started_model: None,
             finish_reason: None,
@@ -214,6 +222,8 @@ impl StreamAccumulator {
             message_continuation: Vec::new(),
             part_continuation: BTreeMap::new(),
             logprobs: Vec::new(),
+            logprobs_complete: true,
+            adaptations: Vec::new(),
             provider_data: None,
         }
     }
@@ -222,6 +232,7 @@ impl StreamAccumulator {
     pub fn push(&mut self, event: &StreamEvent) {
         match event {
             StreamEvent::Start(start) => {
+                self.adaptations.extend(start.adaptations.iter().cloned());
                 if start.id.is_some() {
                     self.started_id = start.id.clone();
                 }
@@ -253,6 +264,7 @@ impl StreamAccumulator {
                     .or_default()
                     .push_str(&d.text);
                 self.logprobs.extend(d.logprobs.iter().cloned());
+                self.logprobs_complete &= d.logprobs_complete;
             }
             Delta::Thinking(d) => {
                 self.thinking_parts
@@ -338,6 +350,16 @@ impl StreamAccumulator {
             .filter(|(_, meta)| meta.name.as_deref().is_none_or(str::is_empty))
             .map(|(index, _)| *index)
             .collect();
+        if let Some((&index, _)) = self.audio_chunks.iter().find(|(_, chunks)| {
+            chunks
+                .iter()
+                .any(|c| !c.is_empty() && base64_decode(c).is_err())
+        }) {
+            return Err(Lm15Error::StreamAssemblyError(StreamAssembly {
+                meta:ErrorMeta::new(format!("audio at part {index} contains malformed base64; no corrupt chunk is silently discarded")),
+                partial:Some(Box::new(self.assemble(&unnamed))),part_index:Some(index),
+            }));
+        }
         if let Some(first) = unnamed.first() {
             let partial = self.assemble(&unnamed);
             let mut meta = ErrorMeta::new(format!(
@@ -403,7 +425,11 @@ impl StreamAccumulator {
                     ..image.clone()
                 }));
             }
-            if let Some(chunks) = self.audio_chunks.get(&idx) {
+            if let Some(chunks) = self.audio_chunks.get(&idx).filter(|chunks| {
+                chunks
+                    .iter()
+                    .all(|c| c.is_empty() || base64_decode(c).is_ok())
+            }) {
                 emitted = true;
                 let raw = concat_b64_chunks(chunks);
                 let media_type = self.audio_media_types.get(&idx).cloned().flatten();
@@ -457,6 +483,7 @@ impl StreamAccumulator {
             parts.push(Part::text(""));
         }
 
+        crate::judgments::replace_text_with_data(&mut parts, &self.judgments);
         let has_tool_calls = parts.iter().any(|p| matches!(p, Part::ToolCall(_)));
         let finish_reason = match self.finish_reason {
             None if has_tool_calls => FinishReason::ToolCall,
@@ -482,6 +509,8 @@ impl StreamAccumulator {
             } else {
                 Some(self.logprobs.clone())
             },
+            logprobs_complete: self.logprobs_complete,
+            adaptations: self.adaptations.clone(),
             provider_data: self.provider_data.clone(),
         }
     }
@@ -514,6 +543,7 @@ pub fn materialize_response<'a>(
 pub fn error_from_detail(detail: &ErrorDetail) -> Lm15Error {
     let mut meta = ErrorMeta::new(detail.message.clone());
     meta.provider_code = detail.provider_code.clone();
+    let _ = meta.apply_http_response(&detail.http_response);
     Lm15Error::of_class(detail.code.class(), meta)
 }
 
@@ -526,6 +556,7 @@ pub fn response_to_events(
     let mut out = vec![StreamEvent::Start(StreamStartEvent {
         id: response.id.clone(),
         model: Some(response.model.clone()),
+        adaptations: response.adaptations.clone(),
     })];
     // Response.logprobs is message-level; the whole sequence rides the
     // first text delta so Response -> events -> Response is lossless.
@@ -543,6 +574,7 @@ pub fn response_to_events(
                         text: p.text.clone(),
                         part_index: idx,
                         logprobs: std::mem::take(&mut pending_logprobs),
+                        logprobs_complete: response.logprobs_complete,
                     }),
                 );
             }
@@ -637,17 +669,14 @@ pub fn response_to_events(
 
 // ─── Audio helpers ───────────────────────────────────────────────────
 
-/// Decode each base64 chunk and concatenate the raw bytes; a chunk that
-/// does not decode is dropped (the reference's fallback after padding).
+/// Decode already validated chunks; malformed audio is refused by response().
 fn concat_b64_chunks(chunks: &[String]) -> Vec<u8> {
     let mut raw = Vec::new();
     for chunk in chunks {
         if chunk.is_empty() {
             continue;
         }
-        if let Ok(bytes) = base64_decode(chunk) {
-            raw.extend(bytes);
-        }
+        raw.extend(base64_decode(chunk).expect("audio chunks were validated before assembly"));
     }
     raw
 }
@@ -687,6 +716,7 @@ mod tests {
     fn text(index: u64, text: &str) -> StreamEvent {
         StreamEvent::Delta(StreamDeltaEvent {
             delta: Delta::Text(TextDelta {
+                logprobs_complete: true,
                 text: text.into(),
                 part_index: index,
                 logprobs: Vec::new(),
@@ -749,6 +779,7 @@ mod tests {
     fn map_9_slots_kind_order_and_unnamed_refusal() {
         let mut acc = StreamAccumulator::new(&request());
         acc.push(&StreamEvent::Start(StreamStartEvent {
+            adaptations: Vec::new(),
             id: Some("id".into()),
             model: Some("served".into()),
         }));

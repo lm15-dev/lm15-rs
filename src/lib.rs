@@ -1,6 +1,6 @@
 //! lm15 — the Rust port of lm15: one canonical request/response model
-//! over every provider the lm15-contract names, byte-exact against its
-//! corpus (the pinned commit is in `CONTRACT_PIN`).
+//! over the providers declared by lm15-contract. `CONTRACT_PIN` names the
+//! implementation target, not proof of conformance; see docs/catchup.md.
 //!
 //! The map, in playbooks/port.md module order:
 //!
@@ -25,6 +25,7 @@
 // not the hot path.
 #![allow(clippy::result_large_err)]
 
+pub mod adaptation;
 pub mod adapter;
 pub mod auth;
 #[cfg(feature = "blocking")]
@@ -34,42 +35,62 @@ pub mod compat;
 pub mod dialects;
 pub mod errors;
 pub mod jobs;
+pub mod judgments;
 #[cfg(feature = "native")]
 pub mod live;
 pub mod registry;
 pub mod response_stream;
 pub mod router;
+pub mod scoring;
 pub mod serde;
 pub mod sse;
+pub mod stop;
 pub mod stream;
 pub mod surfaces;
+pub mod testing;
+pub mod tooling;
 pub mod transport;
 pub mod types;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 pub mod wire;
 
+pub use adaptation::{Adaptation, AdaptationAction, AdaptationPolicy};
 pub use adapter::{
     AnthropicLM, ClaudeCodeLM, EventStream, GeminiLM, LmBuilder, OpenAIChatLM, OpenAICodexLM,
-    OpenAILM, ProviderLM, XaiLM,
+    OpenAILM, ProviderLM, TypeSafeLM, XaiLM,
 };
-pub use auth::{AccessPolicy, Credential, CredentialProvider, HostSpec};
+pub use auth::{
+    default_credentials_path, AccessPolicy, Credential, CredentialFileStore, CredentialProvider,
+    CredentialSource, HostSpec, SourcedCredential,
+};
 pub use cloud::hosts::HostSettings;
 pub use compat::{AnthropicCompat, OpenAIChatCompat, OpenAIResponsesCompat};
 pub use dialects::openai_chat::ingest::request_from_openai_chat;
 pub use dialects::openai_chat::response_from_openai_chat;
-pub use errors::{normalize_error, ErrorClass, ErrorCode, ErrorMeta, Lm15Error};
-pub use jobs::{BatchJob, VideoJob, WaitError, WaitOptions};
+pub use errors::{
+    normalize_error, CollectionLimit, DiagnosticHeaders, ErrorClass, ErrorCode, ErrorMeta,
+    Lm15Error,
+};
+pub use jobs::{BatchJob, VideoJob, WaitError, WaitOptions, WaitSnapshot};
+pub use judgments::{
+    choice, choice_described, judgments, judgments_named, score, score_named, yes_no, Judgment,
+    JudgmentKind,
+};
 #[cfg(feature = "native")]
-pub use live::{LiveSession, Turn, TurnEnd, TurnView};
+pub use live::{
+    LiveEventSource, LiveSession, Turn, TurnEnd, TurnLimits, TurnView, DEFAULT_TURN_MAX_BYTES,
+    DEFAULT_TURN_MAX_EVENTS,
+};
 pub use response_stream::ResponseStream;
 pub use router::{
-    openai_chat_model_string, LMRouter, Resolution, RouteRule, RouteSource, RouterConfig,
-    DEFAULT_RULES, LITELLM_PROVIDER_PREFIXES,
+    openai_chat_model_string, DeclaredProvider, LMRouter, Resolution, RouteRule, RouteSource,
+    RouterConfig, DEFAULT_RULES, LITELLM_PROVIDER_PREFIXES,
 };
 pub use serde::Canonical;
+pub use testing::LanguageModel;
 #[cfg(feature = "native")]
 pub use transport::HttpTransport;
-pub use transport::{Transport, TransportResponse};
+pub use transport::{Timeouts, Transport, TransportResponse, DEFAULT_MAX_CONNECTIONS};
 pub use types::*;
 pub use wire::TransportRequest;

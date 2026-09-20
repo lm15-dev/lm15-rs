@@ -28,7 +28,7 @@ pub const CODE_EXECUTION_BETA: &str = "code-execution-2025-05-22";
 /// `max_tokens` sent when `Config.max_tokens` is absent (the wire field is
 /// required; pinned by `cases/anthropic/reasoning_off.json`). On the manual
 /// thinking class it is the visible share added to the budget (MAP-7 rule 6).
-pub const DEFAULT_VISIBLE_TOKENS: u64 = 1024;
+pub const DEFAULT_VISIBLE_TOKENS: u64 = 16384;
 
 /// `lm15/providers/anthropic.py:135` `_ADAPTIVE_CLASS_MARKERS`: substrings
 /// of a lower-cased model id that select the adaptive class (`thinking:

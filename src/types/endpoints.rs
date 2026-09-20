@@ -210,9 +210,27 @@ impl CachePage {
 pub struct CachedPrefix {
     pub prefix: Request,
     pub resource: Option<CacheInfo>,
+    /// Canonical router destination; prefix/resource models remain wire names.
+    pub provider: Option<String>,
 }
 
 impl CachedPrefix {
+    pub fn new(prefix: Request, resource: Option<CacheInfo>) -> VResult<Self> {
+        let cached = Self {
+            prefix,
+            resource,
+            provider: None,
+        };
+        cached.validate()?;
+        Ok(cached)
+    }
+
+    pub fn with_provider(mut self, provider: impl Into<String>) -> VResult<Self> {
+        self.provider = Some(provider.into().replace('_', "-"));
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn id(&self) -> Option<&str> {
         self.resource.as_ref().map(|r| r.id.as_str())
     }
@@ -221,8 +239,71 @@ impl CachedPrefix {
         self.resource.as_ref().and_then(|r| r.expires_at.as_deref())
     }
 
+    /// Mark the seam after this prefix; a stored resource is optional.
+    pub fn cache_config(&self) -> super::CacheConfig {
+        super::CacheConfig {
+            prefix_until_index: self.prefix.messages.len().checked_sub(1).map(|n| n as u64),
+            resource: self.id().map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    pub fn request(&self, messages: Vec<super::Message>, mut config: Config) -> VResult<Request> {
+        self.validate()?;
+        if messages.is_empty() {
+            return Err(ValidationError::value("cached suffix requires messages"));
+        }
+        if config.cache.is_some() {
+            return Err(ValidationError::value(
+                "config.cache is decided by CachedPrefix; leave it unset",
+            ));
+        }
+        config.cache = Some(self.cache_config());
+        let mut request = self.prefix.clone();
+        if let Some(provider) = &self.provider {
+            request.model = format!("{provider}:{}", self.prefix.model);
+        }
+        request.messages.extend(messages);
+        request.config = config;
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn request_text(&self, text: impl Into<String>, config: Config) -> VResult<Request> {
+        self.request(vec![super::Message::user(text.into())?], config)
+    }
+
+    pub fn request_suffix(&self, suffix: &Request, config: Option<Config>) -> VResult<Request> {
+        let same_route = self.provider.as_ref().is_some_and(|provider| {
+            suffix.model.split_once(':').is_some_and(|(head, model)| {
+                head.replace('_', "-") == *provider && model == self.prefix.model
+            })
+        });
+        if (suffix.model != self.prefix.model && !same_route)
+            || suffix.system.is_some()
+            || !suffix.tools.is_empty()
+        {
+            return Err(ValidationError::value(
+                "suffix must use the prefix model and cannot redefine system or tools",
+            ));
+        }
+        self.request(
+            suffix.messages.clone(),
+            config.unwrap_or_else(|| suffix.config.clone()),
+        )
+    }
+
     pub fn validate(&self) -> VResult<()> {
         self.prefix.validate()?;
+        if let Some(provider) = &self.provider {
+            if provider.is_empty()
+                || provider
+                    .chars()
+                    .any(|c| c.is_whitespace() || matches!(c, ':' | '/' | '_'))
+            {
+                return Err(ValidationError::value("CachedPrefix.provider must be a non-empty canonical provider name without routing separators"));
+            }
+        }
         if self.prefix.config != Config::default() {
             return Err(ValidationError::value(
                 "CachedPrefix.prefix must carry a default Config: a cached object has no generation settings",
@@ -557,6 +638,7 @@ mod tests {
     fn cached_prefix_requires_default_config() {
         let mut req = Request::new("g", vec![Message::user("a").unwrap()]).unwrap();
         let ok = CachedPrefix {
+            provider: None,
             prefix: req.clone(),
             resource: Some(CacheInfo {
                 id: "c".into(),
@@ -566,6 +648,7 @@ mod tests {
         };
         assert!(ok.validate().is_ok());
         let mismatch = CachedPrefix {
+            provider: None,
             prefix: req.clone(),
             resource: Some(CacheInfo {
                 id: "c".into(),
@@ -576,6 +659,7 @@ mod tests {
         assert!(mismatch.validate().is_err());
         req.config.max_tokens = Some(5);
         assert!(CachedPrefix {
+            provider: None,
             prefix: req,
             resource: None
         }

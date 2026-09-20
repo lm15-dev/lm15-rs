@@ -16,7 +16,6 @@
 
 use serde_json::{Map, Value};
 
-use super::text::unsupported;
 use crate::compat::{
     OpenAICacheControl, OpenAIChatBuiltinTools, OpenAIChatCompat, OpenAIChatThinkingFormat,
     OpenAIChatUserField, ResolvedOpenAIChatCompat,
@@ -33,10 +32,8 @@ use crate::types::{
 
 /// Top-level keys forwarded verbatim into `config.extensions`.
 const EXTENSIONS_KEYS: &[&str] = &[
-    "seed",
     "logit_bias",
-    "presence_penalty",
-    "frequency_penalty",
+    "prediction",
     "metadata",
     "verbosity",
     "moderation",
@@ -46,13 +43,12 @@ const EXTENSIONS_KEYS: &[&str] = &[
 /// Top-level keys refused, with the reason a Request cannot carry them.
 const REFUSED_KEYS: &[(&str, &str)] = &[
     ("n", "lm15 reads one choice per response; n>1 would silently lose choices — fan out in the caller"),
-    ("functions", "the deprecated function-calling shape; declare tools with {type: function, function: {...}}"),
-    ("function_call", "the deprecated function-calling shape; use tool_choice"),
+
     ("audio", "audio output parameters have no canonical slot on the chat surface"),
     ("modalities", "output modality selection has no canonical slot on the chat surface"),
-    ("prediction", "predicted-output content has no canonical slot"),
+
     ("web_search_options", "a server-executed search the chat dialect cannot map to parts (MAP-1); the Responses dialect carries web_search as a BuiltinTool"),
-    ("top_k", "the Chat Completions wire has no top_k (the builder raises on Config.top_k for the same reason); servers that take it do so through extensions"),
+
 ];
 
 /// Call-mode keys: how the request is sent, not what is asked.
@@ -63,12 +59,18 @@ const CONFIG_KEYS: &[&str] = &[
     "model",
     "messages",
     "tools",
+    "functions",
+    "function_call",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
     "tool_choice",
     "parallel_tool_calls",
     "max_completion_tokens",
     "max_tokens",
     "temperature",
     "top_p",
+    "top_k",
     "stop",
     "logprobs",
     "top_logprobs",
@@ -107,9 +109,10 @@ fn malformed(message: impl Into<String>) -> Lm15Error {
 }
 
 fn refuse(provider: &str, what: &str, why: &str) -> Lm15Error {
-    unsupported(
+    crate::adaptation::refusal(
         provider,
-        format!("{what} cannot be carried by a canonical Request — {why}"),
+        what,
+        format!("cannot be carried by a canonical Request — {why}"),
     )
 }
 
@@ -1214,6 +1217,23 @@ fn config(
     if let Some(v) = present(body, "top_p") {
         config.top_p = Some(crate::serde::float_from_value(v, "top_p").map_err(invalid)?);
     }
+    if let Some(v) = present(body, "top_k") {
+        config.top_k = Some(
+            u64::try_from(crate::serde::int_from_value(v, "top_k").map_err(invalid)?)
+                .map_err(|_| malformed("top_k must be positive"))?,
+        );
+    }
+    if let Some(v) = present(body, "seed") {
+        config.seed = Some(crate::serde::int_from_value(v, "seed").map_err(invalid)?);
+    }
+    if let Some(v) = present(body, "frequency_penalty") {
+        config.frequency_penalty =
+            Some(crate::serde::float_from_value(v, "frequency_penalty").map_err(invalid)?);
+    }
+    if let Some(v) = present(body, "presence_penalty") {
+        config.presence_penalty =
+            Some(crate::serde::float_from_value(v, "presence_penalty").map_err(invalid)?);
+    }
     if let Some(v) = present(body, "service_tier") {
         config.service_tier = Some(as_str(Some(v), "service_tier")?.to_string());
     }
@@ -1258,9 +1278,25 @@ fn config(
     if let Some(v) = present(body, "response_format") {
         config.response_format = response_format(provider, v)?;
     }
+    if body.contains_key("function_call") && body.contains_key("tool_choice") {
+        return Err(malformed(
+            "function_call and tool_choice cannot both be given",
+        ));
+    }
+    let legacy_choice = match present(body, "function_call") {
+        Some(Value::Object(o)) => {
+            only_keys(provider, o, &["name"], "function_call")?;
+            Some(
+                serde_json::json!({"type":"function","function":{"name":as_str(present(o,"name"),"function_call.name")?}}),
+            )
+        }
+        Some(Value::String(s)) if s == "none" || s == "auto" => Some(Value::String(s.clone())),
+        Some(_) => return Err(malformed("function_call must be 'none', 'auto', or {name}")),
+        None => None,
+    };
     config.tool_choice = tool_choice(
         provider,
-        present(body, "tool_choice"),
+        present(body, "tool_choice").or(legacy_choice.as_ref()),
         present(body, "parallel_tool_calls"),
     )?;
 
@@ -1346,7 +1382,23 @@ pub(crate) fn ingest(
         return Err(malformed("messages is required"));
     };
     let r = rows(provider, raw_rows)?;
-    let tools = tools(provider, present(body, "tools"), compat)?;
+    if body.contains_key("functions") && body.contains_key("tools") {
+        return Err(malformed("functions and tools cannot both be given"));
+    }
+    let legacy_tools = match body.get("functions") {
+        Some(Value::Array(fns)) => Some(Value::Array(
+            fns.iter()
+                .map(|f| serde_json::json!({"type":"function","function":f}))
+                .collect(),
+        )),
+        Some(_) => return Err(malformed("functions must be an array")),
+        None => None,
+    };
+    let tools = tools(
+        provider,
+        present(body, "tools").or(legacy_tools.as_ref()),
+        compat,
+    )?;
     let config = config(provider, body, compat, &r)?;
     let request = Request {
         model,

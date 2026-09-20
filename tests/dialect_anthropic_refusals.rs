@@ -1,6 +1,6 @@
 //! The build-time refusals of the Anthropic dialect (MAP-5..8 and port.md
-//! rule 4): one test per refusal, each asserting the class and ErrorCode
-//! the family pins and that nothing was built.
+//! rule 4): strict legacy deviations explicitly select MAP-13 Refuse;
+//! satisfied/defaulted settings remain accepted under that policy.
 
 use serde_json::{json, Value};
 
@@ -11,7 +11,7 @@ use lm15::types::{
     ImagePart, JsonObject, Message, Part, Reasoning, ReasoningEffort, ReasoningSummary, Request,
     SystemContent, Tool, ToolChoice, ToolChoiceMode,
 };
-use lm15::{AnthropicLM, Lm15Error, ProviderLM};
+use lm15::{AdaptationAction, AdaptationPolicy, AnthropicLM, Lm15Error, ProviderLM};
 
 fn object(value: Value) -> JsonObject {
     match value {
@@ -41,7 +41,11 @@ fn request(model: &str, config: Config) -> Request {
 }
 
 fn anthropic() -> ProviderLM {
-    AnthropicLM::builder().api_key("k").build().unwrap()
+    AnthropicLM::builder()
+        .api_key("k")
+        .adaptations(AdaptationPolicy::Refuse)
+        .build()
+        .unwrap()
 }
 
 fn assert_refusal(result: Result<lm15::TransportRequest, Lm15Error>, class: &str, code: &str) {
@@ -71,7 +75,7 @@ fn map5_reasoning_off_omits_thinking_on_the_public_api() {
         .unwrap();
     let body = out.body.unwrap();
     assert!(body.get("thinking").is_none());
-    assert_eq!(body["max_tokens"], json!(1024));
+    assert_eq!(body["max_tokens"], json!(16384));
 }
 
 #[test]
@@ -95,7 +99,7 @@ fn map7_thinking_budget_raises_on_the_adaptive_class() {
         body["thinking"],
         json!({"type": "enabled", "budget_tokens": 4096})
     );
-    assert_eq!(body["max_tokens"], json!(4096 + 1024));
+    assert_eq!(body["max_tokens"], json!(4096 + 16384));
 }
 
 #[test]
@@ -195,11 +199,14 @@ fn map6_long_retention_is_a_ttl_mark_or_a_refusal() {
     assert_eq!(body["system"][0]["cache_control"], marker);
     assert_eq!(body["messages"][0]["content"][0]["cache_control"], marker);
 
-    let deepseek = adapter_for("deepseek-anthropic", "k", None, None, None).unwrap();
+    let deepseek = adapter_for("deepseek-anthropic", "k", None, None, None)
+        .unwrap()
+        .with_adaptations(AdaptationPolicy::Refuse);
     let err = deepseek
         .build_request(&request("deepseek-v4-flash", config), false)
         .unwrap_err();
     assert_eq!(err.class_name(), "UnsupportedFeatureError");
+    assert_eq!(err.feature(), Some("config.cache.retention"));
 }
 
 #[test]
@@ -313,11 +320,20 @@ fn map8_json_object_raises_and_json_schema_drops_name_and_strict() {
 }
 
 #[test]
-fn store_and_logprobs_raise() {
-    let config = cfg(|c| {
-        c.store = Some(false);
-    });
-    assert_unsupported(anthropic().build_request(&request("claude-sonnet-4-5", config), false));
+fn store_false_is_satisfied_even_under_refuse_but_store_true_and_logprobs_refuse() {
+    let req = request("claude-sonnet-4-5", cfg(|c| c.store = Some(false)));
+    let lm = anthropic();
+    let body = lm.build_request(&req, false).unwrap().body.unwrap();
+    assert!(body.get("store").is_none());
+    let plan = lm.plan(&req).unwrap();
+    let store = plan.iter().find(|a| a.field == "config.store").unwrap();
+    assert_eq!(store.action, AdaptationAction::Satisfied);
+    assert_eq!(store.asked, Some(json!(false)));
+    assert_eq!(store.applied, None);
+    assert_unsupported(lm.build_request(
+        &request("claude-sonnet-4-5", cfg(|c| c.store = Some(true))),
+        false,
+    ));
     let config = cfg(|c| {
         c.logprobs = Some(0);
     });
@@ -438,6 +454,7 @@ fn a_custom_compat_value_binds_to_the_named_constructor() {
     let lm = AnthropicLM::builder()
         .api_key("k")
         .compat(Compat::Anthropic(compat))
+        .adaptations(AdaptationPolicy::Refuse)
         .build()
         .unwrap();
     assert_refusal(

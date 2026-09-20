@@ -31,7 +31,9 @@ use std::sync::{Arc, OnceLock};
 use futures_util::StreamExt;
 
 use crate::errors::Lm15Error;
-use crate::types::{ModelInfo, Request, Response, StreamEvent};
+pub use crate::jobs::{WaitError, WaitOptions, WaitSnapshot};
+pub use crate::live::{Turn, TurnEnd, TurnLimits};
+use crate::types::*;
 
 /// The runtime every blocking call drives.
 fn runtime() -> &'static tokio::runtime::Runtime {
@@ -98,6 +100,127 @@ impl ProviderLM {
 
     pub fn list_models(&self) -> Result<Vec<ModelInfo>, Lm15Error> {
         block_on(self.inner.list_models())
+    }
+
+    pub fn file_upload(&self, request: &FileUploadRequest) -> Result<FileInfo, Lm15Error> {
+        block_on(self.inner.file_upload(request))
+    }
+    pub fn file_get(&self, file_id: &str) -> Result<FileInfo, Lm15Error> {
+        block_on(self.inner.file_get(file_id))
+    }
+    pub fn file_list(&self, limit: u64, cursor: Option<&str>) -> Result<FilePage, Lm15Error> {
+        block_on(self.inner.file_list(limit, cursor))
+    }
+    pub fn file_delete(&self, file_id: &str) -> Result<(), Lm15Error> {
+        block_on(self.inner.file_delete(file_id))
+    }
+    pub fn file_download(&self, file_id: &str) -> Result<Vec<u8>, Lm15Error> {
+        block_on(self.inner.file_download(file_id))
+    }
+    pub fn file_wait_ready(
+        &self,
+        file_id: &str,
+        poll_every: std::time::Duration,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<FileInfo, Lm15Error> {
+        block_on(self.inner.file_wait_ready(file_id, poll_every, timeout))
+    }
+    pub fn batch_submit(&self, request: &BatchRequest) -> Result<BatchJobInfo, Lm15Error> {
+        block_on(self.inner.batch_submit(request))
+    }
+    pub fn batch_status(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        block_on(self.inner.batch_status(batch_id))
+    }
+    pub fn batch_cancel(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        block_on(self.inner.batch_cancel(batch_id))
+    }
+    pub fn batch_results(&self, batch_id: &str) -> Result<Vec<BatchEntry>, Lm15Error> {
+        block_on(self.inner.batch_results(batch_id))
+    }
+    pub fn batch_list(&self, limit: u64) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+        block_on(self.inner.batch_list(limit))
+    }
+    pub fn batch(&self, request: &BatchRequest) -> Result<BatchJob, Lm15Error> {
+        block_on(self.inner.batch(request)).map(BatchJob::from)
+    }
+    pub fn batch_job(&self, batch_id: &str) -> Result<BatchJob, Lm15Error> {
+        block_on(self.inner.batch_job(batch_id)).map(BatchJob::from)
+    }
+    pub fn batches(&self, limit: u64) -> Result<Vec<BatchJob>, Lm15Error> {
+        block_on(self.inner.batches(limit))
+            .map(|jobs| jobs.into_iter().map(BatchJob::from).collect())
+    }
+    pub fn cache(
+        &self,
+        prefix: &Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&str>,
+    ) -> Result<CachedPrefix, Lm15Error> {
+        block_on(self.inner.cache(prefix, ttl_seconds, label))
+    }
+    pub fn cache_create(
+        &self,
+        prefix: &Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&str>,
+    ) -> Result<CacheInfo, Lm15Error> {
+        block_on(self.inner.cache_create(prefix, ttl_seconds, label))
+    }
+    pub fn cache_get(&self, cache_id: &str) -> Result<CacheInfo, Lm15Error> {
+        block_on(self.inner.cache_get(cache_id))
+    }
+    pub fn cache_list(&self, limit: u64, cursor: Option<&str>) -> Result<CachePage, Lm15Error> {
+        block_on(self.inner.cache_list(limit, cursor))
+    }
+    pub fn cache_delete(&self, cache_id: &str) -> Result<(), Lm15Error> {
+        block_on(self.inner.cache_delete(cache_id))
+    }
+    pub fn cache_update(&self, cache_id: &str, ttl_seconds: u64) -> Result<CacheInfo, Lm15Error> {
+        block_on(self.inner.cache_update(cache_id, ttl_seconds))
+    }
+    pub fn image_generate(
+        &self,
+        request: &ImageGenerationRequest,
+    ) -> Result<ImageGenerationResponse, Lm15Error> {
+        block_on(self.inner.image_generate(request))
+    }
+    pub fn speech_generate(
+        &self,
+        request: &SpeechGenerationRequest,
+    ) -> Result<SpeechGenerationResponse, Lm15Error> {
+        block_on(self.inner.speech_generate(request))
+    }
+    pub fn video_submit(
+        &self,
+        request: &VideoGenerationRequest,
+    ) -> Result<VideoJobInfo, Lm15Error> {
+        block_on(self.inner.video_submit(request))
+    }
+    pub fn video_status(&self, video_id: &str) -> Result<VideoJobInfo, Lm15Error> {
+        block_on(self.inner.video_status(video_id))
+    }
+    pub fn video_result(&self, video_id: &str) -> Result<VideoPart, Lm15Error> {
+        block_on(self.inner.video_result(video_id))
+    }
+    pub fn video_list(
+        &self,
+        limit: u64,
+        model: Option<&str>,
+    ) -> Result<Vec<VideoJobInfo>, Lm15Error> {
+        block_on(self.inner.video_list(limit, model))
+    }
+    pub fn video_generate(&self, request: &VideoGenerationRequest) -> Result<VideoJob, Lm15Error> {
+        block_on(self.inner.video_generate(request)).map(VideoJob::from)
+    }
+    pub fn video_job(&self, video_id: &str) -> Result<VideoJob, Lm15Error> {
+        block_on(self.inner.video_job(video_id)).map(VideoJob::from)
+    }
+    pub fn video_jobs(&self, limit: u64, model: Option<&str>) -> Result<Vec<VideoJob>, Lm15Error> {
+        block_on(self.inner.video_jobs(limit, model))
+            .map(|jobs| jobs.into_iter().map(VideoJob::from).collect())
+    }
+    pub fn live(&self, config: &LiveConfig) -> Result<LiveSession, Lm15Error> {
+        block_on(self.inner.live(config)).map(LiveSession::from)
     }
 }
 
@@ -181,11 +304,401 @@ impl LMRouter {
     pub fn stream(&self, request: &Request) -> EventStream {
         EventStream(self.inner.stream(request))
     }
+
+    pub fn into_async(self) -> crate::LMRouter {
+        self.inner
+    }
+    pub fn request_from_openai_chat(
+        &self,
+        model: &str,
+        messages: &serde_json::Value,
+        kwargs: &JsonObject,
+    ) -> Result<(Request, ProviderLM), Lm15Error> {
+        self.inner
+            .request_from_openai_chat(model, messages, kwargs)
+            .map(|(request, lm)| (request, ProviderLM::from_shared(lm)))
+    }
+    pub fn complete_from_openai_chat(
+        &self,
+        model: &str,
+        messages: &serde_json::Value,
+        kwargs: &JsonObject,
+    ) -> Result<Response, Lm15Error> {
+        block_on(
+            self.inner
+                .complete_from_openai_chat(model, messages, kwargs),
+        )
+    }
+    pub fn stream_from_openai_chat(
+        &self,
+        model: &str,
+        messages: &serde_json::Value,
+        kwargs: &JsonObject,
+    ) -> EventStream {
+        EventStream(self.inner.stream_from_openai_chat(model, messages, kwargs))
+    }
+    pub fn list_models(&self, model: &str) -> Result<Vec<ModelInfo>, Lm15Error> {
+        block_on(self.inner.list_models(model))
+    }
+    pub fn file_upload(
+        &self,
+        model: &str,
+        request: &FileUploadRequest,
+    ) -> Result<FileInfo, Lm15Error> {
+        block_on(self.inner.file_upload(model, request))
+    }
+    pub fn file_get(&self, model: &str, file_id: &str) -> Result<FileInfo, Lm15Error> {
+        block_on(self.inner.file_get(model, file_id))
+    }
+    pub fn file_list(
+        &self,
+        model: &str,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<FilePage, Lm15Error> {
+        block_on(self.inner.file_list(model, limit, cursor))
+    }
+    pub fn file_delete(&self, model: &str, file_id: &str) -> Result<(), Lm15Error> {
+        block_on(self.inner.file_delete(model, file_id))
+    }
+    pub fn file_download(&self, model: &str, file_id: &str) -> Result<Vec<u8>, Lm15Error> {
+        block_on(self.inner.file_download(model, file_id))
+    }
+    pub fn file_wait_ready(
+        &self,
+        model: &str,
+        file_id: &str,
+        poll_every: std::time::Duration,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<FileInfo, Lm15Error> {
+        block_on(
+            self.inner
+                .file_wait_ready(model, file_id, poll_every, timeout),
+        )
+    }
+    pub fn batch_submit(&self, request: &BatchRequest) -> Result<BatchJobInfo, Lm15Error> {
+        block_on(self.inner.batch_submit(request))
+    }
+    pub fn batch_status(&self, model: &str, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        block_on(self.inner.batch_status(model, batch_id))
+    }
+    pub fn batch_cancel(&self, model: &str, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
+        block_on(self.inner.batch_cancel(model, batch_id))
+    }
+    pub fn batch_results(&self, model: &str, batch_id: &str) -> Result<Vec<BatchEntry>, Lm15Error> {
+        block_on(self.inner.batch_results(model, batch_id))
+    }
+    pub fn batch_list(&self, model: &str, limit: u64) -> Result<Vec<BatchJobInfo>, Lm15Error> {
+        block_on(self.inner.batch_list(model, limit))
+    }
+    pub fn batch(&self, request: &BatchRequest) -> Result<BatchJob, Lm15Error> {
+        block_on(self.inner.batch(request)).map(BatchJob::from)
+    }
+    pub fn batch_job(&self, model: &str, batch_id: &str) -> Result<BatchJob, Lm15Error> {
+        block_on(self.inner.batch_job(model, batch_id)).map(BatchJob::from)
+    }
+    pub fn batches(&self, model: &str, limit: u64) -> Result<Vec<BatchJob>, Lm15Error> {
+        block_on(self.inner.batches(model, limit))
+            .map(|jobs| jobs.into_iter().map(BatchJob::from).collect())
+    }
+    pub fn cache(
+        &self,
+        prefix: &Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&str>,
+    ) -> Result<CachedPrefix, Lm15Error> {
+        block_on(self.inner.cache(prefix, ttl_seconds, label))
+    }
+    pub fn cache_create(
+        &self,
+        prefix: &Request,
+        ttl_seconds: Option<u64>,
+        label: Option<&str>,
+    ) -> Result<CacheInfo, Lm15Error> {
+        block_on(self.inner.cache_create(prefix, ttl_seconds, label))
+    }
+    pub fn cache_get(&self, model: &str, cache_id: &str) -> Result<CacheInfo, Lm15Error> {
+        block_on(self.inner.cache_get(model, cache_id))
+    }
+    pub fn cache_list(
+        &self,
+        model: &str,
+        limit: u64,
+        cursor: Option<&str>,
+    ) -> Result<CachePage, Lm15Error> {
+        block_on(self.inner.cache_list(model, limit, cursor))
+    }
+    pub fn cache_delete(&self, model: &str, cache_id: &str) -> Result<(), Lm15Error> {
+        block_on(self.inner.cache_delete(model, cache_id))
+    }
+    pub fn cache_update(
+        &self,
+        model: &str,
+        cache_id: &str,
+        ttl_seconds: u64,
+    ) -> Result<CacheInfo, Lm15Error> {
+        block_on(self.inner.cache_update(model, cache_id, ttl_seconds))
+    }
+    pub fn image_generate(
+        &self,
+        request: &ImageGenerationRequest,
+    ) -> Result<ImageGenerationResponse, Lm15Error> {
+        block_on(self.inner.image_generate(request))
+    }
+    pub fn speech_generate(
+        &self,
+        request: &SpeechGenerationRequest,
+    ) -> Result<SpeechGenerationResponse, Lm15Error> {
+        block_on(self.inner.speech_generate(request))
+    }
+    pub fn video_submit(
+        &self,
+        request: &VideoGenerationRequest,
+    ) -> Result<VideoJobInfo, Lm15Error> {
+        block_on(self.inner.video_submit(request))
+    }
+    pub fn video_status(&self, model: &str, video_id: &str) -> Result<VideoJobInfo, Lm15Error> {
+        block_on(self.inner.video_status(model, video_id))
+    }
+    pub fn video_result(&self, model: &str, video_id: &str) -> Result<VideoPart, Lm15Error> {
+        block_on(self.inner.video_result(model, video_id))
+    }
+    pub fn video_list(&self, model: &str, limit: u64) -> Result<Vec<VideoJobInfo>, Lm15Error> {
+        block_on(self.inner.video_list(model, limit))
+    }
+    pub fn video_generate(&self, request: &VideoGenerationRequest) -> Result<VideoJob, Lm15Error> {
+        block_on(self.inner.video_generate(request)).map(VideoJob::from)
+    }
+    pub fn video_job(&self, model: &str, video_id: &str) -> Result<VideoJob, Lm15Error> {
+        block_on(self.inner.video_job(model, video_id)).map(VideoJob::from)
+    }
+    pub fn video_jobs(&self, model: &str, limit: u64) -> Result<Vec<VideoJob>, Lm15Error> {
+        block_on(self.inner.video_jobs(model, limit))
+            .map(|jobs| jobs.into_iter().map(VideoJob::from).collect())
+    }
+    pub fn live(&self, config: &LiveConfig) -> Result<LiveSession, Lm15Error> {
+        block_on(self.inner.live(config)).map(LiveSession::from)
+    }
+}
+
+impl Deref for LMRouter {
+    type Target = crate::LMRouter;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl From<crate::LMRouter> for LMRouter {
     fn from(inner: crate::LMRouter) -> Self {
         LMRouter { inner }
+    }
+}
+
+/// Blocking handle. Snapshot access is pure; only explicit verbs perform I/O.
+#[derive(Debug)]
+pub struct BatchJob(crate::jobs::BatchJob);
+
+impl From<crate::jobs::BatchJob> for BatchJob {
+    fn from(job: crate::jobs::BatchJob) -> Self {
+        Self(job)
+    }
+}
+
+impl BatchJob {
+    pub fn new(lm: &ProviderLM, info: BatchJobInfo) -> Self {
+        Self(crate::jobs::BatchJob::new(Arc::clone(&lm.inner), info))
+    }
+    pub fn into_async(self) -> crate::jobs::BatchJob {
+        self.0
+    }
+    pub fn info(&self) -> &BatchJobInfo {
+        self.0.info()
+    }
+    pub fn id(&self) -> &str {
+        self.0.id()
+    }
+    pub fn status(&self) -> BatchStatus {
+        self.0.status()
+    }
+    pub fn label(&self) -> Option<&str> {
+        self.0.label()
+    }
+    pub fn done(&self) -> bool {
+        self.0.done()
+    }
+    pub fn refresh(&mut self) -> Result<&mut Self, Lm15Error> {
+        block_on(self.0.refresh())?;
+        Ok(self)
+    }
+    pub fn wait(&mut self, options: WaitOptions) -> Result<&mut Self, WaitError> {
+        block_on(self.0.wait(options))?;
+        Ok(self)
+    }
+    pub fn results(&self) -> Result<Vec<BatchEntry>, Lm15Error> {
+        block_on(self.0.results())
+    }
+    pub fn cancel(&mut self) -> Result<&mut Self, Lm15Error> {
+        block_on(self.0.cancel())?;
+        Ok(self)
+    }
+}
+
+#[derive(Debug)]
+pub struct VideoJob(crate::jobs::VideoJob);
+
+impl From<crate::jobs::VideoJob> for VideoJob {
+    fn from(job: crate::jobs::VideoJob) -> Self {
+        Self(job)
+    }
+}
+
+impl VideoJob {
+    pub fn new(lm: &ProviderLM, info: VideoJobInfo) -> Self {
+        Self(crate::jobs::VideoJob::new(Arc::clone(&lm.inner), info))
+    }
+    pub fn into_async(self) -> crate::jobs::VideoJob {
+        self.0
+    }
+    pub fn info(&self) -> &VideoJobInfo {
+        self.0.info()
+    }
+    pub fn id(&self) -> &str {
+        self.0.id()
+    }
+    pub fn status(&self) -> VideoStatus {
+        self.0.status()
+    }
+    pub fn progress(&self) -> Option<u64> {
+        self.0.progress()
+    }
+    pub fn done(&self) -> bool {
+        self.0.done()
+    }
+    pub fn refresh(&mut self) -> Result<&mut Self, Lm15Error> {
+        block_on(self.0.refresh())?;
+        Ok(self)
+    }
+    pub fn wait(&mut self, options: WaitOptions) -> Result<&mut Self, WaitError> {
+        block_on(self.0.wait(options))?;
+        Ok(self)
+    }
+    pub fn result(&self) -> Result<VideoPart, Lm15Error> {
+        block_on(self.0.result())
+    }
+}
+
+/// A live socket driven by the shared blocking runtime.
+pub struct LiveSession(crate::live::LiveSession);
+
+impl From<crate::live::LiveSession> for LiveSession {
+    fn from(session: crate::live::LiveSession) -> Self {
+        Self(session)
+    }
+}
+
+impl LiveSession {
+    pub fn into_async(self) -> crate::live::LiveSession {
+        self.0
+    }
+    pub fn codec(&self) -> &crate::adapter::LiveCodec {
+        self.0.codec()
+    }
+    pub fn send(&mut self, event: LiveClientEvent) -> Result<(), Lm15Error> {
+        block_on(self.0.send(event))
+    }
+    pub fn send_text(&mut self, text: impl Into<String>) -> Result<(), Lm15Error> {
+        block_on(self.0.send_text(text))
+    }
+    pub fn send_turn(&mut self, parts: Vec<Part>, turn_complete: bool) -> Result<(), Lm15Error> {
+        block_on(self.0.send_turn(parts, turn_complete))
+    }
+    pub fn send_audio(&mut self, data: &[u8], media_type: Option<&str>) -> Result<(), Lm15Error> {
+        block_on(self.0.send_audio(data, media_type))
+    }
+    pub fn send_image(&mut self, data: &[u8], media_type: Option<&str>) -> Result<(), Lm15Error> {
+        block_on(self.0.send_image(data, media_type))
+    }
+    pub fn send_tool_result(
+        &mut self,
+        id: impl Into<String>,
+        content: Vec<Part>,
+    ) -> Result<(), Lm15Error> {
+        block_on(self.0.send_tool_result(id, content))
+    }
+    pub fn interrupt(&mut self) -> Result<(), Lm15Error> {
+        block_on(self.0.interrupt())
+    }
+    pub fn end_audio(&mut self) -> Result<(), Lm15Error> {
+        block_on(self.0.end_audio())
+    }
+    pub fn recv(&mut self) -> Result<Option<LiveServerEvent>, Lm15Error> {
+        block_on(self.0.recv())
+    }
+    pub fn turn(&mut self) -> TurnView<'_> {
+        TurnView(self.0.turn())
+    }
+    pub fn turn_with_limits(&mut self, limits: TurnLimits) -> Result<TurnView<'_>, Lm15Error> {
+        self.0.turn_with_limits(limits).map(TurnView)
+    }
+    pub fn close(self) -> Result<(), Lm15Error> {
+        block_on(self.0.close())
+    }
+}
+
+/// Buffered blocking view; dropping/closing it leaves the session open.
+pub struct TurnView<'a, S: crate::live::LiveEventSource + ?Sized = crate::live::LiveSession>(
+    crate::live::TurnView<'a, S>,
+);
+
+impl<'a, S: crate::live::LiveEventSource + ?Sized> From<crate::live::TurnView<'a, S>>
+    for TurnView<'a, S>
+{
+    fn from(view: crate::live::TurnView<'a, S>) -> Self {
+        Self(view)
+    }
+}
+
+impl<'a, S: crate::live::LiveEventSource + ?Sized> TurnView<'a, S> {
+    pub fn new(source: &'a mut S, limits: TurnLimits) -> Result<Self, Lm15Error> {
+        crate::live::TurnView::new(source, limits).map(Self)
+    }
+    pub fn into_async(self) -> crate::live::TurnView<'a, S> {
+        self.0
+    }
+    pub fn result(&mut self) -> Result<Arc<Turn>, Lm15Error> {
+        block_on(self.0.result())
+    }
+    pub fn snapshot(&self) -> Result<Turn, Lm15Error> {
+        self.0.snapshot()
+    }
+    pub fn retained_bytes(&self) -> usize {
+        self.0.retained_bytes()
+    }
+    pub fn retained_events(&self) -> usize {
+        self.0.retained_events()
+    }
+    pub fn partial_events(&self) -> &[LiveServerEvent] {
+        self.0.partial_events()
+    }
+    pub fn close(&mut self) {
+        self.0.close();
+    }
+    pub fn send(&mut self, event: LiveClientEvent) -> Result<(), Lm15Error> {
+        block_on(self.0.send(event))
+    }
+    pub fn send_tool_result(
+        &mut self,
+        id: impl Into<String>,
+        content: Vec<Part>,
+    ) -> Result<(), Lm15Error> {
+        block_on(self.0.send_tool_result(id, content))
+    }
+}
+
+impl<S: crate::live::LiveEventSource + ?Sized> Iterator for TurnView<'_, S> {
+    type Item = Result<LiveServerEvent, Lm15Error>;
+    fn next(&mut self) -> Option<Self::Item> {
+        block_on(self.0.next()).transpose()
     }
 }
 

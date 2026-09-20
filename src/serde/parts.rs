@@ -7,9 +7,9 @@ use serde_json::Value;
 use super::helpers::{scalar_to_text, Obj, Reader, VResult};
 use super::{impl_serde_via_canonical, Canonical};
 use crate::types::{
-    AudioPart, BinaryPart, CitationPart, ContinuationState, DocumentPart, ImageDetail, ImagePart,
-    Part, RefusalPart, TextPart, ThinkingPart, ToolCallPart, ToolResultPart, ValidationError,
-    VideoPart,
+    AudioPart, BinaryPart, CitationPart, ContinuationState, DataPart, DocumentPart, ImageDetail,
+    ImagePart, JudgmentMethod, Part, RefusalPart, TextPart, ThinkingPart, ToolCallPart,
+    ToolResultPart, ValidationError, VideoPart,
 };
 
 impl Canonical for ContinuationState {
@@ -128,6 +128,33 @@ impl Canonical for Part {
         let type_name = r.req_str("type")?;
         let continuation = continuation_from_json(&r)?;
         let part = match type_name.as_str() {
+            "data" => {
+                let value = value
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| ValidationError::type_error("DataPart.value is required"))?;
+                let mut probabilities = r.opt_object("probabilities")?;
+                if let Some(fields) = probabilities.as_mut() {
+                    for distribution in fields.values_mut() {
+                        if let Some(keys) = distribution.as_object_mut() {
+                            for probability in keys.values_mut() {
+                                if let Some(p) = probability.as_f64() {
+                                    *probability = super::helpers::float(p);
+                                }
+                            }
+                        }
+                    }
+                }
+                Part::Data(DataPart {
+                    value,
+                    probabilities,
+                    method: r
+                        .opt_str("method")?
+                        .map(|s| JudgmentMethod::parse(&s))
+                        .transpose()?,
+                    continuation,
+                })
+            }
             "text" => Part::Text(TextPart {
                 text: r.str_or_empty("text")?,
                 continuation,
@@ -203,6 +230,36 @@ impl Canonical for Part {
     fn to_json(&self) -> Value {
         let mut o = Obj::typed(self.type_name());
         match self {
+            Part::Data(p) => {
+                o.set("value", p.value.clone());
+                if let Some(fields) = &p.probabilities {
+                    let fields: serde_json::Map<String, Value> = fields
+                        .iter()
+                        .map(|(field, dist)| {
+                            let dist = dist
+                                .as_object()
+                                .map(|keys| {
+                                    Value::Object(
+                                        keys.iter()
+                                            .map(|(k, p)| {
+                                                (
+                                                    k.clone(),
+                                                    p.as_f64()
+                                                        .map(super::helpers::float)
+                                                        .unwrap_or_else(|| p.clone()),
+                                                )
+                                            })
+                                            .collect(),
+                                    )
+                                })
+                                .unwrap_or_else(|| dist.clone());
+                            (field.clone(), dist)
+                        })
+                        .collect();
+                    o.omit_empty("probabilities", Value::Object(fields));
+                }
+                o.opt("method", p.method.map(JudgmentMethod::as_str));
+            }
             Part::Text(p) => {
                 o.set("text", p.text.as_str());
             }
@@ -279,4 +336,16 @@ impl Canonical for Part {
     }
 }
 
-impl_serde_via_canonical!(Part, ContinuationState);
+impl Canonical for DataPart {
+    fn from_json(value: &Value) -> VResult<Self> {
+        match Part::from_json(value)? {
+            Part::Data(p) => Ok(p),
+            _ => Err(ValidationError::type_error("expected a data part")),
+        }
+    }
+    fn to_json(&self) -> Value {
+        Part::Data(self.clone()).to_json()
+    }
+}
+
+impl_serde_via_canonical!(Part, DataPart, ContinuationState);

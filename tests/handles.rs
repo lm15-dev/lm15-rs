@@ -132,10 +132,22 @@ async fn wait_returns_on_failed_and_is_elapsed_at_the_callers_deadline() {
         .await
         .unwrap_err();
     match err {
-        WaitError::Elapsed { id, status, after } => {
+        WaitError::Elapsed {
+            id,
+            status,
+            after,
+            info,
+        } => {
             assert_eq!(id, "video_1");
             assert_eq!(status, "queued");
             assert_eq!(after, Duration::from_millis(5));
+            match info {
+                lm15::jobs::WaitSnapshot::Video(info) => {
+                    assert_eq!(info.id, "video_1");
+                    assert_eq!(info.status, VideoStatus::Queued);
+                }
+                other => panic!("expected a video snapshot, got {other:?}"),
+            }
         }
         WaitError::Lm15(err) => panic!("expected Elapsed, got {err}"),
     }
@@ -190,7 +202,7 @@ fn live_2_a_turns_bill_sums_every_usage_bearing_event_absent_stays_absent() {
         reasoning_tokens: Some(3),
         ..Default::default()
     };
-    let sum = sum_usage(Some(a), &usage(1));
+    let sum = sum_usage(Some(a), &usage(1)).unwrap();
     assert_eq!(sum.input_tokens, Some(11));
     assert_eq!(sum.output_tokens, Some(6));
     assert_eq!(sum.total_tokens, Some(17));
@@ -198,7 +210,7 @@ fn live_2_a_turns_bill_sums_every_usage_bearing_event_absent_stays_absent() {
         sum.reasoning_tokens, None,
         "absent on one side: unknown, never zero"
     );
-    assert_eq!(sum_usage(None, &a), a);
+    assert_eq!(sum_usage(None, &a).unwrap(), a);
 
     let turn = materialize_turn(vec![
         LiveServerEvent::Usage(LiveServerUsageEvent { usage: usage(75) }),
@@ -213,7 +225,8 @@ fn live_2_a_turns_bill_sums_every_usage_bearing_event_absent_stays_absent() {
             media_type: None,
         }),
         LiveServerEvent::TurnEnd(LiveServerTurnEndEvent { usage: usage(20) }),
-    ]);
+    ])
+    .unwrap();
     assert_eq!(turn.ended_by, TurnEnd::TurnEnd);
     assert!(turn.ok());
     assert_eq!(turn.text, "Hello");
@@ -235,7 +248,8 @@ fn live_1_result_returns_at_a_tool_call_and_an_interrupted_turn_keeps_its_usage(
             name: "weather".into(),
             input: JsonObject::new(),
         }),
-    ]);
+    ])
+    .unwrap();
     assert_eq!(at_call.ended_by, TurnEnd::ToolCall);
     assert!(!at_call.ok());
     assert_eq!(at_call.tool_calls[0].name, "weather");
@@ -244,7 +258,8 @@ fn live_1_result_returns_at_a_tool_call_and_an_interrupted_turn_keeps_its_usage(
         text("Once upon"),
         LiveServerEvent::Usage(LiveServerUsageEvent { usage: usage(143) }),
         LiveServerEvent::Interrupted(LiveServerInterruptedEvent),
-    ]);
+    ])
+    .unwrap();
     assert_eq!(interrupted.ended_by, TurnEnd::Interrupted);
     assert_eq!(
         interrupted.usage,
@@ -254,8 +269,13 @@ fn live_1_result_returns_at_a_tool_call_and_an_interrupted_turn_keeps_its_usage(
 
     let errored = materialize_turn(vec![LiveServerEvent::Error(LiveServerErrorEvent {
         error: ErrorDetail::new(lm15::ErrorCode::Server, "boom"),
-    })]);
+    })])
+    .unwrap();
     assert_eq!(errored.ended_by, TurnEnd::Error);
     assert_eq!(errored.error.as_ref().unwrap().message, "boom");
-    assert_eq!(materialize_turn(vec![text("cut")]).ended_by, TurnEnd::Error);
+    let partial = materialize_turn(vec![text("cut")]).unwrap();
+    assert_eq!(partial.ended_by, TurnEnd::Incomplete);
+    assert_eq!(partial.text, "cut");
+    assert!(!partial.ok());
+    assert!(partial.error.is_none(), "no provider error was received");
 }

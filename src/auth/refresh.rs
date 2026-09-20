@@ -107,7 +107,8 @@ pub(crate) fn post_form(url: &str, pairs: &[(&str, &str)]) -> TransportRequest {
         ],
         body: None,
         raw: Some(form_body(pairs)),
-        read_timeout: Some(std::time::Duration::from_secs(30)),
+        read_timeout: None,
+        credential_source: None,
     }
 }
 
@@ -122,7 +123,8 @@ fn post_json(url: &str, body: Value) -> TransportRequest {
         ],
         body: Some(body),
         raw: None,
-        read_timeout: Some(std::time::Duration::from_secs(30)),
+        read_timeout: None,
+        credential_source: None,
     }
 }
 

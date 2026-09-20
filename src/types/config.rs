@@ -5,7 +5,8 @@ use serde_json::Value;
 use super::json::{opt_non_empty, positive, JsonObject, VResult, ValidationError};
 use super::tools::Tool;
 use super::vocab::{
-    CacheMode, CachePrefix, CacheRetention, ReasoningEffort, ReasoningSummary, ToolChoiceMode,
+    CacheMode, CachePrefix, CacheRetention, ProbabilityPolicy, ReasoningEffort, ReasoningSummary,
+    ToolChoiceMode,
 };
 
 /// How the model should use tools.
@@ -155,6 +156,10 @@ pub struct Config {
     pub user_id: Option<String>,
     pub store: Option<bool>,
     pub logprobs: Option<u64>,
+    pub seed: Option<i64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub probabilities: Option<ProbabilityPolicy>,
     pub extensions: Option<JsonObject>,
 }
 
@@ -176,13 +181,21 @@ impl Config {
         positive(self.max_tokens, "max_tokens")?;
         positive(self.top_k, "top_k")?;
         if let Some(t) = self.temperature {
-            if !t.is_finite() || t < 0.0 {
-                return Err(ValidationError::value("temperature must be >= 0"));
+            if !t.is_finite() || !(0.0..=2.0).contains(&t) {
+                return Err(ValidationError::value("temperature must be in [0, 2]"));
             }
         }
         if let Some(p) = self.top_p {
             if !(0.0..=1.0).contains(&p) {
                 return Err(ValidationError::value("top_p must be in [0, 1]"));
+            }
+        }
+        for (name, value) in [
+            ("frequency_penalty", self.frequency_penalty),
+            ("presence_penalty", self.presence_penalty),
+        ] {
+            if value.is_some_and(|v| !v.is_finite() || !(-2.0..=2.0).contains(&v)) {
+                return Err(ValidationError::value(format!("{name} must be in [-2, 2]")));
             }
         }
         if self.stop.iter().any(String::is_empty) {

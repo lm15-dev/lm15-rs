@@ -482,7 +482,13 @@ pub fn parse_response(
     )?;
     let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall(_)));
     let logprobs = token_logprobs(candidate.get("logprobsResult"));
+    crate::judgments::replace_text_with_data(
+        &mut parts,
+        &crate::judgments::request_judgments(request),
+    );
     Ok(Response {
+        adaptations: Vec::new(),
+        logprobs_complete: true,
         id: id_or_none(data.get("responseId")),
         model: request.model.clone(),
         message: Message {
@@ -556,6 +562,7 @@ pub fn parse_stream_event(
     if let Some(inband) = inband_error(provider, &payload) {
         out.push(StreamEvent::Error(StreamErrorEvent {
             error: crate::types::ErrorDetail {
+                http_response: inband.meta().http_response(),
                 code: inband.code(),
                 message: inband.to_string(),
                 provider_code: Some("inband_finish_reason".into()),
@@ -590,6 +597,7 @@ pub fn parse_stream_event(
             } else if part.contains_key("text") {
                 yielded_delta = true;
                 out.push(delta(Delta::Text(TextDelta {
+                    logprobs_complete: true,
                     text: str_or_empty(part.get("text")),
                     part_index: idx,
                     logprobs: std::mem::take(&mut chunk_logprobs),

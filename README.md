@@ -2,17 +2,30 @@
 
 The Rust port of lm15: one canonical request/response model over every
 provider the [lm15-contract](https://github.com/lm15-dev/lm15-contract)
-names, byte-exact against its corpus. Async on tokio, with a `blocking`
-feature that mirrors the same names.
+declares. Async on tokio, with a `blocking` feature that mirrors the same
+names. Canonical representation and wire behavior target the contract corpus.
 
-The contract commit this port is built against is in `CONTRACT_PIN`;
-`harness/check.py` refuses to grade the port against any other commit.
+`CONTRACT_PIN` names the **declared implementation target**, not a proof of
+conformance. `harness/check.py` grades against that target.
 
 ## Status
 
-**Contract-complete.** Every harness direction is green at the pin, with
-zero failures and no skips added; the two skips are corpus gaps
-(`openai.computer_use` has no canonical request and no golden).
+The September 20 catch-up adds visible adaptations, score-preserving local
+stops, judgments/TypeSafe/token scoring, named cloud identities and endpoint
+roots, bounded diagnostics/compression/connection budgets, bounded live turn
+collection, complete blocking endpoints, and router-local declarations.
+See [catch-up APIs and boundaries](docs/catchup.md).
+
+**Verification is deliberately pending:** no builds, tests, typechecks or
+linters were run. Changed Rust sources were formatted with `rcargo fmt`;
+regression sources and fixture consumers remain unexecuted.
+
+### Historical verification (before this catch-up)
+
+The following numbers describe the earlier September 11 implementation and
+its old `cfed007` contract target. They do **not** certify the current tree.
+The two historical skips were corpus gaps (`openai.computer_use` lacked a
+canonical request and golden).
 
 | Direction | Contract surface | Result |
 |---|---|---|
@@ -30,7 +43,7 @@ zero failures and no skips added; the two skips are corpus gaps
 | `live` | the websocket codec (OpenAI Realtime, Gemini Live) | 24 / 0 |
 | `ingest` | MAP-12: a Chat Completions request body → `Request` under one preset's spellings; the 118 recorded chat bodies round-trip (21 pinned lossy), 42 foreign shapes (11 refusals; the SDK's and litellm's dumped message objects, `annotations` → CitationPart). Provisional; module 4b | 160 / 0 |
 
-Beyond the harness: 399 unit and integration tests, zero `unsafe`, zero
+Historical checks beyond the harness: 399 unit and integration tests, zero
 clippy warnings at `-D warnings`; the AUTH-3/4 write side (token refresh
 under the cross-process lock) and the AUTH-9 login door, which no
 direction covers, are proven by `tests/login_refresh.rs` on real files
@@ -619,7 +632,8 @@ tool call on the complete path became the contract on 2026-09-07
 
 ## Not implemented, stated
 
-- `surface_dump` (reflection; not a gate).
+- Python-style runtime reflection/function introspection. Rust instead exposes
+  `tooling::surface_dump()`, driven by canonical declarations (not a gate).
 - `aws-event-stream` framing: a `StreamFraming` vocabulary value no
   declared door uses (every Bedrock door streams SSE). A host that named
   it would be refused with `UnsupportedFeatureError` on `stream` —
@@ -628,12 +642,14 @@ tool call on the complete path became the contract on 2026-09-07
   port *may* ship): no flow this port owns uses one, and a listener is a
   server with its own attack surface; it is built when a flow needs it.
   PKCE S256 and RFC 8628 device polling are shipped.
-- Cloud-chain gaps that carry over from the reference: `aws login`
-  refresh (a DPoP proof over the cached EC key), Azure Service Fabric
-  managed identity, GCP `external_account` with an AWS
-  `credential_source`, `external_account_authorized_user`,
-  `gdch_service_account`. Each answers the typed `NotConfiguredError`
-  naming the gap and the fix; none falls through silently.
+- Cloud-chain gaps shared with the reference remain outside this catch-up:
+  `aws login` DPoP refresh (fresh cached credentials still work), Azure
+  Service Fabric managed identity, and GCP `external_account` with an AWS
+  `credential_source`. Each raises typed `NotConfiguredError` naming the gap
+  and remedy, without silent fallback. `external_account_authorized_user`,
+  `gdch_service_account`, interactive/broker identities, and encrypted/PKCS#12
+  keys also remain unsupported. Named identities and endpoint overrides do
+  not expand these mechanisms; see [catch-up boundaries](docs/catchup.md).
 - Rung 0 and catalog discovery (stated above); the profile layers of
   `lm15/profiles.py` (deprecated in the reference, never ported:
   `changes/2026-09-11-job-handles-live-turns-profiles.md` § 3).
@@ -664,7 +680,8 @@ tool call on the complete path became the contract on 2026-09-07
   `OpenAIChatCompat`, their `Resolved*` forms and the preset tables.
 - `src/adapter.rs` — `ProviderLM`, `LmBuilder`, the named constructors,
   `complete` / `stream` and every surface method, `StreamDecoder`.
-- `src/dialects/` — the four codecs: request side, response side
+- `src/dialects/` — four generation codecs plus TypeSafe System One:
+  request side, response side
   (`response.rs`), and the surfaces (`files.rs`, `batch.rs`,
   `generation.rs`, `video.rs`, `live.rs`, Gemini's `cache.rs`);
   `content.rs` is MAP-10, `wire_json.rs` the shared provider-JSON

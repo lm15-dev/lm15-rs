@@ -30,12 +30,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use futures_util::StreamExt;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::auth::{
     format_rfc3339, parse_rfc3339, AccessPolicy, AuthError, Credential, CredentialPolicy,
-    CredentialProvider,
+    CredentialProvider, CredentialSource,
 };
 use crate::cloud::hosts::HostSettings;
 use crate::cloud::ini::{Ini, Section};
@@ -44,6 +45,7 @@ use crate::cloud::sigv4::{self, AwsKeys, SigningRequest};
 use crate::transport::{BoxFuture, Transport};
 use crate::wire::TransportRequest;
 
+const MAX_CREDENTIAL_BYTES: usize = 1024 * 1024;
 const SKEW_SECONDS: i64 = 300; // AUTH-3
 const GCP_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 const GCP_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -179,23 +181,32 @@ impl ChainContext {
             body: None,
             raw: body,
             read_timeout: Some(std::time::Duration::from_secs(timeout_secs)),
+            credential_source: None,
         };
-        let mut response = transport
-            .send(request)
-            .await
-            .map_err(|err| AuthError::Rejected {
-                provider: None,
-                message: format!("{url}: {}", err.message()),
-                hint: None,
-            })?;
-        let status = response.status;
-        let headers = std::mem::take(&mut response.headers);
-        let body = response.read().await.map_err(|err| AuthError::Rejected {
-            provider: None,
-            message: format!("{url}: {}", err.message()),
-            hint: None,
-        })?;
-        Ok((status, headers, body))
+        // Credential exchanges are small and finite, unlike inference streams.
+        // Bound the entire operation and decoded body, including custom transports.
+        // Never render a transport error: it can contain a token-bearing URL/body.
+        tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
+            let mut response = transport
+                .send(request)
+                .await
+                .map_err(|_| rejected("credential HTTP request failed".into()))?;
+            let status = response.status;
+            let headers = std::mem::take(&mut response.headers);
+            let mut stream = response.into_body();
+            let mut body = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                let chunk =
+                    chunk.map_err(|_| rejected("credential HTTP response failed".into()))?;
+                if chunk.len() > MAX_CREDENTIAL_BYTES - body.len() {
+                    return Err(rejected("credential HTTP response exceeds 1 MiB".into()));
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok((status, headers, body))
+        })
+        .await
+        .map_err(|_| rejected("credential HTTP request timed out".into()))?
     }
 
     /// Like `http` but a connection failure is "not there" (metadata
@@ -2361,8 +2372,8 @@ fn probe(
                 )
             } else {
                 (
-                    Verdict::Configured,
-                    "cached credentials missing or expired; refresh needs `aws login`".into(),
+                    Verdict::Absent,
+                    "cached credentials missing or expired; DPoP refresh is not supported; run `aws login`".into(),
                 )
             }
         }
@@ -2463,6 +2474,11 @@ fn probe(
                     Verdict::Absent,
                     "excluded by AZURE_TOKEN_CREDENTIALS".into(),
                 )
+            } else if azure_msi_flavor(ctx) == "service-fabric" {
+                (
+                    Verdict::Absent,
+                    "Service Fabric managed identity (TLS thumbprint pinning) is not supported; use a certificate or secret".into(),
+                )
             } else {
                 (
                     Verdict::Configured,
@@ -2503,6 +2519,12 @@ fn probe(
                 None => (Verdict::Absent, format!("{label} not set")),
                 Some(path) => match gcp_credential_file(ctx, &path)? {
                     None => (Verdict::Absent, format!("{path} missing or unreadable")),
+                    Some(info) if info.get("type").and_then(Value::as_str) == Some("external_account")
+                        && info.get("credential_source").and_then(Value::as_object)
+                            .is_some_and(|source| source.contains_key("environment_id")) => (
+                        Verdict::Absent,
+                        format!("{path}: external_account with an AWS credential_source is not supported; use a file/url/executable source or a service account"),
+                    ),
                     Some(info) => (
                         Verdict::Configured,
                         format!(
@@ -2638,6 +2660,125 @@ async fn acquire(
 
 // ─── Explain and resolve ─────────────────────────────────────────────
 
+/// The four deterministic identity selections (AUTH-1, 2026-09-19).
+pub const NAMED_CREDENTIALS: &[&str] = &["platform", "workload", "environment", "cli"];
+
+pub fn named_meaning(policy: &AccessPolicy, name: &str) -> Result<&'static str, AuthError> {
+    use CredentialPolicy::*;
+    Ok(match (policy.credential_policy, name) {
+        (AwsChain, "platform") => "the ECS/EKS container endpoint, then EC2 IMDSv2",
+        (AwsChain, "workload") => "web identity via AWS_WEB_IDENTITY_TOKEN_FILE and AWS_ROLE_ARN",
+        (AwsChain, "environment") => "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY",
+        (AwsChain, "cli") => {
+            "the active AWS profile: assume-role, SSO, shared files, login, credential_process"
+        }
+        (AzureChain, "platform") => "Azure managed identity",
+        (AzureChain, "workload") => "Entra workload identity via AZURE_FEDERATED_TOKEN_FILE",
+        (AzureChain, "environment") => {
+            "an Entra service principal: tenant, client, secret or certificate"
+        }
+        (AzureChain, "cli") => "az, Azure PowerShell, or azd sign-in",
+        (GcpChain, "platform") => "the attached service account via GCE metadata",
+        (GcpChain, "workload") => "GOOGLE_APPLICATION_CREDENTIALS of type external_account",
+        (GcpChain, "environment") => {
+            "GOOGLE_APPLICATION_CREDENTIALS of type service_account or impersonated_service_account"
+        }
+        (GcpChain, "cli") => "the ADC file or gcloud auth print-access-token",
+        _ => {
+            return Err(AuthError::NotConfigured {
+                provider: Some(policy.provider.into()),
+                message: if !NAMED_CREDENTIALS.contains(&name) {
+                    format!("unknown named credential {name:?}; expected platform, workload, environment, or cli")
+                } else {
+                    "named credentials require a cloud door".into()
+                },
+                hint: None,
+            })
+        }
+    })
+}
+
+pub fn chain_for_named(policy: &AccessPolicy, name: &str) -> Result<Vec<Rung>, AuthError> {
+    named_meaning(policy, name)?;
+    use CredentialPolicy::*;
+    let allowed: &[&str] = match (policy.credential_policy, name) {
+        (AwsChain, "platform") => &["container", "imds"],
+        (AwsChain, "workload") => &["web-identity"],
+        (AwsChain, "environment") => &["env:AWS_ACCESS_KEY_ID"],
+        (AwsChain, "cli") => &[
+            "assume-role",
+            "sso",
+            "shared-credentials-file",
+            "login",
+            "credential_process",
+            "config-file",
+        ],
+        (AzureChain, "platform") => &["managed-identity"],
+        (AzureChain, "workload") => &["workload-identity"],
+        (AzureChain, "environment") => &["environment"],
+        (AzureChain, "cli") => &["az", "pwsh", "azd"],
+        (GcpChain, "platform") => &["metadata"],
+        (GcpChain, "workload" | "environment") => &["adc-env"],
+        (GcpChain, "cli") => &["adc-file", "gcloud"],
+        _ => unreachable!("validated above"),
+    };
+    Ok(chain_for(policy)?
+        .into_iter()
+        .filter(|rung| allowed.contains(&rung.name.as_str()))
+        .collect())
+}
+
+fn walk(policy: &AccessPolicy, named: Option<&str>) -> Result<Vec<Rung>, AuthError> {
+    match named {
+        Some(name) => chain_for_named(policy, name),
+        None => chain_for(policy),
+    }
+}
+
+fn check_named_file(
+    policy: &AccessPolicy,
+    ctx: &ChainContext,
+    named: Option<&str>,
+) -> Result<(), AuthError> {
+    if policy.credential_policy != CredentialPolicy::GcpChain {
+        return Ok(());
+    }
+    let Some(name @ ("workload" | "environment")) = named else {
+        return Ok(());
+    };
+    let Some(path) = ctx.env("GOOGLE_APPLICATION_CREDENTIALS") else {
+        return Ok(());
+    };
+    let Some(text) = ctx.read(path) else {
+        return Ok(());
+    };
+    let info: Value = serde_json::from_str(&text).map_err(|_| {
+        not_configured("GOOGLE_APPLICATION_CREDENTIALS must contain a credential object".into())
+    })?;
+    let kind = info.get("type").and_then(Value::as_str).unwrap_or("");
+    let allowed = if name == "workload" {
+        kind == "external_account"
+    } else {
+        matches!(kind, "service_account" | "impersonated_service_account")
+    };
+    if !allowed {
+        let other = if name == "workload" {
+            "environment"
+        } else {
+            "workload"
+        };
+        let actual = match kind {
+            "service_account" => "service_account",
+            "impersonated_service_account" => "impersonated_service_account",
+            "external_account" => "external_account",
+            "authorized_user" => "authorized_user",
+            _ => "missing or unsupported type",
+        };
+        return Err(AuthError::NotConfigured { provider: Some(policy.provider.into()), message: format!("GOOGLE_APPLICATION_CREDENTIALS holds {actual} credentials, not named credential {name:?}; {other:?} names the other file identity type"), hint: None });
+    }
+    Ok(())
+}
+
 /// The AUTH-7 walk. `explicit`: an `api_keys` entry exists (rung 0).
 /// Returns the steps and whether something may supply the credential (a
 /// rung selected offline, or a configured network/subprocess rung the
@@ -2646,6 +2787,29 @@ pub fn explain(
     policy: &AccessPolicy,
     ctx: &ChainContext,
     explicit: bool,
+) -> Result<(Vec<Step>, bool), AuthError> {
+    explain_walk(policy, ctx, explicit, None)
+}
+
+pub fn explain_named(
+    policy: &AccessPolicy,
+    ctx: &ChainContext,
+    explicit: bool,
+    name: &str,
+) -> Result<(Vec<Step>, bool), AuthError> {
+    if explicit {
+        return Err(not_configured(
+            "both api_keys and credentials select this provider's identity".into(),
+        ));
+    }
+    explain_walk(policy, ctx, explicit, Some(name))
+}
+
+fn explain_walk(
+    policy: &AccessPolicy,
+    ctx: &ChainContext,
+    explicit: bool,
+    named: Option<&str>,
 ) -> Result<(Vec<Step>, bool), AuthError> {
     let mut steps = Vec::new();
     let mut selected = false;
@@ -2660,14 +2824,15 @@ pub fn explain(
         state: if explicit { "selected" } else { "absent" },
     });
     selected |= explicit;
-    for rung in chain_for(policy)? {
-        let (verdict, detail) = match probe(policy, &rung, ctx) {
-            Ok(result) => result,
-            Err(err) => (
-                Verdict::Absent,
-                err.to_string().lines().next().unwrap_or("").to_string(),
-            ),
-        };
+    for rung in walk(policy, named)? {
+        let (verdict, detail) =
+            match check_named_file(policy, ctx, named).and_then(|_| probe(policy, &rung, ctx)) {
+                Ok(result) => result,
+                Err(err) => (
+                    Verdict::Absent,
+                    err.to_string().lines().next().unwrap_or("").to_string(),
+                ),
+            };
         let state = match verdict {
             Verdict::Absent => "absent",
             Verdict::Configured => {
@@ -2703,10 +2868,30 @@ pub fn explain(
 /// reported. Deployed Azure credentials and AWS/GCP failures never fall
 /// through.
 pub async fn resolve(policy: &AccessPolicy, ctx: &ChainContext) -> Result<Credential, AuthError> {
+    resolve_sourced(policy, ctx, None)
+        .await
+        .map(|(value, _)| value)
+}
+
+pub async fn resolve_sourced(
+    policy: &AccessPolicy,
+    ctx: &ChainContext,
+    named: Option<&str>,
+) -> Result<(Credential, CredentialSource), AuthError> {
+    let rungs = walk(policy, named)?;
+    check_named_file(policy, ctx, named)?;
     let mut developer_failed = false;
-    for rung in chain_for(policy)? {
-        match acquire(policy, &rung, ctx).await {
-            Ok(Some(credential)) => return Ok(credential),
+    for rung in &rungs {
+        match acquire(policy, rung, ctx).await {
+            Ok(Some(credential)) => {
+                let source = CredentialSource {
+                    kind: rung.name.clone(),
+                    label: rung.source.clone(),
+                    named: named.map(str::to_string),
+                    expires_at: credential.expires_at(),
+                };
+                return Ok((credential, source));
+            }
             Ok(None) => {}
             Err(err) => {
                 let developer = policy.credential_policy == CredentialPolicy::AzureChain
@@ -2715,6 +2900,39 @@ pub async fn resolve(policy: &AccessPolicy, ctx: &ChainContext) -> Result<Creden
                     developer_failed = true;
                     continue;
                 }
+                let err = match err {
+                    AuthError::NotConfigured {
+                        provider,
+                        message,
+                        hint,
+                    } => AuthError::NotConfigured {
+                        provider,
+                        message: format!(
+                            "{message}\nCredential source: {}{}",
+                            rung.source,
+                            named
+                                .map(|name| format!(" (named credential {name:?})"))
+                                .unwrap_or_default()
+                        ),
+                        hint,
+                    },
+                    AuthError::Rejected {
+                        provider,
+                        message,
+                        hint,
+                    } => AuthError::Rejected {
+                        provider,
+                        message: format!(
+                            "{message}\nCredential source: {}{}",
+                            rung.source,
+                            named
+                                .map(|name| format!(" (named credential {name:?})"))
+                                .unwrap_or_default()
+                        ),
+                        hint,
+                    },
+                    other => other,
+                };
                 return Err(with_provider(err, policy.provider));
             }
         }
@@ -2726,6 +2944,23 @@ pub async fn resolve(policy: &AccessPolicy, ctx: &ChainContext) -> Result<Creden
                 "Azure developer credentials failed; sign in with az, Azure PowerShell, or azd"
                     .into(),
             hint: None,
+        });
+    }
+    if let Some(name) = named {
+        let probes = rungs
+            .iter()
+            .map(|rung| {
+                let detail = probe(policy, rung, ctx)
+                    .map(|(_, detail)| detail)
+                    .unwrap_or_else(|err| err.to_string());
+                format!("{}: {detail}", rung.source)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(AuthError::NotConfigured {
+            provider: Some(policy.provider.into()),
+            message: format!("named credential {name:?} — {} — answered nothing ({probes}); no other rung of the {} chain will be tried", named_meaning(policy, name)?, policy.credential_policy.as_str()),
+            hint: Some("configure this identity, or omit the named credential to walk the chain".into()),
         });
     }
     Err(AuthError::NotConfigured {
@@ -2773,7 +3008,8 @@ fn with_provider(err: AuthError, provider: &str) -> AuthError {
 pub struct ChainProvider {
     policy: &'static AccessPolicy,
     ctx: ChainContext,
-    cached: Mutex<Option<Credential>>,
+    cached: Mutex<Option<(Credential, CredentialSource)>>,
+    named: Option<String>,
 }
 
 impl ChainProvider {
@@ -2782,7 +3018,24 @@ impl ChainProvider {
             policy,
             ctx,
             cached: Mutex::new(None),
+            named: None,
         }
+    }
+
+    pub fn named(
+        policy: &'static AccessPolicy,
+        ctx: ChainContext,
+        name: &str,
+    ) -> Result<Self, AuthError> {
+        chain_for_named(policy, name)?;
+        Ok(Self {
+            named: Some(name.into()),
+            ..Self::new(policy, ctx)
+        })
+    }
+
+    pub fn named_credential(&self) -> Option<&str> {
+        self.named.as_deref()
     }
 
     /// Provider id + the identity-selecting settings (AUTH-3).
@@ -2797,6 +3050,9 @@ impl ChainProvider {
             e("CLOUDSDK_CONFIG"),
             self.ctx.home.display().to_string(),
         ];
+        if let Some(name) = &self.named {
+            parts.push(format!("credential={name}"));
+        }
         parts.extend(self.ctx.settings.iter().map(|(k, v)| format!("{k}={v}")));
         let digest = Sha256::digest(parts.join("\u{1f}").as_bytes());
         digest.iter().map(|b| format!("{b:02x}")).collect()
@@ -2810,38 +3066,56 @@ impl ChainProvider {
         let cached = self.cached.lock().unwrap_or_else(|p| p.into_inner());
         cached
             .as_ref()
-            .filter(|c| !c.is_expired_at(self.now()))
-            .cloned()
+            .filter(|(c, _)| !c.is_expired_at(self.now()))
+            .map(|(c, _)| c.clone())
     }
 
     /// Resolve (or refresh) the cached credential.
     pub async fn refresh(&self) -> Result<Credential, AuthError> {
         if let Some(credential) = self.fresh() {
-            return Ok(credential);
+            // A token with no expiry must resolve on every prepare, but remains
+            // available to credential() for the request being prepared.
+            if !matches!(
+                &credential,
+                Credential::BearerToken {
+                    expires_at: None,
+                    ..
+                }
+            ) {
+                return Ok(credential);
+            }
         }
         let mut ctx = self.ctx.clone();
         ctx.now = self.now();
-        let value = resolve(self.policy, &ctx).await?;
+        let (value, source) = resolve_sourced(self.policy, &ctx, self.named.as_deref()).await?;
         if value.is_expired_at(ctx.now) {
             return Err(AuthError::Rejected {
                 provider: Some(self.policy.provider.to_string()),
-                message: "cloud credential is expired; renew the configured credential source"
-                    .into(),
+                message: format!("cloud credential is expired; renew the configured credential source\nCredential source: {}", source.describe()),
                 hint: None,
             });
         }
-        // CLI output without an expiry cannot safely be cached forever.
-        let cacheable = match &value {
-            Credential::ApiKey { .. } | Credential::AwsCredentials { .. } => true,
-            Credential::BearerToken { expires_at, .. } => expires_at.is_some(),
-        };
         let mut cached = self.cached.lock().unwrap_or_else(|p| p.into_inner());
-        *cached = if cacheable { Some(value.clone()) } else { None };
+        *cached = Some((value.clone(), source));
         Ok(value)
     }
 }
 
 impl CredentialProvider for ChainProvider {
+    fn credential_with_source(&self) -> Result<(Credential, Option<CredentialSource>), AuthError> {
+        let cached = self.cached.lock().unwrap_or_else(|p| p.into_inner());
+        match cached.as_ref().filter(|(value, _)| !value.is_expired_at(self.now())) {
+            Some((value, source)) => Ok((value.clone(), Some(source.clone()))),
+            None => Err(AuthError::NotConfigured { provider: Some(self.policy.provider.into()), message: "the cloud credential has not been prepared or has expired; call prepare before request build".into(), hint: None }),
+        }
+    }
+    fn source(&self) -> Option<CredentialSource> {
+        self.cached
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|(_, source)| source.clone())
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         self.fresh().ok_or_else(|| AuthError::NotConfigured {
             provider: Some(self.policy.provider.to_string()),

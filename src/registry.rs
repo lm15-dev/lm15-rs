@@ -17,6 +17,7 @@ pub enum DialectId {
     OpenaiChat,
     Anthropic,
     Gemini,
+    Typesafe,
 }
 
 impl DialectId {
@@ -26,6 +27,7 @@ impl DialectId {
             DialectId::OpenaiChat => "openai-chat",
             DialectId::Anthropic => "anthropic",
             DialectId::Gemini => "gemini",
+            DialectId::Typesafe => "typesafe",
         }
     }
 
@@ -37,6 +39,7 @@ impl DialectId {
             DialectId::OpenaiResponses | DialectId::OpenaiChat => "https://api.openai.com/v1",
             DialectId::Anthropic => "https://api.anthropic.com/v1",
             DialectId::Gemini => "https://generativelanguage.googleapis.com/v1beta",
+            DialectId::Typesafe => "https://api.typesafe.ai",
         }
     }
 
@@ -47,7 +50,7 @@ impl DialectId {
         match self {
             DialectId::OpenaiResponses | DialectId::OpenaiChat => "openai",
             DialectId::Anthropic => "anthropic",
-            DialectId::Gemini => "",
+            DialectId::Gemini | DialectId::Typesafe => "",
         }
     }
 
@@ -58,6 +61,7 @@ impl DialectId {
             DialectId::OpenaiChat => "Chat Completions",
             DialectId::Anthropic => "Messages",
             DialectId::Gemini => "generateContent",
+            DialectId::Typesafe => "System One",
         }
     }
 }
@@ -157,6 +161,11 @@ pub const PROVIDERS: &[ProviderDefinition] = &[
     ),
     owned("anthropic", DialectId::Anthropic, "Anthropic Messages API"),
     owned("gemini", DialectId::Gemini, "Google Gemini API"),
+    owned(
+        "typesafe",
+        DialectId::Typesafe,
+        "TypeSafe System One (Jev) judgments",
+    ),
     ProviderDefinition {
         compat: Some("xai"),
         ..owned(
@@ -354,7 +363,9 @@ pub fn adapter_for(
                 .join(", ")
         ))
     })?;
-    let mut builder = LmBuilder::for_entry(definition).api_key(credential);
+    let mut builder = LmBuilder::for_entry(definition)
+        .api_key(credential)
+        .env(Default::default());
     if let Some(base_url) = base_url {
         builder = builder.base_url(base_url);
     }
@@ -397,7 +408,7 @@ mod tests {
             DialectId::Anthropic
         );
         assert!(lookup("nope").is_none());
-        assert_eq!(PROVIDERS.len(), 31);
+        assert_eq!(PROVIDERS.len(), 32);
     }
 
     /// Every registry entry has a policy of the same id, and the hosted
@@ -417,7 +428,7 @@ mod tests {
                     DialectId::OpenaiChat => {
                         crate::compat::OpenAIChatCompat::preset(name).is_some()
                     }
-                    DialectId::Gemini => false,
+                    DialectId::Gemini | DialectId::Typesafe => false,
                 };
                 assert!(known, "{}: preset {name}", d.id);
             }

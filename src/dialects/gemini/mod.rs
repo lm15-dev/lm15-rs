@@ -151,6 +151,12 @@ fn tools(request: &Request) -> Option<Value> {
 /// `systemInstruction`, `generationConfig`, `toolConfig`, `tools`,
 /// `store`, `serviceTier`, then `extensions` verbatim.
 fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error> {
+    crate::dialects::content::validate_slots(
+        request,
+        cx.provider,
+        "gemini",
+        crate::compat::ToolResultMedia::Native,
+    )?;
     let config = &request.config;
 
     // MAP-6 on Gemini: the automatic tier needs nothing; prefix intents
@@ -169,7 +175,10 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
 
     // The tool-choice refusals (MAP-8) are about the caller's intent and
     // fire even when a cached resource makes `toolConfig` unsendable.
-    let tool_config = tool_config(request, cx)?;
+    let tool_config = tool_config(request, cx).map_err(|mut e| {
+        e.meta_mut().feature = Some("config.tool_choice.allowed".into());
+        e
+    })?;
 
     let mut body = Map::new();
     body.insert("contents".into(), contents(wire_messages, request, cx)?);
@@ -226,10 +235,13 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
         body.insert("serviceTier".into(), Value::String(tier.clone()));
     }
     if config.user_id.is_some() {
-        return Err(unsupported(
-            cx,
-            "config.user_id is not supported — GenerateContent has no end-user attribution field (OpenAI and Anthropic carry it)".into(),
-        ));
+        crate::adaptation::adapt(
+            "config.user_id",
+            crate::adaptation::AdaptationAction::Dropped,
+            config.user_id.clone().map(Value::String),
+            None,
+            "GenerateContent has no end-user attribution field",
+        )?;
     }
 
     // Passthrough (INV-049): every other extension key lands at the top

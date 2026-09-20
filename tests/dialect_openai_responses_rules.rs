@@ -44,6 +44,27 @@ fn build_with(compat: OpenAIResponsesCompat, value: Value) -> Result<TransportRe
     lm.build_request(&request(value), false)
 }
 
+// Pre-MAP-13 deviation checks retain their assertions under the opt-in policy.
+fn build_strict(provider: &str, value: Value, stream: bool) -> Result<TransportRequest, Lm15Error> {
+    let lm = adapter_for(provider, "k", None, None, Some(Box::new(FixedClock(0))))
+        .unwrap()
+        .with_adaptations(lm15::AdaptationPolicy::Refuse);
+    lm.build_request(&request(value), stream)
+}
+
+fn build_with_strict(
+    compat: OpenAIResponsesCompat,
+    value: Value,
+) -> Result<TransportRequest, Lm15Error> {
+    let lm = OpenAILM::builder()
+        .api_key("k")
+        .compat(Compat::OpenAIResponses(compat))
+        .adaptations(lm15::AdaptationPolicy::Refuse)
+        .build()
+        .unwrap();
+    lm.build_request(&request(value), false)
+}
+
 fn body(result: Result<TransportRequest, Lm15Error>) -> Map<String, Value> {
     match result.unwrap().body.unwrap() {
         Value::Object(body) => body,
@@ -125,9 +146,9 @@ fn the_body_keeps_the_reference_insertion_order() {
 // ─── MAP-5 / MAP-7: reasoning ────────────────────────────────────────
 
 #[test]
-fn map7_thinking_budget_refuses_on_this_wire() {
+fn map7_thinking_budget_refuses_under_strict_policy() {
     let err = refusal(
-        build(
+        build_strict(
             "openai",
             json!({"model": "gpt-5-mini", "messages": [user("hi")],
                    "config": {"reasoning": {"effort": "low", "thinking_budget": 2048}}}),
@@ -169,7 +190,7 @@ fn map5_off_with_no_reasoning_field_refuses_instead_of_a_silent_no_op() {
     let compat =
         compat_with(|c| c.reasoning_format = Some(Knob::Set(OpenAIResponsesReasoningFormat::None)));
     refusal(
-        build_with(
+        build_with_strict(
             compat.clone(),
             json!({"model": "m", "messages": [user("hi")], "config": {"reasoning": {"effort": "off"}}}),
         ),
@@ -178,7 +199,7 @@ fn map5_off_with_no_reasoning_field_refuses_instead_of_a_silent_no_op() {
     );
     // MAP-7.2: a level with no native field refuses too.
     refusal(
-        build_with(
+        build_with_strict(
             compat,
             json!({"model": "m", "messages": [user("hi")], "config": {"reasoning": {"effort": "high"}}}),
         ),
@@ -234,7 +255,7 @@ fn map7_summary_levels_refuse_where_the_wire_has_none() {
         c.reasoning_format = Some(Knob::Set(OpenAIResponsesReasoningFormat::ReasoningEffort))
     });
     refusal(
-        build_with(
+        build_with_strict(
             compat,
             json!({"model": "m", "messages": [user("hi")],
                    "config": {"reasoning": {"effort": "low", "summary": "concise"}}}),
@@ -394,7 +415,7 @@ fn map6_prefix_intents_place_the_mark_and_the_mode_together() {
 fn map6_a_breakpoint_that_cannot_ride_a_text_block_refuses() {
     // An assistant message at the index.
     refusal(
-        build(
+        build_strict(
             "openai",
             json!({"model": "gpt-5.6-sol", "messages": [user("q"),
                    {"role": "assistant", "parts": [{"type": "text", "text": "a"}]}, user("r")],
@@ -406,7 +427,7 @@ fn map6_a_breakpoint_that_cannot_ride_a_text_block_refuses() {
     );
     // A user message that ends with an image.
     refusal(
-        build(
+        build_strict(
             "openai",
             json!({"model": "gpt-5.6-sol", "messages": [{"role": "user", "parts": [
                    {"type": "text", "text": "a"},
@@ -1028,7 +1049,7 @@ fn the_codex_backend_payload_and_headers() {
     let built = lm
         .build_request(
             &request(json!({"model": "gpt-5-codex", "messages": [user("hi")],
-                            "config": {"max_tokens": 10, "store": true}})),
+                            "config": {"store": true}})),
             false,
         )
         .unwrap();
@@ -1039,6 +1060,18 @@ fn the_codex_backend_payload_and_headers() {
     assert_eq!(body["store"], json!(false));
     assert_eq!(body["stream"], json!(true));
     assert!(!body.contains_key("max_output_tokens"));
+    // MAP-13 condition (d): an explicitly bounded request must never become
+    // unbounded merely because the Codex backend has no output-cap field.
+    let err = refusal(
+        lm.build_request(
+            &request(json!({"model": "gpt-5-codex", "messages": [user("hi")],
+            "config": {"max_tokens": 10}})),
+            false,
+        ),
+        "UnsupportedFeatureError",
+        "unsupported_feature",
+    );
+    assert_eq!(err.feature(), Some("config.max_tokens"));
     // `lm15/access.py:120-134`: the static headers, then the bearer.
     assert_eq!(built.header("openai-beta"), Some("responses=experimental"));
     assert_eq!(built.header("originator"), Some("lm15"));

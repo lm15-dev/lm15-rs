@@ -25,6 +25,8 @@
 //! target has no unwinding), and the host's glue reports that as a
 //! failed call — stated, not hidden.
 
+mod scoring_codec;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -81,12 +83,19 @@ pub unsafe extern "C" fn lm15_free(ptr: *mut u8, len: usize) {
 /// Both pointers must address `*_len` readable bytes in this module's
 /// memory (from `lm15_alloc`).
 #[no_mangle]
-pub unsafe extern "C" fn lm15_call(op: *const u8, op_len: usize, input: *const u8, in_len: usize) -> *mut u8 {
+pub unsafe extern "C" fn lm15_call(
+    op: *const u8,
+    op_len: usize,
+    input: *const u8,
+    in_len: usize,
+) -> *mut u8 {
     let op = std::slice::from_raw_parts(op, op_len);
     let input = std::slice::from_raw_parts(input, in_len);
     let reply = match std::panic::catch_unwind(|| dispatch(op, input)) {
         Ok(value) => value,
-        Err(_) => json!({"error": {"name": "InternalError", "code": "internal", "message": "the codec panicked; this is a bug in lm15-rs"}}),
+        Err(_) => {
+            json!({"error": {"name": "InternalError", "code": "internal", "message": "the codec panicked; this is a bug in lm15-rs"}})
+        }
     };
     let text = serde_json::to_vec(&reply).unwrap_or_else(|_| b"{}".to_vec());
     let mut out = Vec::with_capacity(text.len() + 4);
@@ -99,7 +108,11 @@ pub unsafe extern "C" fn lm15_call(op: *const u8, op_len: usize, input: *const u
 
 fn dispatch(op: &[u8], input: &[u8]) -> Value {
     let op = String::from_utf8_lossy(op);
-    let parsed: Result<Value, _> = if input.is_empty() { Ok(Value::Object(Map::new())) } else { serde_json::from_slice(input) };
+    let parsed: Result<Value, _> = if input.is_empty() {
+        Ok(Value::Object(Map::new()))
+    } else {
+        serde_json::from_slice(input)
+    };
     let msg = match parsed {
         Ok(Value::Object(map)) => map,
         Ok(_) => return failure(&configuration("the input must be a JSON object")),
@@ -114,24 +127,93 @@ fn dispatch(op: &[u8], input: &[u8]) -> Value {
 fn run(op: &str, msg: &Map<String, Value>) -> Result<Value, Lm15Error> {
     match op {
         "version" => Ok(json!({"version": env!("CARGO_PKG_VERSION"), "language": "rust"})),
-        "providers" => Ok(json!({"providers": crate::registry::PROVIDERS.iter().map(|d| d.id).collect::<Vec<_>>()})),
+        "providers" => Ok(
+            json!({"providers": crate::registry::PROVIDERS.iter().map(|d| d.id).collect::<Vec<_>>()}),
+        ),
+        "surface_dump" => Ok(crate::tooling::surface_dump()),
+        "serde_roundtrip" | "validate" => {
+            let kind = msg
+                .get("kind")
+                .and_then(Value::as_str)
+                .ok_or_else(|| configuration("kind must be a string"))?;
+            let value = msg
+                .get("value")
+                .ok_or_else(|| configuration("value is required"))?;
+            let value =
+                crate::serde::roundtrip(kind, value).map_err(|e| configuration(e.message))?;
+            Ok(if op == "validate" {
+                json!({"ok":true,"normalized":value})
+            } else {
+                json!({"value":value})
+            })
+        }
+        "scoring_plan" | "scoring_build" | "scoring_parse" => {
+            // Parse may return an authenticated fallback request; retain the
+            // caller's credential rather than emitting a parse-only placeholder.
+            let lm = adapter(msg, true)?;
+            let request = request_of(msg)?;
+            check_decoded(msg)?;
+            scoring_codec::run(op, &lm, &request, msg)
+        }
+        "plan" => {
+            let provider = msg
+                .get("provider")
+                .and_then(Value::as_str)
+                .ok_or_else(|| configuration("provider must be a string"))?;
+            let definition = crate::registry::lookup(provider)
+                .ok_or_else(|| configuration("unknown provider"))?;
+            let builder =
+                crate::LmBuilder::for_entry(definition).adaptations(adaptation_policy(msg)?);
+            Ok(
+                json!({"adaptations": builder.plan(&request_of(msg)?)?.iter().map(Canonical::to_json).collect::<Vec<_>>()}),
+            )
+        }
         "build_request" => {
             let lm = adapter(msg, true)?;
             let request = request_of(msg)?;
             let stream = msg.get("stream").and_then(Value::as_bool).unwrap_or(false);
-            Ok(transport_request_json(&lm.build_request(&request, stream)?))
+            let records = if stream {
+                lm.plan_stream(&request)?
+            } else {
+                lm.plan(&request)?
+            };
+            let mut out = transport_request_json(&lm.build_request(
+                &request,
+                stream || crate::adaptation::has_client_side_stop(&records),
+            )?);
+            out["adaptations"] = Value::Array(records.iter().map(Canonical::to_json).collect());
+            out["requires_stream"] = Value::Bool(crate::adaptation::has_client_side_stop(&records));
+            Ok(out)
         }
         "parse_response" => {
             let lm = adapter(msg, false)?;
             let request = request_of(msg)?;
-            let status = msg.get("status").and_then(Value::as_u64).and_then(|s| u16::try_from(s).ok()).unwrap_or(200);
+            let status = msg
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|s| u16::try_from(s).ok())
+                .unwrap_or(200);
             let body = body_of(msg)?;
-            Ok(response_json(&lm.parse_response(&request, status, &body)?))
+            check_decoded(msg)?;
+            let response = if msg
+                .get("apply_request")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                lm.parse_prepared_response(&request, status, &headers_of(msg), &body)?
+            } else {
+                lm.parse_response_with_headers(&request, status, &headers_of(msg), &body)?
+            };
+            Ok(response_json(&response))
         }
         "replay_stream" => {
             let lm = adapter(msg, false)?;
             let request = request_of(msg)?;
-            let events = lm.replay_stream(&request, &body_of(msg)?)?;
+            check_decoded(msg)?;
+            let mut decoder = lm.stream_decoder(&request);
+            decoder.response_headers(headers_of(msg));
+            let mut events = decoder.feed(&body_of(msg)?)?;
+            events.extend(decoder.finish()?);
             let response = materialize_response(events.iter(), &request)?;
             let mut out = response_json(&response);
             out["events"] = Value::Array(events.iter().map(Canonical::to_json).collect());
@@ -140,14 +222,26 @@ fn run(op: &str, msg: &Map<String, Value>) -> Result<Value, Lm15Error> {
         "stream_open" => {
             let lm = adapter(msg, false)?;
             let request = request_of(msg)?;
-            let decoder = lm.stream_decoder(&request);
+            check_decoded(msg)?;
+            lm.plan_stream(&request)?;
+            let mut decoder = lm.prepared_stream_decoder(&request);
+            decoder.response_headers(headers_of(msg));
             let handle = NEXT_HANDLE.with(|next| {
                 let mut next = next.borrow_mut();
                 let handle = *next;
                 *next += 1;
                 handle
             });
-            STREAMS.with(|streams| streams.borrow_mut().insert(handle, OpenStream { decoder, request, events: Vec::new() }));
+            STREAMS.with(|streams| {
+                streams.borrow_mut().insert(
+                    handle,
+                    OpenStream {
+                        decoder,
+                        request,
+                        events: Vec::new(),
+                    },
+                )
+            });
             Ok(json!({"handle": handle}))
         }
         "stream_feed" => {
@@ -157,7 +251,7 @@ fn run(op: &str, msg: &Map<String, Value>) -> Result<Value, Lm15Error> {
                 let mut streams = streams.borrow_mut();
                 let open = streams.get_mut(&handle).ok_or_else(|| configuration(format!("no open stream {handle}")))?;
                 let events = open.decoder.feed(&chunk)?;
-                let out = json!({"events": events.iter().map(Canonical::to_json).collect::<Vec<_>>()});
+                let out = json!({"events": events.iter().map(Canonical::to_json).collect::<Vec<_>>(), "close_source": open.decoder.should_close_source()});
                 open.events.extend(events);
                 Ok(out)
             })
@@ -187,7 +281,10 @@ fn run(op: &str, msg: &Map<String, Value>) -> Result<Value, Lm15Error> {
 /// The adapter of `msg`: `provider`, `api_key` (a placeholder when the op
 /// only parses — a parser sends nothing), `base_url`, `settings`, `now`.
 fn adapter(msg: &Map<String, Value>, needs_key: bool) -> Result<ProviderLM, Lm15Error> {
-    let provider = msg.get("provider").and_then(Value::as_str).ok_or_else(|| configuration("provider must be a string"))?;
+    let provider = msg
+        .get("provider")
+        .and_then(Value::as_str)
+        .ok_or_else(|| configuration("provider must be a string"))?;
     // The credential as the vet protocol spells it: a `credential` object
     // (an API key, a bearer token, AWS credentials — SigV4 is pure Rust and
     // signs here too), else `api_key`, else a placeholder for a parser.
@@ -201,26 +298,100 @@ fn adapter(msg: &Map<String, Value>, needs_key: bool) -> Result<ProviderLM, Lm15
     };
     let clock: Option<Box<dyn Clock + Send + Sync>> = match msg.get("now").and_then(Value::as_str) {
         Some(text) => Some(Box::new(FixedClock(
-            crate::auth::parse_rfc3339(text).ok_or_else(|| configuration(format!("now is not RFC 3339: {text:?}")))?,
+            crate::auth::parse_rfc3339(text)
+                .ok_or_else(|| configuration(format!("now is not RFC 3339: {text:?}")))?,
         ))),
         None => None,
     };
     let settings = msg.get("settings").and_then(Value::as_object).map(|s| {
         s.iter()
-            .map(|(k, v)| (k.clone(), v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| v.to_string()),
+                )
+            })
             .collect()
     });
-    crate::registry::adapter_for(provider, credential, msg.get("base_url").and_then(Value::as_str), settings, clock)
+    Ok(crate::registry::adapter_for(
+        provider,
+        credential,
+        msg.get("base_url").and_then(Value::as_str),
+        settings,
+        clock,
+    )?
+    .with_adaptations(adaptation_policy(msg)?))
+}
+
+fn adaptation_policy(msg: &Map<String, Value>) -> Result<crate::AdaptationPolicy, Lm15Error> {
+    match msg
+        .get("adaptations")
+        .and_then(Value::as_str)
+        .unwrap_or("note")
+    {
+        "note" => Ok(crate::AdaptationPolicy::Note),
+        "silent" => Ok(crate::AdaptationPolicy::Silent),
+        "refuse" => Ok(crate::AdaptationPolicy::Refuse),
+        value => Err(configuration(format!(
+            "unknown adaptation policy {value:?}"
+        ))),
+    }
+}
+
+fn headers_of(msg: &Map<String, Value>) -> Vec<(String, String)> {
+    match msg.get("headers") {
+        Some(Value::Object(headers)) => headers
+            .iter()
+            .flat_map(|(name, value)| match value {
+                Value::Array(values) => values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|v| (name.clone(), v.to_string()))
+                    .collect(),
+                Value::String(v) => vec![(name.clone(), v.clone())],
+                _ => Vec::new(),
+            })
+            .collect(),
+        Some(Value::Array(headers)) => headers
+            .iter()
+            .filter_map(|pair| {
+                Some((
+                    pair.get(0)?.as_str()?.to_string(),
+                    pair.get(1)?.as_str()?.to_string(),
+                ))
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn check_decoded(msg: &Map<String, Value>) -> Result<(), Lm15Error> {
+    // Browser fetch normally decodes Content-Encoding while leaving its
+    // header visible. The explicit flag describes BYTES, not that header.
+    if let Some(coding) = msg
+        .get("body_encoding")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty() && *s != "identity")
+    {
+        return Err(Lm15Error::TransportError(ErrorMeta::new(format!("ProtocolError: codec requires decoded bytes; host must decode {coding:?} before feeding the parser"))));
+    }
+    Ok(())
 }
 
 fn request_of(msg: &Map<String, Value>) -> Result<Request, Lm15Error> {
-    let value = msg.get("canonical_request").ok_or_else(|| configuration("canonical_request is required"))?;
-    Request::from_json(value).map_err(|err| configuration(format!("canonical_request: {}", err.message)))
+    let value = msg
+        .get("canonical_request")
+        .ok_or_else(|| configuration("canonical_request is required"))?;
+    Request::from_json(value)
+        .map_err(|err| configuration(format!("canonical_request: {}", err.message)))
 }
 
 fn body_of(msg: &Map<String, Value>) -> Result<Vec<u8>, Lm15Error> {
     if let Some(b64) = msg.get("body_b64").and_then(Value::as_str) {
-        return base64_decode(b64).map_err(|err| configuration(format!("body_b64: {}", err.message)));
+        return base64_decode(b64)
+            .map_err(|err| configuration(format!("body_b64: {}", err.message)));
     }
     match msg.get("body") {
         Some(Value::String(text)) => Ok(text.as_bytes().to_vec()),
@@ -230,15 +401,26 @@ fn body_of(msg: &Map<String, Value>) -> Result<Vec<u8>, Lm15Error> {
 }
 
 fn handle_of(msg: &Map<String, Value>) -> Result<u32, Lm15Error> {
-    msg.get("handle").and_then(Value::as_u64).and_then(|h| u32::try_from(h).ok()).ok_or_else(|| configuration("handle must be an integer"))
+    msg.get("handle")
+        .and_then(Value::as_u64)
+        .and_then(|h| u32::try_from(h).ok())
+        .ok_or_else(|| configuration("handle must be an integer"))
 }
 
 /// The vet protocol's `build_request` shape: `url` without its query,
 /// decoded `params`, lowercase header names, the JSON body (or, for a raw
 /// body, `body_b64`).
 fn transport_request_json(request: &TransportRequest) -> Value {
-    let params: Map<String, Value> = request.params.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
-    let headers: Map<String, Value> = request.headers.iter().map(|(k, v)| (k.to_ascii_lowercase(), Value::String(v.clone()))).collect();
+    let params: Map<String, Value> = request
+        .params
+        .iter()
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    let headers: Map<String, Value> = request
+        .headers
+        .iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), Value::String(v.clone())))
+        .collect();
     let mut out = json!({
         "method": request.method,
         "url": request.url,
@@ -254,7 +436,11 @@ fn transport_request_json(request: &TransportRequest) -> Value {
 
 fn response_json(response: &Response) -> Value {
     let mut out = json!({"canonical_response": response.to_json()});
-    if let Some(unmapped) = response.provider_data.as_ref().and_then(|pd| pd.get("_lm15_unmapped")) {
+    if let Some(unmapped) = response
+        .provider_data
+        .as_ref()
+        .and_then(|pd| pd.get("_lm15_unmapped"))
+    {
         out["unmapped"] = unmapped.clone();
     }
     out
@@ -265,5 +451,29 @@ fn configuration(message: impl Into<String>) -> Lm15Error {
 }
 
 fn failure(err: &Lm15Error) -> Value {
-    json!({"error": {"name": err.class_name(), "code": err.code().as_str(), "message": err.message()}})
+    let mut value = json!({"error": {"name": err.class_name(), "code": err.code().as_str(), "message": err.to_string()}});
+    let meta = err.meta();
+    if let Some(feature) = &meta.feature {
+        value["error"]["feature"] = feature.clone().into();
+    }
+    if let Some(status) = meta.status {
+        value["error"]["status"] = status.into();
+    }
+    if let Some(provider) = &meta.provider {
+        value["error"]["provider"] = provider.clone().into();
+    }
+    if let Some(code) = &meta.provider_code {
+        value["error"]["provider_code"] = code.clone().into();
+    }
+    if let Some(content_type) = &meta.content_type {
+        value["error"]["content_type"] = content_type.clone().into();
+    }
+    if let Some(excerpt) = &meta.body_excerpt {
+        value["error"]["body_excerpt"] = excerpt.clone().into();
+    }
+    let evidence = meta.http_response();
+    if !evidence.is_empty() {
+        value["error"]["http_response"] = evidence.into();
+    }
+    value
 }

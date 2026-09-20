@@ -118,6 +118,9 @@ fn every_gemini_request_case_matches_the_fixture() {
             match built {
                 Ok(_) => failures.push(format!("{id}: built a request; pinned refusal {raises}")),
                 Err(err) => {
+                    if let Some(feature) = raises["feature"].as_str() {
+                        assert_eq!(err.feature(), Some(feature), "{id}: feature");
+                    }
                     if err.class_name() != raises["type"].as_str().unwrap()
                         || err.code().as_str() != raises["code"].as_str().unwrap()
                     {
@@ -138,6 +141,31 @@ fn every_gemini_request_case_matches_the_fixture() {
                 continue;
             }
         };
+        let mut actual: Vec<Value> = lm
+            .plan(&request)
+            .unwrap()
+            .iter()
+            .map(|a| {
+                assert!(!a.reason.is_empty(), "{id}: empty adaptation reason");
+                let mut value = a.to_json();
+                value.as_object_mut().unwrap().remove("reason");
+                value
+            })
+            .collect();
+        let mut wanted = case["expect_lm15"]["adaptations"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let order = |a: &Value, b: &Value| {
+            (a["field"].as_str(), a["action"].as_str())
+                .cmp(&(b["field"].as_str(), b["action"].as_str()))
+        };
+        actual.sort_by(order);
+        wanted.sort_by(order);
+        assert_eq!(
+            actual, wanted,
+            "{id}: adaptations (reason wording is not pinned)"
+        );
         let (url, params, headers) = expected(&case);
         if built.method != case["request"]["method"].as_str().unwrap_or("POST") {
             failures.push(format!("{id}: method {}", built.method));
@@ -170,6 +198,6 @@ fn every_gemini_request_case_matches_the_fixture() {
             ));
         }
     }
-    assert_eq!(checked, 41, "gemini cases with a canonical_request");
+    assert_eq!(checked, 43, "gemini cases with a canonical_request");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -6,8 +6,8 @@ use serde_json::Value;
 use super::helpers::{float, strings, Obj, Reader, VResult};
 use super::{impl_serde_via_canonical, Canonical};
 use crate::types::{
-    CacheConfig, CacheMode, CachePrefix, CacheRetention, Config, JsonObject, Reasoning,
-    ReasoningEffort, ReasoningSummary, ToolChoice, ValidationError,
+    CacheConfig, CacheMode, CachePrefix, CacheRetention, Config, JsonObject, ProbabilityPolicy,
+    Reasoning, ReasoningEffort, ReasoningSummary, ToolChoice, ValidationError,
 };
 
 impl Canonical for Reasoning {
@@ -136,6 +136,13 @@ impl Canonical for Config {
             user_id: r.opt_str("user_id")?,
             store: r.opt_bool("store")?,
             logprobs: r.opt_u64("logprobs")?,
+            seed: r.opt_i64("seed")?,
+            frequency_penalty: r.opt_f64("frequency_penalty")?,
+            presence_penalty: r.opt_f64("presence_penalty")?,
+            probabilities: r
+                .opt_str("probabilities")?
+                .map(|p| ProbabilityPolicy::parse(&p))
+                .transpose()?,
             extensions: r.opt_object("extensions")?,
         }
         .normalized();
@@ -165,6 +172,13 @@ impl Canonical for Config {
         // `false` is data (the opt-out), `0` is data (chosen-only): emitted.
         o.opt("store", self.store);
         o.opt("logprobs", self.logprobs);
+        o.opt("seed", self.seed);
+        o.opt("frequency_penalty", self.frequency_penalty.map(float));
+        o.opt("presence_penalty", self.presence_penalty.map(float));
+        o.opt(
+            "probabilities",
+            self.probabilities.map(ProbabilityPolicy::as_str),
+        );
         o.omit_empty_opt("extensions", self.extensions.clone().map(Value::Object));
         o.finish()
     }

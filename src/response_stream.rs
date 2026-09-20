@@ -302,6 +302,7 @@ mod tests {
         let request = request();
         let source = events(vec![
             Ok(StreamEvent::Start(StreamStartEvent {
+                adaptations: Vec::new(),
                 id: Some("r1".into()),
                 model: Some("m-2".into()),
             })),

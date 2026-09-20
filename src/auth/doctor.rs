@@ -31,8 +31,7 @@ pub enum StepState {
     Shadowed,
     /// Nothing here.
     Absent,
-    /// A configured network or subprocess rung of a cloud chain the offline
-    /// doctor did not contact (module 3b; never produced by this port yet).
+    /// A network or subprocess rung the offline doctor did not contact.
     Unprobed,
 }
 
@@ -93,6 +92,12 @@ pub struct Report {
     /// Resolved host settings by name and value (AUTH-7); empty for the
     /// core policies, which have no host.
     pub settings: Vec<(String, String)>,
+    /// A deterministic cloud identity, rather than the default chain.
+    pub named_credential: Option<String>,
+    /// The resolved door URL (never an unvalidated endpoint).
+    pub base_url: Option<String>,
+    /// `base_urls`, `env $VARIABLE`, or `template`.
+    pub endpoint_source: Option<String>,
 }
 
 impl Report {
@@ -104,6 +109,17 @@ impl Report {
 
     pub fn describe(&self) -> String {
         let mut lines = vec![format!("auth for provider {:?}:", self.provider)];
+        if let Some(name) = &self.named_credential {
+            lines.push(format!(
+                "  named credential: {name} (default chain is not walked)"
+            ));
+            #[cfg(feature = "native")]
+            if let Some(policy) = access_policy(&self.provider) {
+                if let Ok(meaning) = crate::cloud::chains::named_meaning(policy, name) {
+                    lines.push(format!("  identity: {meaning}"));
+                }
+            }
+        }
         lines.extend(
             self.steps
                 .iter()
@@ -134,6 +150,10 @@ impl Report {
         for (name, value) in &self.settings {
             lines.push(format!("  setting {name}: {value}"));
         }
+        if let Some(url) = &self.base_url {
+            let source = self.endpoint_source.as_deref().unwrap_or("template");
+            lines.push(format!("  base url: {url} (from {source})"));
+        }
         lines.join("\n")
     }
 }
@@ -156,7 +176,7 @@ impl fmt::Display for Report {
 /// borrowed Claude Code / Codex file, or the lm15-owned store for xai).
 /// Without it the AUTH-8 default paths are derived from `env` (`HOME`,
 /// `LM15_CREDENTIALS_PATH`, `XDG_CONFIG_HOME`).
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct ExplainOptions {
     pub env: Option<HashMap<String, String>>,
     pub api_key_providers: Vec<String>,
@@ -167,9 +187,71 @@ pub struct ExplainOptions {
     /// Cloud doors: the caller's host settings (AUTH-10); env and the
     /// cloud profile fill the rest for the report.
     pub settings: Option<crate::cloud::hosts::HostSettings>,
+    /// Select only this named cloud identity (platform/workload/environment/cli).
+    pub credential: Option<String>,
+    /// Explicit endpoint override, ahead of the host's vendor variables.
+    pub base_url: Option<String>,
+    /// Explicit entries supplied by callables. Their presence is reported,
+    /// but no callable is invoked or inspected. May overlap api_key_providers.
+    pub callable_providers: Vec<String>,
+}
+
+impl fmt::Debug for ExplainOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExplainOptions")
+            .field("environment_supplied", &self.env.is_some())
+            .field("explicit_entries", &self.api_key_providers.len())
+            .field("callable_entries", &self.callable_providers.len())
+            .field("files_supplied", &self.files.is_some())
+            .field("settings_supplied", &self.settings.is_some())
+            .field("named_credential_supplied", &self.credential.is_some())
+            .field("endpoint_supplied", &self.base_url.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ExplainOptions {
+    fn explicit_providers(&self) -> Vec<&str> {
+        let mut entries: Vec<_> = self.api_key_providers.iter().map(String::as_str).collect();
+        for name in &self.callable_providers {
+            if !entries.contains(&name.as_str()) {
+                entries.push(name);
+            }
+        }
+        entries
+    }
+
+    fn explicit_source<'a>(&'a self, canonical: &str) -> Result<Option<&'a str>, AuthError> {
+        super::policy::shared_api_key_source(self.explicit_providers(), canonical).map_err(
+            |candidates| {
+                AuthError::not_configured(
+                    canonical,
+                    format!("ambiguous explicit credentials for {canonical:?} from {candidates:?}"),
+                    format!("supply one entry under {canonical:?} or keep only one shared entry"),
+                )
+            },
+        )
+    }
+
+    fn explicit_detail(&self, entry: &str) -> &'static str {
+        if self
+            .callable_providers
+            .iter()
+            .any(|name| canonical_provider(name) == canonical_provider(entry))
+        {
+            "application-supplied callable (identity not inspected)"
+        } else {
+            "provided (value never shown)"
+        }
+    }
+
+    fn environment(&self) -> std::collections::BTreeMap<String, String> {
+        match &self.env {
+            Some(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            None => std::env::vars().collect(),
+        }
+    }
+
     fn env_value(&self, key: &str) -> Option<String> {
         match &self.env {
             Some(map) => map.get(key).cloned(),
@@ -190,18 +272,52 @@ impl ExplainOptions {
     }
 }
 
-/// Walks the AUTH-1 chain and reports every rung (AUTH-7). No network I/O,
-/// no writes; file reads are limited to the stored-login file.
+/// Walks the AUTH-1 chain (or only the named identity's rungs) and reports
+/// every step (AUTH-7). No network, subprocesses, or writes. File reads
+/// inspect stored logins and cloud configuration; overlays remain offline.
 ///
-/// Errors: an unknown provider ([`AuthError::UnknownProvider`]).
+/// Unknown providers, duplicate explicit entries, and invalid or conflicting
+/// named credentials return typed configuration errors before any file walk.
 pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, AuthError> {
     let policy = access_policy(provider).ok_or_else(|| AuthError::UnknownProvider {
         provider: provider.to_string(),
     })?;
     let canonical = policy.provider.to_string();
+    validate_explicit_entries(options)?;
+    if let Some(name) = &options.credential {
+        if !policy.credential_policy.is_cloud_chain() {
+            return Err(AuthError::not_configured(
+                &canonical,
+                "named credentials require a cloud identity policy; this is not a cloud door",
+                "remove credential or choose a cloud provider",
+            ));
+        }
+        #[cfg(feature = "native")]
+        crate::cloud::chains::named_meaning(policy, name)?;
+        #[cfg(not(feature = "native"))]
+        if !matches!(
+            name.as_str(),
+            "platform" | "workload" | "environment" | "cli"
+        ) {
+            return Err(AuthError::not_configured(
+                &canonical,
+                "unknown named credential",
+                "choose platform, workload, environment, or cli",
+            ));
+        }
+        if options.explicit_source(&canonical)?.is_some() {
+            return Err(AuthError::not_configured(
+                &canonical,
+                "both api_keys and credentials select this provider's identity",
+                "supply either credential or api_keys, not both",
+            ));
+        }
+    }
 
     if policy.credential_policy.is_cloud_chain() {
-        return explain_cloud(policy, &canonical, options);
+        let mut report = explain_cloud(policy, &canonical, options)?;
+        annotate_jwt(&mut report, policy, options);
+        return Ok(report);
     }
 
     if policy.credential_policy == CredentialPolicy::OAuth {
@@ -213,6 +329,9 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
             steps: vec![step],
             configured,
             settings: Vec::new(),
+            named_credential: None,
+            base_url: None,
+            endpoint_source: None,
         });
     }
 
@@ -222,24 +341,22 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
     // AUTH-1 § Shared explicit keys, AUTH-7: the same selection the router
     // makes; the source configuration key is named when it differs from
     // the target. Ambiguity is the router's NotConfiguredError, here too.
-    let explicit = super::policy::shared_api_key_source(
-        options.api_key_providers.iter().map(String::as_str),
-        &canonical,
-    )
-    .map_err(|candidates| AuthError::NotConfigured {
-        provider: Some(canonical.clone()),
-        message: format!(
-            "ambiguous explicit credentials for {canonical:?} from {}",
-            candidates
-                .iter()
-                .map(|c| format!("{c:?}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        hint: Some(format!(
-            "supply one entry under {canonical:?} or keep only one shared entry"
-        )),
-    })?;
+    let explicit =
+        super::policy::shared_api_key_source(options.explicit_providers().into_iter(), &canonical)
+            .map_err(|candidates| AuthError::NotConfigured {
+                provider: Some(canonical.clone()),
+                message: format!(
+                    "ambiguous explicit credentials for {canonical:?} from {}",
+                    candidates
+                        .iter()
+                        .map(|c| format!("{c:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                hint: Some(format!(
+                    "supply one entry under {canonical:?} or keep only one shared entry"
+                )),
+            })?;
     if let Some(entry) = explicit {
         let mut source = "explicit api_keys entry".to_string();
         if canonical_provider(entry) != canonical {
@@ -248,7 +365,7 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
         steps.push(Step::new(
             "api_keys",
             source,
-            "provided (value never shown)",
+            options.explicit_detail(entry),
             StepState::Selected,
         ));
         selected = true;
@@ -304,12 +421,138 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
         selected = true;
     }
 
-    Ok(Report {
+    let (settings, base_url, endpoint_source) =
+        host_report(policy, options, &options.environment(), |_| None);
+    let mut report = Report {
         provider: canonical,
         steps,
         configured: selected,
-        settings: Vec::new(),
-    })
+        settings,
+        named_credential: None,
+        base_url,
+        endpoint_source,
+    };
+    annotate_jwt(&mut report, policy, options);
+    Ok(report)
+}
+
+fn annotate_jwt(report: &mut Report, policy: &super::AccessPolicy, options: &ExplainOptions) {
+    if !policy.auth_scheme.contains(&super::AuthScheme::Bearer)
+        || !policy
+            .auth_scheme
+            .iter()
+            .any(|s| matches!(s, super::AuthScheme::ApiKey | super::AuthScheme::XApiKey))
+    {
+        return;
+    }
+    for step in &mut report.steps {
+        if let Some(key) = step.kind.strip_prefix("env:") {
+            if options
+                .env_value(key)
+                .is_some_and(|value| super::is_jwt(&value))
+            {
+                step.detail.push_str("; sent as bearer (JWT)");
+            }
+        }
+    }
+}
+
+fn explicit_source_label(canonical: &str, entry: Option<&str>) -> String {
+    let mut source = "explicit api_keys entry".to_string();
+    if let Some(entry) = entry.filter(|entry| canonical_provider(entry) != canonical) {
+        source.push_str(&format!(" (via {entry:?}, shared env-key declarations)"));
+    }
+    source
+}
+
+fn validate_explicit_entries(options: &ExplainOptions) -> Result<(), AuthError> {
+    let mut seen = HashMap::new();
+    for entry in options.api_key_providers.iter().chain(
+        options
+            .callable_providers
+            .iter()
+            .filter(|name| !options.api_key_providers.contains(name)),
+    ) {
+        let canonical = canonical_provider(entry);
+        if let Some(previous) = seen.insert(canonical.clone(), entry) {
+            return Err(AuthError::not_configured(
+                canonical,
+                format!("duplicate explicit credential entries {previous:?} and {entry:?}"),
+                "keep one spelling for each provider",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve endpoints without retaining raw endpoint input on an error: an
+/// invalid URL may contain userinfo, a query token, or other secret material.
+fn host_report(
+    policy: &crate::auth::AccessPolicy,
+    options: &ExplainOptions,
+    env: &std::collections::BTreeMap<String, String>,
+    profile: impl Fn(&str) -> Option<String>,
+) -> (Vec<(String, String)>, Option<String>, Option<String>) {
+    use crate::cloud::hosts::{
+        endpoint_from_env, resolve_base_url, resolve_settings_with_endpoint,
+    };
+    let Some(host) = &policy.host else {
+        return (Vec::new(), None, None);
+    };
+    let (endpoint, source) = if let Some(endpoint) = options.base_url.as_deref() {
+        (Some(endpoint), "base_urls".to_string())
+    } else if let Some((variable, endpoint)) = endpoint_from_env(host, env) {
+        (Some(endpoint), format!("env ${variable}"))
+    } else {
+        (None, "template".to_string())
+    };
+    let mut given = options.settings.clone().unwrap_or_default();
+    for setting in host.settings {
+        if given.get(setting.name).is_none_or(String::is_empty)
+            && !setting
+                .env
+                .iter()
+                .any(|key| env.get(*key).is_some_and(|v| !v.is_empty()))
+        {
+            if let Some(value) = profile(setting.name) {
+                given.insert(setting.name.to_string(), value);
+            }
+        }
+    }
+    let resolved = match resolve_settings_with_endpoint(
+        Some(host),
+        &given,
+        Some(env),
+        policy.provider,
+        endpoint,
+    ) {
+        Ok(settings) => settings,
+        Err(error) => {
+            return (
+                // Host errors are value-free. Unknown setting names are caller
+                // input, so suppress those rather than copying them into a report.
+                vec![(
+                    "error".into(),
+                    if matches!(&error, crate::errors::Lm15Error::ConfigurationError(_)) {
+                        "unknown host setting (name and value not shown)".into()
+                    } else {
+                        error.message().replace('"', "'")
+                    },
+                )],
+                None,
+                None,
+            )
+        }
+    };
+    let url = resolve_base_url(host, &resolved, endpoint);
+    let mut settings: Vec<_> = resolved.into_iter().collect();
+    match url {
+        Ok(url) => (settings, Some(url), Some(source)),
+        Err(error) => {
+            settings.push(("error".into(), error.message().to_string()));
+            (settings, None, None)
+        }
+    }
 }
 
 /// The cloud-chain walk (module 3b): `cloud::chains::explain` over an
@@ -323,20 +566,37 @@ fn explain_cloud(
 ) -> Result<Report, AuthError> {
     // The wire codec build: no profile files, CLIs or metadata endpoints to
     // walk. The report says so, rung by rung absent, as the router refuses.
-    let explicit = options
-        .api_key_providers
-        .iter()
-        .any(|name| canonical_provider(name) == canonical);
+    let entry = options.explicit_source(canonical)?;
+    let explicit = entry.is_some();
+    let (settings, base_url, endpoint_source) =
+        host_report(policy, options, &options.environment(), |_| None);
     let steps = vec![
         Step {
             kind: "api_keys".into(),
-            source: "explicit api_keys entry".into(),
-            detail: if explicit { "provided (value never shown)" } else { "not provided" }.into(),
-            state: if explicit { StepState::Selected } else { StepState::Absent },
+            source: explicit_source_label(canonical, entry),
+            detail: entry
+                .map(|entry| options.explicit_detail(entry))
+                .unwrap_or("not provided")
+                .into(),
+            state: if explicit {
+                StepState::Selected
+            } else {
+                StepState::Absent
+            },
         },
         Step {
-            kind: policy.credential_policy.as_str().into(),
-            source: format!("{} (profile files, CLIs, metadata endpoints)", policy.credential_policy.as_str()),
+            kind: options
+                .credential
+                .as_deref()
+                .unwrap_or(policy.credential_policy.as_str())
+                .into(),
+            source: format!(
+                "{} (profile files, CLIs, metadata endpoints)",
+                options
+                    .credential
+                    .as_deref()
+                    .unwrap_or(policy.credential_policy.as_str())
+            ),
             detail: "not available in this build (no `native` feature)".into(),
             state: StepState::Absent,
         },
@@ -345,7 +605,10 @@ fn explain_cloud(
         provider: canonical.to_string(),
         steps,
         configured: explicit,
-        settings: Vec::new(),
+        settings,
+        named_credential: options.credential.clone(),
+        base_url,
+        endpoint_source,
     })
 }
 
@@ -356,35 +619,36 @@ fn explain_cloud(
     options: &ExplainOptions,
 ) -> Result<Report, AuthError> {
     use crate::cloud::chains::{self, ChainContext};
-    let env: std::collections::BTreeMap<String, String> = match &options.env {
-        Some(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-        None => std::env::vars().collect(),
-    };
+    let mut env = options.environment();
+    // ChainContext's general constructor may fall back to the process HOME.
+    // The doctor's supplied environment is authoritative, including absence.
+    if options.env.is_some() && env.get("HOME").is_none_or(String::is_empty) {
+        env.insert("HOME".into(), "/".into());
+    }
     let mut ctx = ChainContext::offline(env.clone(), crate::auth::time_now());
     if let Some(files) = &options.files {
         ctx = ctx.with_files(files.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
     }
-    let explicit = options
-        .api_key_providers
+    let entry = options.explicit_source(canonical)?;
+    let explicit = entry.is_some();
+    let (settings, base_url, endpoint_source) = host_report(policy, options, &env, |name| {
+        chains::profile_setting(policy, &ctx, name)
+    });
+    ctx.settings = settings
         .iter()
-        .any(|name| canonical_provider(name) == canonical);
-    let mut settings = Vec::new();
-    if let Some(host) = &policy.host {
-        let given = options.settings.clone().unwrap_or_default();
-        let mut resolved =
-            crate::cloud::hosts::resolve_settings(Some(host), &given, Some(&env), canonical)
-                .unwrap_or_else(|_| given.clone());
-        for setting in host.settings {
-            if resolved.get(setting.name).is_none_or(String::is_empty) {
-                if let Some(value) = chains::profile_setting(policy, &ctx, setting.name) {
-                    resolved.insert(setting.name.to_string(), value);
-                }
-            }
+        .filter(|(name, _)| name != "error")
+        .cloned()
+        .collect();
+    let (mut steps, configured) = match options.credential.as_deref() {
+        Some(name) => chains::explain_named(policy, &ctx, explicit, name)?,
+        None => chains::explain(policy, &ctx, explicit)?,
+    };
+    if let Some(entry) = entry {
+        if let Some(step) = steps.iter_mut().find(|step| step.kind == "api_keys") {
+            step.source = explicit_source_label(canonical, Some(entry));
+            step.detail = options.explicit_detail(entry).into();
         }
-        settings = resolved.into_iter().collect();
-        ctx.settings = settings.iter().cloned().collect();
     }
-    let (steps, configured) = chains::explain(policy, &ctx, explicit)?;
     Ok(Report {
         provider: canonical.to_string(),
         steps: steps
@@ -403,6 +667,9 @@ fn explain_cloud(
             .collect(),
         configured,
         settings,
+        named_credential: options.credential.clone(),
+        base_url,
+        endpoint_source,
     })
 }
 

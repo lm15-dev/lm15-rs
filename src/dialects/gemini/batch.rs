@@ -48,6 +48,12 @@ pub fn submit_request(
     cx: &BuildContext<'_>,
     request: &BatchRequest,
 ) -> Result<WireRequest, Lm15Error> {
+    crate::dialects::openai_responses::batch::preflight_requests(
+        dialect,
+        cx,
+        request,
+        crate::AdaptationPolicy::Note,
+    )?;
     let model = request
         .model
         .as_deref()
@@ -173,6 +179,7 @@ pub fn entries(
                     outcome: BatchOutcome::Errored,
                     response: None,
                     error: Some(ErrorDetail {
+                        http_response: Default::default(),
                         code: crate::errors::ErrorCode::Provider,
                         message: err
                             .and_then(|e| str_field(e, "message"))

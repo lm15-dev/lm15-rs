@@ -8,6 +8,7 @@
 //! the JSON boundary in [`crate::serde`]; the Rust types cannot hold the
 //! wrong number kind.
 
+mod adaptation;
 mod config;
 mod continuation;
 mod delta;
@@ -23,6 +24,7 @@ mod tools;
 mod usage;
 mod vocab;
 
+pub use adaptation::Adaptation;
 pub use config::{CacheConfig, Config, Reasoning, ToolChoice};
 pub use continuation::{continuation_data, ContinuationState};
 pub use delta::{
@@ -49,17 +51,19 @@ pub use live::{
 pub use message::{Message, SystemContent};
 pub use model_info::{InferenceModelInfo, InferencePricing, ModelInfo, ModelOrigin};
 pub use parts::{
-    AudioPart, BinaryPart, CitationPart, ContentInput, DocumentPart, ImagePart, Part, RefusalPart,
-    TextPart, ThinkingPart, ToolCallInfo, ToolCallPart, ToolResultPart, VideoPart,
+    AudioPart, BinaryPart, CitationPart, ContentInput, DataPart, DocumentPart, ImagePart, Part,
+    RefusalPart, TextPart, ThinkingPart, ToolCallInfo, ToolCallPart, ToolResultPart, VideoPart,
 };
 pub use request::{Request, Response};
 pub use stream::{
-    ErrorDetail, StreamDeltaEvent, StreamEndEvent, StreamErrorEvent, StreamEvent, StreamStartEvent,
+    stream_http_response_from_json, ErrorDetail, StreamDeltaEvent, StreamEndEvent,
+    StreamErrorEvent, StreamEvent, StreamStartEvent,
 };
 pub use tools::{BuiltinTool, FunctionTool, Tool};
 pub use usage::{TokenLogprob, TopLogprob, Usage};
 pub use vocab::{
-    AudioEncoding, BatchOutcome, BatchStatus, CacheMode, CachePrefix, CacheRetention,
-    FileReadiness, FinishReason, ImageDetail, ReasoningEffort, ReasoningSummary, Role,
-    ToolChoiceMode, VideoStatus,
+    AdaptationAction, AdaptationPolicy, AudioEncoding, BatchOutcome, BatchStatus, CacheMode,
+    CachePrefix, CacheRetention, FileReadiness, FinishReason, ImageDetail, JudgmentMethod,
+    NamedCredential, ProbabilityPolicy, ReasoningEffort, ReasoningSummary, Role, ToolChoiceMode,
+    VideoStatus,
 };

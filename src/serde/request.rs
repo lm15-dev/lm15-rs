@@ -10,7 +10,7 @@ use super::stream::{
     usage_to_json_opt,
 };
 use super::{impl_serde_via_canonical, Canonical};
-use crate::types::{FinishReason, Message, Request, Response, ValidationError};
+use crate::types::{Adaptation, FinishReason, Message, Request, Response, ValidationError};
 
 impl Canonical for Request {
     fn from_json(value: &Value) -> VResult<Self> {
@@ -71,7 +71,13 @@ impl Canonical for Response {
             message: Message::from_json(r.req("message")?)?,
             finish_reason: FinishReason::parse(&r.req_str("finish_reason")?)?,
             usage: usage_from_parent(&r, "usage")?,
-            logprobs: logprobs_from_json(&r)?,
+            logprobs: logprobs_from_json(&r)?.filter(|v| !v.is_empty()),
+            logprobs_complete: r.bool_or("logprobs_complete", true)?,
+            adaptations: r
+                .array_or_empty("adaptations")?
+                .iter()
+                .map(Adaptation::from_json)
+                .collect::<VResult<_>>()?,
             provider_data: provider_data_from_json(&r)?,
         };
         response.validate()?;
@@ -88,6 +94,13 @@ impl Canonical for Response {
         o.opt(
             "logprobs",
             self.logprobs.as_deref().and_then(logprobs_to_json),
+        );
+        if !self.logprobs_complete {
+            o.set("logprobs_complete", false);
+        }
+        o.omit_empty(
+            "adaptations",
+            Value::Array(self.adaptations.iter().map(Canonical::to_json).collect()),
         );
         o.finish()
     }

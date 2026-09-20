@@ -6,11 +6,23 @@ use super::json::{non_empty, opt_non_empty, JsonObject, VResult, ValidationError
 use super::usage::TokenLogprob;
 
 /// A text fragment. `logprobs` are the tokens of exactly this fragment.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextDelta {
     pub text: String,
     pub part_index: u64,
     pub logprobs: Vec<TokenLogprob>,
+    pub logprobs_complete: bool,
+}
+
+impl Default for TextDelta {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            part_index: 0,
+            logprobs: Vec::new(),
+            logprobs_complete: true,
+        }
+    }
 }
 
 /// A reasoning fragment.

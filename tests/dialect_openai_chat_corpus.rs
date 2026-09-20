@@ -22,7 +22,10 @@ use lm15::{Canonical, HostSettings, Request};
 /// The providers this dialect serves (module 4 W3) and the number of
 /// request cases each pins at `CONTRACT_PIN`.
 const PROVIDERS: &[(&str, usize)] = &[
-    ("openai_chat", 25),
+    ("openai_chat", 26),
+    ("openai-chat", 2),
+    ("groq", 2),
+    ("ollama", 1),
     ("deepseek", 12),
     ("zai", 14),
     ("moonshotai", 18),
@@ -194,6 +197,9 @@ fn run_case(path: &Path, failures: &mut Vec<String>) -> bool {
         match built {
             Ok(_) => failures.push(format!("{id}: built a request; pinned refusal {raises}")),
             Err(err) => {
+                if let Some(feature) = raises["feature"].as_str() {
+                    assert_eq!(err.feature(), Some(feature), "{id}: feature");
+                }
                 if err.class_name() != raises["type"] || err.code().as_str() != raises["code"] {
                     failures.push(format!(
                         "{id}: refused with {}/{}; pinned {}/{}",
@@ -214,6 +220,30 @@ fn run_case(path: &Path, failures: &mut Vec<String>) -> bool {
             return true;
         }
     };
+    // MAP-13: no pin means no adaptation; compare every record, except
+    // provider-specific reason wording (which must still be nonempty).
+    let mut actual: Vec<Value> = lm
+        .plan(&request)
+        .unwrap()
+        .iter()
+        .map(|a| {
+            assert!(!a.reason.is_empty(), "{id}: empty adaptation reason");
+            let mut value = a.to_json();
+            value.as_object_mut().unwrap().remove("reason");
+            value
+        })
+        .collect();
+    let mut wanted = case["expect_lm15"]["adaptations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let order = |a: &Value, b: &Value| {
+        (a["field"].as_str(), a["action"].as_str())
+            .cmp(&(b["field"].as_str(), b["action"].as_str()))
+    };
+    actual.sort_by(order);
+    wanted.sort_by(order);
+    assert_eq!(actual, wanted, "{id}: adaptations");
     let (method, url, params, headers, body) = expected(&case);
     let mut got_headers: Vec<(String, String)> = out
         .headers
@@ -289,6 +319,10 @@ fn pinned_build_refusals_carry_the_provider() {
             let request = Request::from_json(&case["canonical_request"]).unwrap();
             let err = lm.build_request(&request, false).unwrap_err();
             assert_eq!(err.class_name(), raises["type"], "{}", case["id"]);
+            assert_eq!(err.code().as_str(), raises["code"], "{}", case["id"]);
+            if let Some(feature) = raises["feature"].as_str() {
+                assert_eq!(err.feature(), Some(feature), "{}", case["id"]);
+            }
             assert_eq!(
                 err.provider(),
                 Some(lm.provider()),
@@ -298,5 +332,5 @@ fn pinned_build_refusals_carry_the_provider() {
             seen += 1;
         }
     }
-    assert_eq!(seen, 11, "pinned build_request refusals at CONTRACT_PIN");
+    assert_eq!(seen, 8, "pinned build_request refusals at CONTRACT_PIN");
 }

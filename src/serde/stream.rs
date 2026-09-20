@@ -7,10 +7,35 @@ use super::helpers::{float, opt_strings, Obj, Reader, VResult};
 use super::{impl_serde_via_canonical, Canonical};
 use crate::errors::ErrorCode;
 use crate::types::{
-    AudioDelta, CitationDelta, ContinuationDelta, Delta, ErrorDetail, FinishReason, ImageDelta,
-    JsonObject, StreamDeltaEvent, StreamEndEvent, StreamErrorEvent, StreamEvent, StreamStartEvent,
-    TextDelta, ThinkingDelta, TokenLogprob, ToolCallDelta, TopLogprob, Usage, ValidationError,
+    Adaptation, AdaptationAction, AudioDelta, CitationDelta, ContinuationDelta, Delta, ErrorDetail,
+    FinishReason, ImageDelta, JsonObject, StreamDeltaEvent, StreamEndEvent, StreamErrorEvent,
+    StreamEvent, StreamStartEvent, TextDelta, ThinkingDelta, TokenLogprob, ToolCallDelta,
+    TopLogprob, Usage, ValidationError,
 };
+
+impl Canonical for Adaptation {
+    fn from_json(value: &Value) -> VResult<Self> {
+        let r = Reader::new(value, "Adaptation")?;
+        let record = Adaptation {
+            field: r.req_str("field")?,
+            action: AdaptationAction::parse(&r.req_str("action")?)?,
+            asked: r.get("asked").cloned(),
+            applied: r.get("applied").cloned(),
+            reason: r.req_str("reason")?,
+        };
+        record.validate()?;
+        Ok(record)
+    }
+    fn to_json(&self) -> Value {
+        let mut o = Obj::new();
+        o.set("field", self.field.as_str())
+            .set("action", self.action.as_str())
+            .set("reason", self.reason.as_str());
+        o.omit_empty_opt("asked", self.asked.clone());
+        o.omit_empty_opt("applied", self.applied.clone());
+        o.finish()
+    }
+}
 
 // ─── Usage ───────────────────────────────────────────────────────────
 
@@ -165,6 +190,13 @@ impl Canonical for ErrorDetail {
             code: ErrorCode::parse(&r.req_str("code")?)?,
             message: r.str_or_empty("message")?,
             provider_code: r.opt_str("provider_code")?,
+            http_response: if r.has("http_response") {
+                crate::types::stream_http_response_from_json(
+                    value.get("http_response").expect("present key"),
+                )?
+            } else {
+                JsonObject::new()
+            },
         };
         detail.validate()?;
         Ok(detail)
@@ -175,6 +207,11 @@ impl Canonical for ErrorDetail {
         o.set("code", self.code.as_str());
         o.omit_empty("message", self.message.as_str());
         o.omit_empty_opt("provider_code", self.provider_code.clone());
+        let diagnostics = crate::types::stream_http_response_from_json(&Value::Object(
+            self.http_response.clone(),
+        ))
+        .expect("validated HTTP diagnostics");
+        o.omit_empty("http_response", Value::Object(diagnostics));
         o.finish()
     }
 }
@@ -193,6 +230,7 @@ impl Canonical for Delta {
                 text: r.str_or_empty("text")?,
                 part_index: index,
                 logprobs: logprobs_from_json(&r)?.unwrap_or_default(),
+                logprobs_complete: r.bool_or("logprobs_complete", true)?,
             }),
             "thinking" => Delta::Thinking(ThinkingDelta {
                 text: r.str_or_empty("text")?,
@@ -249,6 +287,9 @@ impl Canonical for Delta {
             Delta::Text(d) => {
                 o.set("text", d.text.as_str());
                 o.opt("logprobs", logprobs_to_json(&d.logprobs));
+                if !d.logprobs_complete {
+                    o.set("logprobs_complete", false);
+                }
             }
             Delta::Thinking(d) => {
                 o.set("text", d.text.as_str());
@@ -299,6 +340,11 @@ impl Canonical for StreamEvent {
             "start" => StreamEvent::Start(StreamStartEvent {
                 id: r.opt_str("id")?,
                 model: r.opt_str("model")?,
+                adaptations: r
+                    .array_or_empty("adaptations")?
+                    .iter()
+                    .map(Adaptation::from_json)
+                    .collect::<VResult<_>>()?,
             }),
             "delta" => StreamEvent::Delta(StreamDeltaEvent {
                 delta: Delta::from_json(r.req("delta")?)?,
@@ -333,6 +379,10 @@ impl Canonical for StreamEvent {
             StreamEvent::Start(e) => {
                 o.omit_empty_opt("id", e.id.clone());
                 o.omit_empty_opt("model", e.model.clone());
+                o.omit_empty(
+                    "adaptations",
+                    Value::Array(e.adaptations.iter().map(Canonical::to_json).collect()),
+                );
             }
             StreamEvent::Delta(e) => {
                 o.set("delta", e.delta.to_json());
@@ -351,6 +401,7 @@ impl Canonical for StreamEvent {
 }
 
 impl_serde_via_canonical!(
+    Adaptation,
     Usage,
     TopLogprob,
     TokenLogprob,

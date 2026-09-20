@@ -42,6 +42,15 @@ pub fn payload(
     let refuse = Refuse {
         provider: cx.provider,
     };
+    crate::dialects::content::validate_slots(
+        request,
+        cx.provider,
+        "anthropic",
+        compat.tool_result_media,
+    )?;
+    crate::judgments::note_unmeasurable_probabilities(request, cx.provider)?;
+    let prepared = prepare(request, cx.model, compat, cx.provider)?;
+    let request = &prepared;
     let model = cx.model;
     let config = &request.config;
 
@@ -80,7 +89,7 @@ pub fn payload(
     body.insert("stream".into(), Value::Bool(stream));
     body.insert(
         "max_tokens".into(),
-        Value::from(thinking.max_tokens(config.max_tokens)),
+        Value::from(thinking.max_tokens(config.max_tokens)?),
     );
 
     if let Some(system) = &request.system {
@@ -192,6 +201,185 @@ pub fn payload(
         body.insert("system".into(), Value::Array(blocks));
     }
     Ok(body)
+}
+
+fn prepare(
+    request: &Request,
+    model: &str,
+    compat: &ResolvedAnthropicCompat,
+    provider: &str,
+) -> Result<Request, Lm15Error> {
+    use crate::adaptation::{
+        adapt, clamp_effort, drop_value, prepare_cache, summary_auto, AdaptationAction::*,
+    };
+    let mut out = request.clone();
+    prepare_cache(&mut out, false, provider)?;
+    let c = &mut out.config;
+    if c.max_tokens.is_none() {
+        let lower = model.to_ascii_lowercase();
+        let visible = if ["claude-3-haiku", "claude-3-opus", "claude-3-sonnet"]
+            .iter()
+            .any(|s| lower.contains(*s))
+        {
+            4096
+        } else if ["claude-3-5-", "claude-3.5-"]
+            .iter()
+            .any(|s| lower.contains(*s))
+        {
+            8192
+        } else {
+            DEFAULT_VISIBLE_TOKENS
+        };
+        adapt(
+            "config.max_tokens",
+            Defaulted,
+            None,
+            Some(json!(visible)),
+            "the Messages API requires a bounded max_tokens; the class default was used",
+        )?;
+        c.max_tokens = Some(visible);
+    }
+    if compat.sampling_params == SendReject::Reject {
+        drop_value(
+            "config.temperature",
+            &mut c.temperature,
+            "this server ignores sampling parameters",
+        )?;
+        drop_value(
+            "config.top_p",
+            &mut c.top_p,
+            "this server ignores sampling parameters",
+        )?;
+        drop_value(
+            "config.top_k",
+            &mut c.top_k,
+            "this server ignores sampling parameters",
+        )?;
+    }
+    drop_value(
+        "config.seed",
+        &mut c.seed,
+        "the Messages API has no seed field",
+    )?;
+    drop_value(
+        "config.frequency_penalty",
+        &mut c.frequency_penalty,
+        "the Messages API has no frequency_penalty field",
+    )?;
+    drop_value(
+        "config.presence_penalty",
+        &mut c.presence_penalty,
+        "the Messages API has no presence_penalty field",
+    )?;
+    if let Some(t) = c.temperature.filter(|t| *t > 1.0) {
+        adapt(
+            "config.temperature",
+            Clamped,
+            Some(json!(t)),
+            Some(json!(1.0)),
+            "the Messages API accepts temperature in [0, 1]; the canonical range is [0, 2]",
+        )?;
+        c.temperature = Some(1.0);
+    }
+    if let Some(r) = &mut c.reasoning {
+        if !r.is_off() {
+            if let Some(levels) = compat.reasoning_efforts {
+                clamp_effort(r, levels)?;
+            }
+            summary_auto(r)?;
+            let adaptive = compat.thinking_format != AnthropicThinkingFormat::Anthropic
+                || anthropic_adaptive_class(model);
+            if adaptive {
+                drop_value(
+                    "config.reasoning.thinking_budget",
+                    &mut r.thinking_budget,
+                    "this model class has no thinking budget; effort carries the intent",
+                )?;
+                if compat.thinking_format == AnthropicThinkingFormat::Anthropic
+                    && r.effort == ReasoningEffort::Minimal
+                {
+                    clamp_effort(
+                        r,
+                        &[
+                            ReasoningEffort::Low,
+                            ReasoningEffort::Medium,
+                            ReasoningEffort::High,
+                            ReasoningEffort::Xhigh,
+                            ReasoningEffort::Max,
+                        ],
+                    )?;
+                }
+            }
+        }
+    }
+    if let Some(cache) = &mut c.cache {
+        drop_value(
+            "config.cache.key",
+            &mut cache.key,
+            "the Messages API has no cache affinity key; marks are its mechanism",
+        )?;
+        if compat.cache_control != AnthropicCacheControl::Anthropic
+            && cache.retention == Some(CacheRetention::Long)
+        {
+            adapt(
+                "config.cache.retention",
+                Dropped,
+                Some(json!("long")),
+                None,
+                "this server caches implicitly and has no cache-control TTL",
+            )?;
+            cache.retention = None;
+        }
+    }
+    if let Some(choice) = &mut c.tool_choice {
+        if choice.mode != ToolChoiceMode::None
+            && !choice.allowed.is_empty()
+            && !(choice.allowed.len() == 1 && choice.mode == ToolChoiceMode::Required)
+            && out
+                .tools
+                .iter()
+                .any(|t| !choice.allowed.iter().any(|n| n == t.name()))
+        {
+            adapt(
+                "config.tool_choice.allowed",
+                ClientSide,
+                Some(json!(choice.allowed)),
+                Some(json!(choice.allowed)),
+                "only allowed tools were sent; the wire cannot express a proper subset",
+            )?;
+            out.tools
+                .retain(|t| choice.allowed.iter().any(|n| n == t.name()));
+        }
+        if compat.parallel_tool_calls == SendReject::Reject {
+            drop_value(
+                "config.tool_choice.parallel",
+                &mut choice.parallel,
+                "this server ignores disable_parallel_tool_use",
+            )?;
+        }
+    }
+    if compat.structured_output == SendReject::Reject {
+        drop_value(
+            "config.response_format",
+            &mut c.response_format,
+            "this server accepts output_config.format without applying the schema",
+        )?;
+    }
+    if let Some(store) = c.store.take() {
+        adapt(
+            "config.store",
+            if store { Dropped } else { Satisfied },
+            Some(json!(store)),
+            None,
+            "the Messages API has no retrievable stored-response object",
+        )?;
+    }
+    drop_value(
+        "config.logprobs",
+        &mut c.logprobs,
+        "the Messages API does not expose token log probabilities",
+    )?;
+    Ok(out)
 }
 
 // ─── Caching (MAP-6) ────────────────────────────────────────────────
@@ -310,6 +498,7 @@ fn system_value(
             .iter()
             .map(|part| match part {
                 Part::Text(t) => Ok(text_block(&t.text)),
+                Part::Data(d) => Ok(text_block(&d.value.to_string())),
                 other => Err(cx.refuse.feature(format!(
                     "system accepts text blocks only on the Messages API; a {} part has no \
                      system block (put it in the first user message)",
@@ -343,12 +532,15 @@ impl ThinkingPlan {
     /// `lm15/providers/anthropic.py:161-169`: the manual class adds the
     /// budget to the visible cap (the wire's `max_tokens` includes thinking,
     /// MAP-7 rule 6); otherwise `Config.max_tokens` is the total.
-    fn max_tokens(&self, configured: Option<u64>) -> u64 {
+    fn max_tokens(&self, configured: Option<u64>) -> Result<u64, Lm15Error> {
         let visible = configured.unwrap_or(DEFAULT_VISIBLE_TOKENS);
-        match self.budget {
-            Some(budget) => budget + visible,
-            None => visible,
-        }
+        visible
+            .checked_add(self.budget.unwrap_or(0))
+            .ok_or_else(|| {
+                Lm15Error::InvalidRequestError(crate::errors::ErrorMeta::new(
+                    "max_tokens plus thinking_budget overflows; a bounded output cap is required",
+                ))
+            })
     }
 
     /// The `thinking` object, if any.
@@ -559,11 +751,12 @@ fn output_format(
         .and_then(Value::as_str)
         .unwrap_or_default();
     if kind == "json_object" {
-        return Err(refuse.feature(
-            "response_format json_object is not supported — the Messages API has no any-JSON \
-             mode; give a json_schema (objects need additionalProperties: false)",
-        ));
+        return Err(crate::adaptation::refusal(refuse.provider,"config.response_format","no sensible adaptation exists: the Messages API has no any-JSON mode; give a json_schema (objects need additionalProperties: false)"));
     }
-    let schema = format.get("schema").cloned().unwrap_or(Value::Null);
+    let mut schema = format.get("schema").cloned().unwrap_or(Value::Null);
+    let found = crate::judgments::judgments_in_schema(&schema);
+    if let Some(obj) = schema.as_object() {
+        schema = Value::Object(crate::judgments::anthropic_schema(obj, &found));
+    }
     Ok(json!({"type": "json_schema", "schema": schema}))
 }

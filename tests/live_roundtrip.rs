@@ -195,7 +195,7 @@ async fn a_turn_returns_at_the_tool_call_and_the_continuation_carries_its_usage(
     // Turn 1: the prompt. result() returns AT the tool call (LIVE-1): the
     // model is waiting for our answer; waiting past it would deadlock.
     session.send(client_events[0].clone()).await.unwrap();
-    let first = session.turn().result().await.unwrap();
+    let first = session.turn().result().await.unwrap().clone();
     assert_eq!(first.ended_by, lm15::TurnEnd::ToolCall);
     assert!(!first.ok());
     assert_eq!(first.tool_calls.len(), 1);
@@ -208,11 +208,11 @@ async fn a_turn_returns_at_the_tool_call_and_the_continuation_carries_its_usage(
     // `usage` event of the function-call response (LIVE-2: the semantic
     // turn stayed open, so that is where those tokens belong).
     session.send(client_events[1].clone()).await.unwrap();
-    let second = session.turn().result().await.unwrap();
+    let second = session.turn().result().await.unwrap().clone();
     assert_eq!(second.ended_by, lm15::TurnEnd::TurnEnd);
     assert!(second.ok());
     assert!(!second.text.is_empty());
-    let usage = second.usage.expect("a turn_end carries usage");
+    let usage = second.usage.clone().expect("a turn_end carries usage");
     let usage_events: Vec<&LiveServerEvent> = second
         .events
         .iter()
@@ -224,8 +224,8 @@ async fn a_turn_returns_at_the_tool_call_and_the_continuation_carries_its_usage(
         "one usage event (75 tokens pinned) + the turn_end"
     );
     let summed = usage_events.iter().fold(None, |acc, e| match e {
-        LiveServerEvent::Usage(u) => Some(lm15::live::sum_usage(acc, &u.usage)),
-        LiveServerEvent::TurnEnd(u) => Some(lm15::live::sum_usage(acc, &u.usage)),
+        LiveServerEvent::Usage(u) => Some(lm15::live::sum_usage(acc, &u.usage).unwrap()),
+        LiveServerEvent::TurnEnd(u) => Some(lm15::live::sum_usage(acc, &u.usage).unwrap()),
         _ => acc,
     });
     assert_eq!(Some(usage), summed);

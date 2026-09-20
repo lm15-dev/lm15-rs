@@ -10,6 +10,7 @@ pub mod content;
 pub mod gemini;
 pub mod openai_chat;
 pub mod openai_responses;
+pub mod typesafe;
 pub mod wire_json;
 
 /// The codec for a dialect id.
@@ -19,6 +20,7 @@ pub fn dialect_for(id: DialectId) -> &'static dyn Dialect {
         DialectId::OpenaiResponses => &openai_responses::OPENAI_RESPONSES,
         DialectId::OpenaiChat => &openai_chat::OPENAI_CHAT,
         DialectId::Gemini => &gemini::GEMINI,
+        DialectId::Typesafe => &typesafe::TYPESAFE,
     }
 }
 
@@ -33,6 +35,7 @@ mod tests {
             DialectId::OpenaiResponses,
             DialectId::OpenaiChat,
             DialectId::Gemini,
+            DialectId::Typesafe,
         ] {
             assert_eq!(dialect_for(id).dialect(), id);
         }

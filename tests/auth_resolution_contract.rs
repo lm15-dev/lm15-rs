@@ -7,9 +7,9 @@
 //!
 //! Scope (playbooks/port.md modules 3a/3b; changes/2026-09-06-decisions.md
 //! D14): the cases are split exactly as `harness/check.py --auth-scope`
-//! splits them. Core cases must pass in full. Cloud cases are not skipped:
-//! each must answer the typed not-implemented error, and their count is
-//! asserted and printed, so the run is honest rather than green by omission.
+//! splits them. Core and cloud cases both replay offline with exact counts.
+//! AUTH-19's companion named-credential corpus pins closed rung subsets,
+//! endpoint roots, required settings and configuration conflicts.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -151,6 +151,8 @@ fn options_for(case: &Value, scratch: &Path, sentinel: &str) -> ExplainOptions {
     let provider = case["provider"].as_str().unwrap();
     let mut options = ExplainOptions {
         env: Some(HashMap::new()),
+        credential: case["credential"].as_str().map(str::to_string),
+        base_url: case["base_url"].as_str().map(str::to_string),
         ..Default::default()
     };
     if let Some(env) = case.get("env").and_then(Value::as_object) {
@@ -170,6 +172,39 @@ fn options_for(case: &Value, scratch: &Path, sentinel: &str) -> ExplainOptions {
         options.credentials_path = Some(materialize_borrowed_file(
             scratch, id, provider, state, sentinel,
         ));
+    }
+    options
+}
+
+fn cloud_options_for(case: &Value, scratch: &Path, sentinel: &str) -> ExplainOptions {
+    let home = scratch.join(format!("home-{}", case["id"].as_str().unwrap()));
+    std::fs::create_dir_all(&home).unwrap();
+    let mut options = options_for(case, scratch, sentinel);
+    let env = options.env.as_mut().unwrap();
+    for value in env.values_mut() {
+        *value = value.replace("~/", &format!("{}/", home.display()));
+    }
+    env.insert("HOME".into(), home.display().to_string());
+    let mut files = HashMap::new();
+    if let Some(map) = case.get("files").and_then(Value::as_object) {
+        for (rel, content) in map {
+            let target = home.join(rel.trim_start_matches("~/"));
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(&target, content.as_str().unwrap()).unwrap();
+            files.insert(
+                target.display().to_string(),
+                content.as_str().unwrap().to_string(),
+            );
+        }
+    }
+    options.files = Some(files);
+    if let Some(settings) = case.get("settings").and_then(Value::as_object) {
+        options.settings = Some(
+            settings
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+                .collect(),
+        );
     }
     options
 }
@@ -256,35 +291,7 @@ fn cloud_cases_replay_the_chain_offline() {
         if !cloud.contains(provider) {
             continue;
         }
-        let home = scratch.join(format!("home-{id}"));
-        std::fs::create_dir_all(&home).unwrap();
-        let mut options = options_for(case, &scratch, sentinel);
-        let env = options.env.as_mut().unwrap();
-        for value in env.values_mut() {
-            *value = value.replace("~/", &format!("{}/", home.display()));
-        }
-        env.insert("HOME".into(), home.display().to_string());
-        let mut files = HashMap::new();
-        if let Some(map) = case.get("files").and_then(Value::as_object) {
-            for (rel, content) in map {
-                let target = home.join(rel.trim_start_matches("~/"));
-                std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-                std::fs::write(&target, content.as_str().unwrap()).unwrap();
-                files.insert(
-                    target.display().to_string(),
-                    content.as_str().unwrap().to_string(),
-                );
-            }
-        }
-        options.files = Some(files);
-        if let Some(settings) = case.get("settings").and_then(Value::as_object) {
-            options.settings = Some(
-                settings
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
-                    .collect(),
-            );
-        }
+        let options = cloud_options_for(case, &scratch, sentinel);
         let report = explain_auth(provider, &options).unwrap_or_else(|e| panic!("{id}: {e}"));
         let expect = &case["expect"];
         assert_eq!(
@@ -321,6 +328,87 @@ fn cloud_cases_replay_the_chain_offline() {
     let _ = std::fs::remove_dir_all(&scratch);
     println!("auth cloud cases: {counted}/{EXPECTED_CLOUD_CASES} replayed");
     assert_eq!(counted, EXPECTED_CLOUD_CASES, "cloud case count moved");
+}
+
+#[test]
+fn named_credentials_replay_every_closed_walk_and_endpoint_pin() {
+    let Some(dir) = contract_dir() else { return };
+    let fixture: Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("auth/named-credentials.json")).unwrap(),
+    )
+    .unwrap();
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 20, "all AUTH-19 named-credential vectors");
+    let sentinel = fixture["sentinel"].as_str().unwrap();
+    let scratch = scratch_dir("named");
+    let mut seen = BTreeSet::new();
+    for case in cases {
+        let id = case["id"].as_str().unwrap();
+        assert!(seen.insert(id), "duplicate named case {id}");
+        let provider = case["provider"].as_str().unwrap();
+        let options = cloud_options_for(case, &scratch, sentinel);
+        let expected = &case["expect"];
+        let result = explain_auth(provider, &options);
+        if let Some(message) = expected["error"].as_str() {
+            // The corpus currently pins a literal conflict phrase, not a regex.
+            let err = result.unwrap_err();
+            assert_eq!(err.code(), "not_configured", "{id}");
+            assert!(err.to_string().contains(message), "{id}: {err}");
+            assert!(
+                !format!("{err} {err:?}").contains(sentinel),
+                "{id}: secret leaked"
+            );
+            continue;
+        }
+        let report = result.unwrap_or_else(|e| panic!("{id}: {e}"));
+        assert_eq!(
+            report.configured,
+            expected["configured"].as_bool().unwrap(),
+            "{id}"
+        );
+        assert_eq!(
+            report.named_credential.as_deref(),
+            case["credential"].as_str(),
+            "{id}"
+        );
+        let actual: Vec<_> = report
+            .steps
+            .iter()
+            .map(|s| (s.kind.as_str(), s.state.as_str()))
+            .collect();
+        let wanted: Vec<_> = expected["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| (s["kind"].as_str().unwrap(), s["state"].as_str().unwrap()))
+            .collect();
+        assert_eq!(actual, wanted, "{id}: exactly the named rungs, in order");
+        if let Some(url) = expected["base_url"].as_str() {
+            assert_eq!(report.base_url.as_deref(), Some(url), "{id}: endpoint");
+        }
+        if let Some(settings) = expected["settings"].as_object() {
+            let actual: serde_json::Map<String, Value> = report
+                .settings
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                .collect();
+            assert_eq!(&actual, settings, "{id}: required path/signing settings");
+        }
+        let description = report.describe();
+        assert!(
+            description.contains("chain is not walked"),
+            "{id}: {description}"
+        );
+        for rendering in [description, format!("{report}"), format!("{report:?}")] {
+            assert!(!rendering.is_empty(), "{id}");
+            assert!(
+                !rendering.contains(sentinel),
+                "{id}: sentinel leaked: {rendering}"
+            );
+        }
+    }
+    assert_eq!(seen.len(), 20, "every named case consumed exactly once");
+    std::fs::remove_dir_all(scratch).unwrap();
 }
 
 #[test]

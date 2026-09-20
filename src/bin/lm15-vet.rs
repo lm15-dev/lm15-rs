@@ -25,6 +25,8 @@ const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Ops this shim answers (`capabilities.ops`).
 const OPS: &[&str] = &[
     "build_request",
+    "plan",
+    "surface_dump",
     "ingest_openai_chat",
     "build_models_request",
     "batch_op_build",
@@ -185,6 +187,24 @@ fn op_explain_auth(msg: &Map<String, Value>) -> Result<Value, Failure> {
                 .collect()
         }),
         settings: settings_of(msg),
+        credential: msg
+            .get("credential")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        base_url: msg
+            .get("base_url")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        callable_providers: msg
+            .get("callable_providers")
+            .and_then(Value::as_array)
+            .map(|v| {
+                v.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
     let report = lm15::auth::explain_auth(&provider, &options).map_err(Lm15Error::from)?;
     let steps: Vec<Value> = report
@@ -193,7 +213,11 @@ fn op_explain_auth(msg: &Map<String, Value>) -> Result<Value, Failure> {
         .map(|s| json!({ "kind": s.kind, "state": s.state.as_str() }))
         .collect();
     let report_text = format!("{}\n{}\n{:?}", report.describe(), report, report);
-    Ok(json!({ "configured": report.configured, "steps": steps, "report_text": report_text }))
+    Ok(
+        json!({ "configured": report.configured, "steps": steps, "report_text": report_text,
+        "base_url":report.base_url,"settings":report.settings.into_iter().map(|(k,v)|(k,Value::String(v))).collect::<Map<String,Value>>(),
+        "named_credential":report.named_credential,"endpoint_source":report.endpoint_source }),
+    )
 }
 
 /// PROTOCOL.md: `credential` (an AUTH-2 value) wins over the `api_key`
@@ -262,6 +286,23 @@ fn transport_request_json(request: &TransportRequest) -> Value {
     out
 }
 
+fn adaptation_policy(msg: &Map<String, Value>) -> Result<lm15::AdaptationPolicy, Failure> {
+    Ok(lm15::AdaptationPolicy::parse(
+        msg.get("adaptations")
+            .and_then(Value::as_str)
+            .unwrap_or("note"),
+    )?)
+}
+
+fn op_plan(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let provider = field_str(msg, "provider")?;
+    let definition = lm15::registry::lookup(&provider)
+        .ok_or_else(|| Lm15Error::not_configured("unknown provider"))?;
+    let builder = lm15::LmBuilder::for_entry(definition).adaptations(adaptation_policy(msg)?);
+    let records = builder.plan(&Request::from_json(field(msg, "canonical_request")?)?)?;
+    Ok(json!({"adaptations":records.iter().map(Canonical::to_json).collect::<Vec<_>>()}))
+}
+
 fn op_build_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let provider = field_str(msg, "provider")?;
     let credential = credential_of(msg)?;
@@ -276,8 +317,18 @@ fn op_build_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
     )?;
     let request = Request::from_json(field(msg, "canonical_request")?)?;
     let stream = msg.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let lm = lm.with_adaptations(adaptation_policy(msg)?);
     let transport = lm.build_request(&request, stream)?;
-    Ok(transport_request_json(&transport))
+    let mut output = transport_request_json(&transport);
+    let records = if stream {
+        lm.plan_stream(&request)?
+    } else {
+        lm.plan(&request)?
+    };
+    if !records.is_empty() && lm.adaptation_policy() != lm15::AdaptationPolicy::Silent {
+        output["adaptations"] = Value::Array(records.iter().map(Canonical::to_json).collect());
+    }
+    Ok(output)
 }
 
 /// PROTOCOL.md § build_models_request: the shim constructs `openai-codex`
@@ -289,7 +340,9 @@ fn surface_adapter(
     let provider = field_str(msg, "provider")?;
     let definition = lm15::registry::lookup(&provider)
         .ok_or_else(|| Lm15Error::not_configured(format!("unknown provider {provider:?}")))?;
-    let mut builder = lm15::LmBuilder::for_entry(definition).api_key(credential);
+    let mut builder = lm15::LmBuilder::for_entry(definition)
+        .api_key(credential)
+        .adaptations(adaptation_policy(msg)?);
     if let Some(base_url) = msg.get("base_url").and_then(Value::as_str) {
         builder = builder.base_url(base_url);
     }
@@ -706,7 +759,8 @@ fn parse_adapter(msg: &Map<String, Value>) -> Result<lm15::ProviderLM, Failure> 
         base_url,
         settings_of(msg),
         clock.map(|c| Box::new(c) as Box<dyn lm15::wire::Clock + Send + Sync>),
-    )?)
+    )?
+    .with_adaptations(adaptation_policy(msg)?))
 }
 
 fn body_of(msg: &Map<String, Value>) -> Result<Vec<u8>, Failure> {
@@ -737,7 +791,7 @@ fn op_parse_response(msg: &Map<String, Value>) -> Result<Value, Failure> {
         .and_then(|s| u16::try_from(s).ok())
         .ok_or_else(|| ValidationError::type_error("status must be an int"))?;
     let body = body_of(msg)?;
-    let response = lm.parse_response(&request, status, &body)?;
+    let response = lm.parse_response_with_headers(&request, status, &headers_of(msg), &body)?;
     Ok(Value::Object(response_result(&response)))
 }
 
@@ -753,7 +807,10 @@ fn op_replay_stream(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let lm = parse_adapter(msg)?;
     let request = Request::from_json(field(msg, "canonical_request")?)?;
     let body = body_of(msg)?;
-    let events = lm.replay_stream(&request, &body)?;
+    let mut decoder = lm.stream_decoder(&request);
+    decoder.response_headers(headers_of(msg));
+    let mut events = decoder.feed(&body)?;
+    events.extend(decoder.finish()?);
     let event_json: Vec<Value> = events.iter().map(Canonical::to_json).collect();
     match materialize_response(events.iter(), &request) {
         Ok(response) => {
@@ -831,6 +888,8 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "explain_auth" => op_explain_auth(msg),
         "resolve_model" => op_resolve_model(msg),
         "build_request" => op_build_request(msg),
+        "plan" => op_plan(msg),
+        "surface_dump" => Ok(lm15::tooling::surface_dump()),
         "parse_response" => op_parse_response(msg),
         "ingest_openai_chat" => op_ingest_openai_chat(msg),
         "build_models_request" => op_build_models_request(msg),
@@ -864,6 +923,16 @@ fn lm15_error_json(err: &Lm15Error, extra: Map<String, Value>) -> Value {
         "code": err.code().as_str(),
         "message": err.message(),
     });
+    if let Some(feature) = &err.meta().feature {
+        error["feature"] = feature.clone().into();
+    }
+    if let Some(status) = err.meta().status {
+        error["status"] = status.into();
+    }
+    let evidence = err.meta().http_response();
+    if !evidence.is_empty() {
+        error["http_response"] = evidence.into();
+    }
     if let Some(partial) = err.partial() {
         error["partial_response"] =
             Value::Object(response_result(partial))["canonical_response"].clone();

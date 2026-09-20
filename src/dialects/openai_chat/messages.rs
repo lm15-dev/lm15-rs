@@ -201,20 +201,23 @@ fn assistant_row(
     compat: &ResolvedOpenAIChatCompat,
     provider: &str,
 ) -> Result<Value, Lm15Error> {
-    let mut text_bits: Vec<&str> = Vec::new();
+    let mut text_bits: Vec<String> = Vec::new();
     let mut thinking_bits: Vec<&str> = Vec::new();
     let mut tool_calls: Vec<Value> = Vec::new();
     for part in &message.parts {
         match part {
-            Part::Text(text) => text_bits.push(&text.text),
-            Part::Refusal(refusal) if !refusal.text.is_empty() => text_bits.push(&refusal.text),
+            Part::Text(text) => text_bits.push(text.text.clone()),
+            Part::Data(d) => text_bits.push(d.value.to_string()),
+            Part::Refusal(refusal) if !refusal.text.is_empty() => {
+                text_bits.push(refusal.text.clone())
+            }
             Part::Refusal(_) => {}
             Part::Thinking(thinking) => {
                 if thinking.text.is_empty() {
                     continue;
                 }
                 match compat.thinking_replay {
-                    OpenAIChatThinkingReplay::AsText => text_bits.push(&thinking.text),
+                    OpenAIChatThinkingReplay::AsText => text_bits.push(thinking.text.clone()),
                     OpenAIChatThinkingReplay::Native => thinking_bits.push(&thinking.text),
                     OpenAIChatThinkingReplay::Omit => {}
                 }
@@ -290,10 +293,16 @@ fn content_parts(message: &Message, force_array: bool, provider: &str) -> Result
             return Ok(Value::String(text.text.clone()));
         }
     }
+    if let [Part::Data(d)] = message.parts.as_slice() {
+        if !force_array {
+            return Ok(Value::String(d.value.to_string()));
+        }
+    }
     let mut blocks: Vec<Value> = Vec::with_capacity(message.parts.len());
     for part in &message.parts {
         match part {
             Part::Text(text) => blocks.push(text_block(&text.text)),
+            Part::Data(d) => blocks.push(text_block(&d.value.to_string())),
             Part::Image(image) => blocks.push(image_block(image, provider)?),
             other => {
                 return Err(unsupported(
@@ -326,7 +335,7 @@ fn image_block(image: &ImagePart, provider: &str) -> Result<Value, Lm15Error> {
         (Some(url), _, _) => url.clone(),
         (None, Some(data), _) => data_uri(&image.media_type, data),
         (None, None, Some(path)) => {
-            let bytes = std::fs::read(path).map_err(|err| {
+            let bytes = crate::adaptation::read_media(path).map_err(|err| {
                 unsupported(
                     provider,
                     format!("cannot read image part path {}: {err}", path.display()),

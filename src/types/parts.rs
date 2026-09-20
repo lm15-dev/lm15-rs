@@ -8,7 +8,73 @@ use super::continuation::{validate_continuation, ContinuationState};
 use super::json::{
     non_empty, opt_non_empty, validate_base64, JsonObject, VResult, ValidationError,
 };
-use super::vocab::ImageDetail;
+use super::vocab::{ImageDetail, JudgmentMethod};
+
+/// Structured input or a measured assistant judgment (INV-052).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DataPart {
+    pub value: serde_json::Value,
+    /// Field name → object mapping declared answer keys to probabilities.
+    pub probabilities: Option<JsonObject>,
+    pub method: Option<JudgmentMethod>,
+    pub continuation: Vec<ContinuationState>,
+}
+
+impl DataPart {
+    pub fn new(value: serde_json::Value) -> Self {
+        Self {
+            value,
+            ..Default::default()
+        }
+    }
+
+    pub fn validate(&self) -> VResult<()> {
+        if self.probabilities.is_some() != self.method.is_some() {
+            return Err(ValidationError::value(
+                "DataPart.method must be present iff probabilities is",
+            ));
+        }
+        if let Some(probabilities) = &self.probabilities {
+            if probabilities.is_empty() {
+                return Err(ValidationError::value(
+                    "DataPart.probabilities must be non-empty",
+                ));
+            }
+            for (field, distribution) in probabilities {
+                let distribution = distribution.as_object().ok_or_else(|| {
+                    ValidationError::type_error(format!("probabilities.{field} must be an object"))
+                })?;
+                if distribution.is_empty() {
+                    return Err(ValidationError::value(format!(
+                        "probabilities.{field} must be non-empty"
+                    )));
+                }
+                for (key, value) in distribution {
+                    if !value
+                        .as_f64()
+                        .is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p))
+                    {
+                        return Err(ValidationError::value(format!(
+                            "probabilities.{field}.{key} must be finite in [0, 1]"
+                        )));
+                    }
+                }
+                // INV-052: rounded provider measurements need not sum exactly to one.
+            }
+        }
+        validate_continuation(&self.continuation)
+    }
+
+    pub fn expected_level(&self, field: &str) -> Option<f64> {
+        self.probabilities
+            .as_ref()?
+            .get(field)?
+            .as_object()?
+            .iter()
+            .map(|(key, p)| Some(key.parse::<u64>().ok()? as f64 * p.as_f64()?))
+            .sum()
+    }
+}
 
 /// A block of text. `text` may be empty (INV-015).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -372,7 +438,9 @@ impl ToolResultPart {
         }
         for part in &self.content {
             part.validate()?;
-            if part.is_tool_result_forbidden() {
+            if part.is_tool_result_forbidden()
+                || matches!(part, Part::Data(p) if p.probabilities.is_some() || p.method.is_some())
+            {
                 return Err(ValidationError::type_error(
                     "ToolResultPart.content cannot contain tool calls, nested tool results, thinking parts, or refusals",
                 ));
@@ -396,6 +464,7 @@ pub enum Part {
     Thinking(ThinkingPart),
     Refusal(RefusalPart),
     Citation(CitationPart),
+    Data(DataPart),
 }
 
 /// Content accepted by the factories (INV-021): a string, one part, or a
@@ -445,6 +514,7 @@ impl Part {
         "thinking",
         "refusal",
         "citation",
+        "data",
     ];
 
     /// The streamable partition (INV-035).
@@ -459,6 +529,10 @@ impl Part {
 
     pub fn text(text: impl Into<String>) -> Part {
         Part::Text(TextPart::new(text))
+    }
+
+    pub fn data(value: serde_json::Value) -> Part {
+        Part::Data(DataPart::new(value))
     }
 
     pub fn thinking(text: impl Into<String>) -> Part {
@@ -495,6 +569,7 @@ impl Part {
             Part::Thinking(_) => "thinking",
             Part::Refusal(_) => "refusal",
             Part::Citation(_) => "citation",
+            Part::Data(_) => "data",
         }
     }
 
@@ -511,6 +586,7 @@ impl Part {
             Part::Thinking(p) => &p.continuation,
             Part::Refusal(p) => &p.continuation,
             Part::Citation(p) => &p.continuation,
+            Part::Data(p) => &p.continuation,
         }
     }
 
@@ -527,6 +603,7 @@ impl Part {
             Part::Thinking(p) => p.validate(),
             Part::Refusal(p) => p.validate(),
             Part::Citation(p) => p.validate(),
+            Part::Data(p) => p.validate(),
         }
     }
 
@@ -535,12 +612,14 @@ impl Part {
         matches!(
             self,
             Part::ToolCall(_) | Part::ToolResult(_) | Part::Thinking(_) | Part::Refusal(_)
-        )
+        ) || matches!(self, Part::Data(p) if p.probabilities.is_some() || p.method.is_some())
     }
 
     /// Parts a caller may not author in a prompt (INV-024).
     pub fn is_prompt_forbidden(&self) -> bool {
-        self.is_tool_result_forbidden() || matches!(self, Part::Citation(_))
+        self.is_tool_result_forbidden()
+            || matches!(self, Part::Citation(_))
+            || matches!(self, Part::Data(p) if p.probabilities.is_some() || p.method.is_some())
     }
 
     /// INV-021: a string becomes one TextPart; an empty sequence is rejected.
@@ -649,7 +728,14 @@ mod tests {
 
     #[test]
     fn inv_035_streamable_partition_is_exact() {
-        let non_streamable = ["video", "document", "binary", "tool_result", "refusal"];
+        let non_streamable = [
+            "video",
+            "document",
+            "binary",
+            "tool_result",
+            "refusal",
+            "data",
+        ];
         let mut all: Vec<&str> = Part::STREAMABLE_TYPES.to_vec();
         all.extend(non_streamable);
         all.sort_unstable();

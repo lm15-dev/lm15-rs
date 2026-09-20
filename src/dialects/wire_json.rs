@@ -290,6 +290,7 @@ pub fn usage(fields: Usage) -> Usage {
 /// with the reference's fallbacks.
 pub fn error_detail(class: ErrorClass, provider_code: &str, message: &str) -> ErrorDetail {
     ErrorDetail {
+        http_response: Default::default(),
         code: class.code(),
         message: if !message.is_empty() {
             message.to_string()

@@ -106,6 +106,31 @@ fn every_request_case_of_the_responses_providers_builds_its_fixture() {
                     continue;
                 }
             };
+            let mut actual: Vec<Value> = lm
+                .plan(&request)
+                .unwrap()
+                .iter()
+                .map(|a| {
+                    assert!(!a.reason.is_empty(), "{id}: empty adaptation reason");
+                    let mut value = a.to_json();
+                    value.as_object_mut().unwrap().remove("reason");
+                    value
+                })
+                .collect();
+            let mut wanted = case["expect_lm15"]["adaptations"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let order = |a: &Value, b: &Value| {
+                (a["field"].as_str(), a["action"].as_str())
+                    .cmp(&(b["field"].as_str(), b["action"].as_str()))
+            };
+            actual.sort_by(order);
+            wanted.sort_by(order);
+            assert_eq!(
+                actual, wanted,
+                "{id}: adaptations (reason wording is not pinned)"
+            );
             let expected = case["request"].as_object().unwrap();
             let url = expected["url"].as_str().unwrap();
             let method = expected
@@ -131,6 +156,6 @@ fn every_request_case_of_the_responses_providers_builds_its_fixture() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 96, "request cases with a canonical_request");
+    assert_eq!(checked, 98, "request cases with a canonical_request");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -58,7 +58,12 @@ pub fn parse_response(
     body: &[u8],
 ) -> Result<Response, Lm15Error> {
     let data = body_object(provider, body)?;
-    response_from_chat_body(provider, data, Some(&request.model), None)
+    let mut response = response_from_chat_body(provider, data, Some(&request.model), None)?;
+    crate::judgments::replace_text_with_data(
+        &mut response.message.parts,
+        &crate::judgments::request_judgments(request),
+    );
+    Ok(response)
 }
 
 /// A Chat Completions response body → the canonical `Response` (MAP-12 rule
@@ -245,6 +250,8 @@ fn response_from_chat_body(
     // refusal logprobs stay in provider_data.
     let logprobs = openai_token_logprobs(object_or_empty(choice.get("logprobs")).get("content"));
     Ok(Response {
+        adaptations: Vec::new(),
+        logprobs_complete: true,
         id: id_or_none(data.get("id")),
         model: match str_or_none(data.get("model")).or_else(|| model.map(str::to_string)) {
             Some(m) => m,
@@ -330,6 +337,7 @@ pub fn parse_stream_event(
             let logprobs = object_or_empty(choice.get("logprobs"));
             out.push(StreamEvent::Delta(StreamDeltaEvent {
                 delta: Delta::Text(TextDelta {
+                    logprobs_complete: true,
                     text: content.clone(),
                     part_index: 0,
                     logprobs: openai_token_logprobs(logprobs.get("content")),

@@ -52,6 +52,7 @@ pub enum ErrorCode {
     Transport,
     LockTimeout,
     StreamAssembly,
+    CollectionLimit,
     Provider,
 }
 
@@ -72,6 +73,7 @@ impl ErrorCode {
         ErrorCode::Transport,
         ErrorCode::LockTimeout,
         ErrorCode::StreamAssembly,
+        ErrorCode::CollectionLimit,
         ErrorCode::Provider,
     ];
 
@@ -92,6 +94,7 @@ impl ErrorCode {
             ErrorCode::Transport => "transport",
             ErrorCode::LockTimeout => "lock_timeout",
             ErrorCode::StreamAssembly => "stream_assembly",
+            ErrorCode::CollectionLimit => "collection_limit",
             ErrorCode::Provider => "provider",
         }
     }
@@ -122,6 +125,7 @@ impl ErrorCode {
             ErrorCode::Transport => ErrorClass::TransportError,
             ErrorCode::LockTimeout => ErrorClass::LockTimeoutError,
             ErrorCode::StreamAssembly => ErrorClass::StreamAssemblyError,
+            ErrorCode::CollectionLimit => ErrorClass::CollectionLimitError,
             ErrorCode::Provider => ErrorClass::ProviderError,
         }
     }
@@ -140,6 +144,7 @@ pub enum ErrorClass {
     TransportError,
     LockTimeoutError,
     StreamAssemblyError,
+    CollectionLimitError,
     ConfigurationError,
     NotConfiguredError,
     UnknownModelError,
@@ -164,6 +169,7 @@ impl ErrorClass {
             ErrorClass::TransportError => "TransportError",
             ErrorClass::LockTimeoutError => "LockTimeoutError",
             ErrorClass::StreamAssemblyError => "StreamAssemblyError",
+            ErrorClass::CollectionLimitError => "CollectionLimitError",
             ErrorClass::ConfigurationError => "ConfigurationError",
             ErrorClass::NotConfiguredError => "NotConfiguredError",
             ErrorClass::UnknownModelError => "UnknownModelError",
@@ -189,6 +195,7 @@ impl ErrorClass {
             ErrorClass::TransportError
             | ErrorClass::LockTimeoutError
             | ErrorClass::StreamAssemblyError
+            | ErrorClass::CollectionLimitError
             | ErrorClass::ConfigurationError
             | ErrorClass::CapabilityError
             | ErrorClass::ProviderError => ErrorClass::LM15Error,
@@ -243,9 +250,88 @@ impl ErrorClass {
             ErrorClass::TransportError => ErrorCode::Transport,
             ErrorClass::LockTimeoutError => ErrorCode::LockTimeout,
             ErrorClass::StreamAssemblyError => ErrorCode::StreamAssembly,
+            ErrorClass::CollectionLimitError => ErrorCode::CollectionLimit,
             ErrorClass::ProviderError | ErrorClass::LM15Error => ErrorCode::Provider,
         }
     }
+}
+
+/// Bounded, immutable HTTP diagnostic evidence. Values are copied, never split.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DiagnosticHeaders(std::collections::BTreeMap<String, Vec<String>>);
+
+impl DiagnosticHeaders {
+    pub fn from_headers(headers: &[(String, String)]) -> Self {
+        let mut out = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for (name, value) in headers {
+            let name = name.to_ascii_lowercase();
+            if !diagnostic_header_name(&name)
+                || value.is_empty()
+                || value.len() > 256
+                || !value.bytes().all(|b| (0x20..=0x7e).contains(&b))
+            {
+                continue;
+            }
+            let values = out.entry(name).or_default();
+            if values.len() < 4 {
+                values.push(value.clone());
+            }
+        }
+        Self(out)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn get(&self, name: &str) -> Option<&[String]> {
+        self.0.get(&name.to_ascii_lowercase()).map(Vec::as_slice)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.0
+            .iter()
+            .map(|(name, values)| (name.as_str(), values.as_slice()))
+    }
+    pub fn to_json(&self) -> Value {
+        Value::Object(
+            self.0
+                .iter()
+                .map(|(name, values)| {
+                    (
+                        name.clone(),
+                        Value::Array(values.iter().cloned().map(Value::String).collect()),
+                    )
+                })
+                .collect(),
+        )
+    }
+}
+
+pub fn diagnostic_header_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if matches!(
+        name.as_str(),
+        "retry-after"
+            | "retry-after-ms"
+            | "x-ms-retry-after-ms"
+            | "x-ratelimit-type"
+            | "x-ratelimit-abusepenalty-active"
+    ) {
+        return true;
+    }
+    for meter in ["requests", "tokens"] {
+        for kind in ["limit", "remaining", "reset", "renewalperiod"] {
+            if name == format!("x-ratelimit-{kind}-{meter}") {
+                return true;
+            }
+        }
+    }
+    for meter in ["requests", "tokens", "input-tokens", "output-tokens"] {
+        for kind in ["limit", "remaining", "reset"] {
+            if name == format!("anthropic-ratelimit-{meter}-{kind}") {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Metadata every error class carries (vocabularies.md § ErrorCode).
@@ -258,15 +344,81 @@ pub struct ErrorMeta {
     pub status: Option<u16>,
     pub request_id: Option<String>,
     pub retry_after: Option<f64>,
+    pub rate_limit_headers: DiagnosticHeaders,
+    pub content_type: Option<String>,
+    pub body_excerpt: Option<String>,
+    pub credential_source: Option<crate::auth::CredentialSource>,
+    /// Canonical setting/part path for an actionable capability refusal.
+    pub feature: Option<String>,
 }
 
 impl ErrorMeta {
+    /// Canonical evidence for an in-band error; deliberately excludes HTTP status.
+    pub fn http_response(&self) -> serde_json::Map<String, Value> {
+        let mut out = serde_json::Map::new();
+        if let Some(id) = self.request_id.as_ref().filter(|s| !s.is_empty()) {
+            out.insert("request_id".into(), Value::String(id.clone()));
+        }
+        if let Some(wait) = self.retry_after.filter(|v| v.is_finite() && *v >= 0.0) {
+            out.insert("retry_after".into(), Value::from(wait));
+        }
+        if !self.rate_limit_headers.is_empty() {
+            out.insert(
+                "rate_limit_headers".into(),
+                self.rate_limit_headers.to_json(),
+            );
+        }
+        out
+    }
+    pub fn apply_http_response(
+        &mut self,
+        value: &serde_json::Map<String, Value>,
+    ) -> Result<(), ValidationError> {
+        let normalized =
+            crate::types::stream_http_response_from_json(&Value::Object(value.clone()))?;
+        if let Some(id) = normalized.get("request_id").and_then(Value::as_str) {
+            self.request_id = Some(id.into());
+        }
+        if let Some(wait) = normalized.get("retry_after").and_then(Value::as_f64) {
+            self.retry_after = Some(wait);
+        }
+        if let Some(headers) = normalized
+            .get("rate_limit_headers")
+            .and_then(Value::as_object)
+        {
+            let pairs = headers
+                .iter()
+                .flat_map(|(name, values)| {
+                    values
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(move |v| v.as_str().map(|v| (name.clone(), v.to_string())))
+                })
+                .collect::<Vec<_>>();
+            self.rate_limit_headers = DiagnosticHeaders::from_headers(&pairs);
+        }
+        Ok(())
+    }
     pub fn new(message: impl Into<String>) -> Self {
         ErrorMeta {
             message: message.into(),
             ..Default::default()
         }
     }
+}
+
+/// A sealed local collector failure. Event storage is shared, immutable and
+/// materialized lazily: constructing this error never joins/decompresses data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectionLimit {
+    pub meta: ErrorMeta,
+    pub limit: &'static str,
+    pub maximum: usize,
+    pub retained_bytes: usize,
+    pub retained_events: usize,
+    pub partial_events: std::sync::Arc<Vec<crate::types::LiveServerEvent>>,
+    pub rejected_event: Option<std::sync::Arc<crate::types::LiveServerEvent>>,
 }
 
 /// What a stream assembly refusal salvaged (MAP-9).
@@ -320,6 +472,7 @@ pub enum Lm15Error {
     TransportError(ErrorMeta),
     LockTimeoutError(LockTimeout),
     StreamAssemblyError(StreamAssembly),
+    CollectionLimitError(CollectionLimit),
     ConfigurationError(ErrorMeta),
     NotConfiguredError(ErrorMeta),
     UnknownModelError(UnknownModel),
@@ -353,6 +506,15 @@ impl Lm15Error {
                 partial: None,
                 part_index: None,
             }),
+            ErrorClass::CollectionLimitError => Lm15Error::CollectionLimitError(CollectionLimit {
+                meta,
+                limit: "events",
+                maximum: 0,
+                retained_bytes: 0,
+                retained_events: 0,
+                partial_events: std::sync::Arc::new(Vec::new()),
+                rejected_event: None,
+            }),
             ErrorClass::ConfigurationError => Lm15Error::ConfigurationError(meta),
             ErrorClass::NotConfiguredError => Lm15Error::NotConfiguredError(meta),
             ErrorClass::UnknownModelError => Lm15Error::UnknownModelError(UnknownModel {
@@ -383,6 +545,7 @@ impl Lm15Error {
             Lm15Error::TransportError(_) => ErrorClass::TransportError,
             Lm15Error::LockTimeoutError(_) => ErrorClass::LockTimeoutError,
             Lm15Error::StreamAssemblyError(_) => ErrorClass::StreamAssemblyError,
+            Lm15Error::CollectionLimitError(_) => ErrorClass::CollectionLimitError,
             Lm15Error::ConfigurationError(_) => ErrorClass::ConfigurationError,
             Lm15Error::NotConfiguredError(_) => ErrorClass::NotConfiguredError,
             Lm15Error::UnknownModelError(_) => ErrorClass::UnknownModelError,
@@ -432,6 +595,7 @@ impl Lm15Error {
     pub fn meta(&self) -> &ErrorMeta {
         match self {
             Lm15Error::StreamAssemblyError(s) => &s.meta,
+            Lm15Error::CollectionLimitError(limit) => &limit.meta,
             Lm15Error::LockTimeoutError(l) => &l.meta,
             Lm15Error::UnknownModelError(u) => &u.meta,
             Lm15Error::AmbiguousModelError(a) => &a.meta,
@@ -455,6 +619,7 @@ impl Lm15Error {
     pub fn meta_mut(&mut self) -> &mut ErrorMeta {
         match self {
             Lm15Error::StreamAssemblyError(s) => &mut s.meta,
+            Lm15Error::CollectionLimitError(limit) => &mut limit.meta,
             Lm15Error::LockTimeoutError(l) => &mut l.meta,
             Lm15Error::UnknownModelError(u) => &mut u.meta,
             Lm15Error::AmbiguousModelError(a) => &mut a.meta,
@@ -497,6 +662,23 @@ impl Lm15Error {
 
     pub fn retry_after(&self) -> Option<f64> {
         self.meta().retry_after
+    }
+
+    pub fn feature(&self) -> Option<&str> {
+        self.meta().feature.as_deref()
+    }
+
+    pub fn rate_limit_headers(&self) -> &DiagnosticHeaders {
+        &self.meta().rate_limit_headers
+    }
+    pub fn content_type(&self) -> Option<&str> {
+        self.meta().content_type.as_deref()
+    }
+    pub fn body_excerpt(&self) -> Option<&str> {
+        self.meta().body_excerpt.as_deref()
+    }
+    pub fn credential_source(&self) -> Option<&crate::auth::CredentialSource> {
+        self.meta().credential_source.as_ref()
     }
 
     /// `StreamAssemblyError.partial`: the Response assembled without the
@@ -585,6 +767,14 @@ impl fmt::Display for Lm15Error {
         } else {
             meta.message.as_str()
         };
+        let (base, guidance) =
+            if self.is_a(ErrorClass::AuthError) && meta.credential_source.is_some() {
+                base.split_once("\n\n  To fix:")
+                    .map(|(text, hint)| (text, Some(hint)))
+                    .unwrap_or((base, None))
+            } else {
+                (base, None)
+            };
         write!(f, "{}: {base}", self.class_name())?;
         if self.is_a(ErrorClass::ProviderError) {
             let mut context: Vec<String> = Vec::new();
@@ -600,6 +790,29 @@ impl fmt::Display for Lm15Error {
             if !context.is_empty() {
                 write!(f, " ({})", context.join(", "))?;
             }
+            if self.is_a(ErrorClass::AuthError) {
+                if let Some(source) = &meta.credential_source {
+                    write!(f, "\nCredential came from: {}", source.describe())?;
+                }
+            }
+            if !meta.rate_limit_headers.is_empty() || meta.retry_after.is_some() {
+                let mut details = Vec::new();
+                if let Some(wait) = meta.retry_after.filter(|v| v.is_finite() && *v >= 0.0) {
+                    details.push(format!("retry_after={wait}s"));
+                }
+                for (name, values) in meta.rate_limit_headers.iter() {
+                    details.push(format!("{name}={values:?}"));
+                }
+                let text = details.join("; ");
+                let preview: String = text.chars().take(2048).collect();
+                write!(f, "\nHTTP diagnostics (raw/advisory): {preview}")?;
+                if text.chars().count() > 2048 {
+                    f.write_str(" … [truncated]")?;
+                }
+            }
+        }
+        if let Some(hint) = guidance {
+            write!(f, "\n\n  To fix:{hint}")?;
         }
         Ok(())
     }
@@ -656,6 +869,7 @@ pub fn normalize_error(
         }
         DialectId::Anthropic => normalize_anthropic(&ctx, status, body_text),
         DialectId::Gemini => normalize_gemini(&ctx, status, body_text),
+        DialectId::Typesafe => normalize_typesafe(&ctx, status, body_text),
     })
 }
 
@@ -676,7 +890,7 @@ impl Context {
             provider_code: provider_code.filter(|c| !c.is_empty()),
             status: None,
             request_id: request_id.filter(|r| !r.is_empty()),
-            retry_after: None,
+            ..Default::default()
         }
     }
 
@@ -824,7 +1038,11 @@ fn normalize_openai_shape(ctx: &Context, status: u16, body: &str, codex: bool) -
     if code == "invalid_api_key" || err_type == "authentication_error" {
         return ctx.error(ErrorClass::AuthError, status, msg, provider_code, None);
     }
-    if code == "rate_limit_exceeded" || err_type == "rate_limit_error" {
+    if matches!(
+        code.as_str(),
+        "rate_limit_exceeded" | "no_capacity" | "too_many_requests"
+    ) || err_type == "rate_limit_error"
+    {
         return ctx.error(ErrorClass::RateLimitError, status, msg, provider_code, None);
     }
     if !code.is_empty() && !msg.contains(&code) {
@@ -1016,6 +1234,64 @@ fn normalize_gemini(ctx: &Context, status: u16, body: &str) -> Lm15Error {
         msg = format!("{msg} ({err_status})");
     }
     ctx.http(status, msg, provider_code, None)
+}
+
+fn normalize_typesafe(ctx: &Context, status: u16, body: &str) -> Lm15Error {
+    let mut message = fallback_message(status, body);
+    let mut code = None;
+    let data = serde_json::from_str::<Value>(body).ok();
+    match data.as_ref().and_then(|v| v.get("detail")) {
+        Some(Value::Object(detail)) => {
+            code = detail
+                .get("error_type")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if let Some(text) = detail.get("message").and_then(Value::as_str) {
+                message = text.into();
+            }
+        }
+        Some(Value::Array(details)) => {
+            if let Some(first) = details.first().and_then(Value::as_object) {
+                let loc = first
+                    .get("loc")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter(|v| v.as_str() != Some("body"))
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| v.to_string())
+                            })
+                            .collect::<Vec<_>>()
+                            .join(".")
+                    })
+                    .unwrap_or_default();
+                let text = first
+                    .get("msg")
+                    .and_then(Value::as_str)
+                    .unwrap_or("validation error");
+                message = if loc.is_empty() {
+                    text.into()
+                } else {
+                    format!("{loc}: {text}")
+                };
+            }
+        }
+        _ => {}
+    }
+    let class = if status == 401 || code.as_deref() == Some("authentication_error") {
+        Some(ErrorClass::AuthError)
+    } else if status == 400 && message.to_lowercase().contains("unknown model") {
+        Some(ErrorClass::UnsupportedModelError)
+    } else {
+        None
+    };
+    match class {
+        Some(class) => ctx.error(class, status, message, code, None),
+        None => ctx.http(status, message, code, None),
+    }
 }
 
 #[cfg(test)]

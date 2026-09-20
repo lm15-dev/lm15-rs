@@ -72,8 +72,8 @@ fn settings_of(case: &Value) -> Option<HostSettings> {
     })))
 }
 
-/// The 118 round trips (97 exact, 21 pinned lossy) and the 42 foreign
-/// shapes at `CONTRACT_PIN`; the counts move with the pin.
+/// The 126 round trips (98 exact, 28 pinned lossy) and 42 foreign shapes
+/// (33 accepted, 9 refused), statically counted at the target contract pin.
 #[test]
 fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
     let Some(dir) = contract_dir() else { return };
@@ -139,7 +139,7 @@ fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
     }
     assert_eq!(
         (round_trips, lossy, foreign, refusals),
-        (118, 21, 31, 11),
+        (126, 28, 33, 9),
         "case counts moved; move CONTRACT_PIN and these constants together"
     );
 }
@@ -164,7 +164,8 @@ fn build_then_ingest_is_identity_on_a_rich_request() {
         "config": {"max_tokens": 100, "temperature": 0.5, "top_p": 0.9, "stop": ["END"], "logprobs": 2,
                    "response_format": {"type": "json_schema", "schema": {"type": "object"}, "name": "Out", "strict": true},
                    "tool_choice": {"mode": "auto", "parallel": false}, "reasoning": {"effort": "low"},
-                   "service_tier": "flex", "user_id": "u", "store": false, "extensions": {"seed": 7}}
+                   "service_tier": "flex", "user_id": "u", "store": false,
+                   "seed": 7, "frequency_penalty": 0.0, "presence_penalty": -0.5}
     }))
     .unwrap();
     let lm = adapter_for("openai_chat", "k", None, None, None).unwrap();
@@ -185,9 +186,7 @@ fn unsupported(result: Result<Request, Lm15Error>) -> String {
 fn refused_keys_name_the_key_and_unknown_keys_are_refused_not_dropped() {
     for extra in [
         json!({"n": 2}),
-        json!({"functions": []}),
         json!({"audio": {"voice": "alloy"}}),
-        json!({"top_k": 3}),
         json!({"never_heard_of_it": 1}),
     ] {
         let key = extra.as_object().unwrap().keys().next().unwrap().clone();
@@ -196,6 +195,54 @@ fn refused_keys_name_the_key_and_unknown_keys_are_refused_not_dropped() {
         let message = unsupported(request_from_openai_chat(&body, None));
         assert!(message.contains(&key), "{message}");
     }
+}
+
+#[test]
+fn deprecated_function_declarations_translate_and_promoted_knobs_are_canonical() {
+    let base = json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}]});
+    let mut legacy = base.clone();
+    legacy["functions"] =
+        json!([{"name": "lookup", "description": "Look up a value", "parameters": {}}]);
+    legacy["function_call"] = json!({"name": "lookup"});
+    let mut modern = base.clone();
+    modern["tools"] = json!([{"type": "function", "function": legacy["functions"][0].clone()}]);
+    modern["tool_choice"] = json!({"type": "function", "function": {"name": "lookup"}});
+    assert_eq!(
+        request_from_openai_chat(&legacy, None).unwrap(),
+        request_from_openai_chat(&modern, None).unwrap()
+    );
+
+    let mut body = base;
+    body["functions"] = json!([]);
+    body["top_k"] = json!(3);
+    body["seed"] = json!(0);
+    body["frequency_penalty"] = json!(0.0);
+    body["presence_penalty"] = json!(-0.5);
+    let parsed = request_from_openai_chat(&body, None).unwrap();
+    assert!(parsed.tools.is_empty());
+    assert_eq!(
+        parsed.config.to_json(),
+        json!({
+            "top_k": 3, "seed": 0, "frequency_penalty": 0.0, "presence_penalty": -0.5
+        })
+    );
+    assert!(parsed.config.extensions.is_none());
+
+    legacy["tools"] = modern["tools"].clone();
+    assert_eq!(
+        request_from_openai_chat(&legacy, None)
+            .unwrap_err()
+            .class_name(),
+        "InvalidRequestError"
+    );
+    legacy.as_object_mut().unwrap().remove("tools");
+    legacy["tool_choice"] = modern["tool_choice"].clone();
+    assert_eq!(
+        request_from_openai_chat(&legacy, None)
+            .unwrap_err()
+            .class_name(),
+        "InvalidRequestError"
+    );
 }
 
 #[test]

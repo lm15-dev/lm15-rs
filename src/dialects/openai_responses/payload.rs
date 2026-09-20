@@ -51,6 +51,15 @@ pub fn build_payload(
 ) -> Result<Map<String, Value>, Lm15Error> {
     let provider = cx.provider;
     let model = cx.model;
+    crate::dialects::content::validate_slots(
+        request,
+        cx.provider,
+        "openai",
+        compat.tool_result_media,
+    )?;
+    crate::judgments::note_unmeasurable_probabilities(request, cx.provider)?;
+    let prepared = prepare(request, cx, compat)?;
+    let request = &prepared;
     let config = &request.config;
     let mut payload = Map::new();
 
@@ -207,6 +216,76 @@ pub fn build_payload(
         }
     }
     Ok(payload)
+}
+
+fn prepare(
+    request: &Request,
+    cx: &BuildContext<'_>,
+    compat: &ResolvedOpenAIResponsesCompat,
+) -> Result<Request, Lm15Error> {
+    use crate::adaptation::{
+        adapt, drop_value, prepare_openai_cache, refusal, summary_auto, AdaptationAction::*,
+    };
+    let mut out = request.clone();
+    prepare_openai_cache(&mut out, compat.cache_control, cx.provider)?;
+    let c = &mut out.config;
+    if !c.stop.is_empty() {
+        adapt("config.stop",ClientSide,Some(json!(c.stop)),None,"the Responses wire has no stop field; lm15 streams and closes the source at the first match; final usage is not reported")?;
+        c.stop.clear();
+    }
+    drop_value(
+        "config.top_k",
+        &mut c.top_k,
+        "the Responses wire has no top_k field",
+    )?;
+    drop_value(
+        "config.seed",
+        &mut c.seed,
+        "the Responses wire has no seed field",
+    )?;
+    drop_value(
+        "config.frequency_penalty",
+        &mut c.frequency_penalty,
+        "the Responses wire has no frequency_penalty field",
+    )?;
+    drop_value(
+        "config.presence_penalty",
+        &mut c.presence_penalty,
+        "the Responses wire has no presence_penalty field",
+    )?;
+    if compat.reasoning_format == Fmt::None {
+        if let Some(r) = c.reasoning.take() {
+            adapt(
+                "config.reasoning.effort",
+                Dropped,
+                Some(json!(r.effort.as_str())),
+                None,
+                "this server has no reasoning dial; the model chooses",
+            )?;
+        }
+    } else if let Some(r) = &mut c.reasoning {
+        drop_value(
+            "config.reasoning.thinking_budget",
+            &mut r.thinking_budget,
+            "this wire has no thinking token budget; effort carries the intent",
+        )?;
+        if compat.reasoning_format != Fmt::ResponsesReasoning {
+            summary_auto(r)?;
+        }
+    }
+    if cx.policy.backend == CODEX_BACKEND {
+        if c.max_tokens.is_some() {
+            return Err(refusal(
+                cx.provider,
+                "config.max_tokens",
+                "this backend has no output cap; dropping it risks unbounded paid generation",
+            ));
+        }
+        if c.store == Some(true) {
+            return Err(refusal(cx.provider,"config.store","this backend cannot store a retrievable response; the program may depend on retrieval"));
+        }
+    }
+    Ok(out)
 }
 
 /// `openai.py:296-303` `_response_format_to_openai_text` (MAP-8.5:

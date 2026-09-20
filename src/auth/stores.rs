@@ -356,7 +356,7 @@ fn jwt_payload(token: &str) -> Option<Value> {
 
 /// Minimal base64url (no padding) decoder — kept local to avoid a
 /// dependency for one call site.
-fn base64url_decode(input: &str) -> Option<Vec<u8>> {
+pub(super) fn base64url_decode(input: &str) -> Option<Vec<u8>> {
     fn value_of(byte: u8) -> Option<u32> {
         match byte {
             b'A'..=b'Z' => Some((byte - b'A') as u32),

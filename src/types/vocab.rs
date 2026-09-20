@@ -207,6 +207,35 @@ vocab!(
     }
 );
 
+vocab!(AdaptationAction, "adaptation action", {
+    Dropped => "dropped", Clamped => "clamped", Substituted => "substituted",
+    ClientSide => "client_side", Satisfied => "satisfied", Defaulted => "defaulted",
+});
+vocab!(AdaptationPolicy, "adaptation policy", {
+    Note => "note", Silent => "silent", Refuse => "refuse",
+});
+impl Default for AdaptationPolicy {
+    fn default() -> Self {
+        Self::Note
+    }
+}
+vocab!(ProbabilityPolicy, "probability policy", {
+    Off => "off", IfAvailable => "if_available", Required => "required",
+});
+vocab!(NamedCredential, "named credential", {
+    Platform => "platform", Workload => "workload", Environment => "environment", Cli => "cli"
+});
+impl From<NamedCredential> for String {
+    fn from(value: NamedCredential) -> Self {
+        value.as_str().into()
+    }
+}
+
+vocab!(JudgmentMethod, "judgment method", {
+    ProviderClassification => "provider_classification",
+    CandidateSequenceLikelihood => "candidate_sequence_likelihood",
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;

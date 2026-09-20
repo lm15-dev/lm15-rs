@@ -7,6 +7,68 @@ use crate::compat::ToolResultMedia;
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::types::{Part, ToolResultPart};
 
+/// Preflight unsupported content with caller-addressable paths (MAP-13.4b).
+/// Rendering remains responsible for bytes; this only identifies known gaps.
+pub(crate) fn validate_slots(
+    request: &crate::types::Request,
+    provider: &str,
+    dialect: &str,
+    tool_media: ToolResultMedia,
+) -> Result<(), Lm15Error> {
+    use crate::types::{Role, SystemContent};
+    if let Some(SystemContent::Parts(parts)) = &request.system {
+        for (j, p) in parts.iter().enumerate() {
+            if is_media(p) {
+                return Err(crate::adaptation::refusal(
+                    provider,
+                    &format!("system[{j}]"),
+                    "the program depends on this part, but the system text slot cannot carry media",
+                ));
+            }
+        }
+    }
+    for (i, m) in request.messages.iter().enumerate() {
+        for (j, p) in m.parts.iter().enumerate() {
+            let path = format!("messages[{i}].parts[{j}]");
+            if let Part::ToolResult(result) = p {
+                if dialect == "gemini"
+                    && result.name.is_none()
+                    && !request.messages[..i]
+                        .iter()
+                        .rev()
+                        .filter(|m| m.role == Role::Assistant)
+                        .flat_map(|m| m.parts.iter().rev())
+                        .any(|p| matches!(p,Part::ToolCall(call) if call.id==result.id))
+                {
+                    return Err(crate::adaptation::refusal(provider,&format!("{path}.name"),"a real choice is needed: the Gemini function result needs a name and no preceding call with this id supplied one"));
+                }
+                for (k, part) in result.content.iter().enumerate() {
+                    if is_media(part) && !tool_media.admits(part.type_name()) {
+                        return Err(crate::adaptation::refusal(provider,&format!("{path}.content[{k}]"),format!("the program depends on the {} part, but this wire cannot carry it in a tool result (MAP-10)",part.type_name())));
+                    }
+                }
+            }
+            let gap = match dialect {
+                "anthropic" => matches!(p, Part::Audio(_) | Part::Video(_) | Part::Binary(_)),
+                "openai" => {
+                    is_media(p)
+                        && (m.role == Role::Assistant
+                            || !matches!(p, Part::Image(_) | Part::Document(_)))
+                }
+                "openai_chat" => {
+                    is_media(p) && (m.role == Role::Assistant || !matches!(p, Part::Image(_)))
+                }
+                "gemini" => m.role == Role::Developer && is_media(p),
+                _ => false,
+            };
+            if gap {
+                return Err(crate::adaptation::refusal(provider,&path,format!("the program depends on this {} {} part; no native {} content slot carries it (MAP-10)",m.role,p.type_name(),dialect)));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The part kinds that carry bytes/addresses rather than words: a native
 /// block or a raise, never text (MAP-10 rule 2).
 pub fn is_media(part: &Part) -> bool {
@@ -41,6 +103,7 @@ pub fn parts_to_text(parts: &[Part], provider: &str, where_: &str) -> Result<Str
         }
         match part {
             Part::Text(text) => out.push(text.text.clone()),
+            Part::Data(data) => out.push(data.value.to_string()),
             Part::Thinking(thinking) if !thinking.text.is_empty() => {
                 out.push(thinking.text.clone())
             }

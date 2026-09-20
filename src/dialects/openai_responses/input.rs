@@ -41,6 +41,7 @@ pub fn build_input(
                 for part in &message.parts {
                     match part {
                         Part::Text(text) => content.push(output_text(&text.text)),
+                        Part::Data(d) => content.push(output_text(&d.value.to_string())),
                         Part::Refusal(refusal) => {
                             content.push(json!({"type": "refusal", "refusal": refusal.text}))
                         }
@@ -284,6 +285,7 @@ fn citation_text(citation: &CitationPart) -> Option<String> {
 pub(crate) fn part_to_input(provider: &str, part: &Part) -> Result<Value, Lm15Error> {
     Ok(match part {
         Part::Text(text) => json!({"type": "input_text", "text": text.text}),
+        Part::Data(d) => json!({"type":"input_text","text":d.value.to_string()}),
         Part::Image(image) => image_input(provider, image)?,
         Part::Audio(audio) => audio_input(provider, audio)?,
         Part::Document(document) => file_input(
@@ -422,7 +424,7 @@ fn data_uri(media_type: &str, data: &str) -> String {
 }
 
 fn read_base64(provider: &str, path: &std::path::Path) -> Result<String, Lm15Error> {
-    let bytes = std::fs::read(path).map_err(|err| {
+    let bytes = crate::adaptation::read_media(path).map_err(|err| {
         invalid_request(
             provider,
             format!("cannot read media part path {}: {err}", path.display()),

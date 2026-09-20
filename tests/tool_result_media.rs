@@ -174,26 +174,37 @@ fn gemini_nests_media_resolves_names_and_maps_is_error() {
 }
 
 #[test]
-fn stop_and_top_k_raise_on_responses_and_top_k_on_chat() {
+fn strict_policy_refuses_client_side_stop_and_dropped_top_k() {
     let value = json!({"model": "m", "messages": [{"role": "user", "parts": [{"type": "text", "text": "x"}]}], "config": {"stop": ["END"]}});
-    let lm = OpenAILM::builder().api_key("k").build().unwrap();
-    refuses(
+    let lm = OpenAILM::builder()
+        .api_key("k")
+        .adaptations(lm15::AdaptationPolicy::Refuse)
+        .build()
+        .unwrap();
+    let err = refuses(
         lm.build_request(&Request::from_json(&value).unwrap(), false)
             .map(|r| r.body.unwrap()),
-        "config.stop has no field",
+        "config.stop",
     );
+    assert_eq!(err.feature(), Some("config.stop"));
     let value = json!({"model": "m", "messages": [{"role": "user", "parts": [{"type": "text", "text": "x"}]}], "config": {"top_k": 3}});
-    refuses(
+    let err = refuses(
         lm.build_request(&Request::from_json(&value).unwrap(), false)
             .map(|r| r.body.unwrap()),
-        "config.top_k has no field",
+        "config.top_k",
     );
-    let lm = OpenAIChatLM::builder().api_key("k").build().unwrap();
-    refuses(
+    assert_eq!(err.feature(), Some("config.top_k"));
+    let lm = OpenAIChatLM::builder()
+        .api_key("k")
+        .adaptations(lm15::AdaptationPolicy::Refuse)
+        .build()
+        .unwrap();
+    let err = refuses(
         lm.build_request(&Request::from_json(&value).unwrap(), false)
             .map(|r| r.body.unwrap()),
-        "config.top_k has no field",
+        "config.top_k",
     );
+    assert_eq!(err.feature(), Some("config.top_k"));
 }
 
 #[test]

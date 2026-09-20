@@ -25,8 +25,9 @@ pub use openai_chat::{
     ChatModelOverride, OpenAIChatAssistantAfterToolResult, OpenAIChatAssistantReasoningContent,
     OpenAIChatBuiltinTools, OpenAIChatCompat, OpenAIChatForcedToolChoice,
     OpenAIChatInstructionRole, OpenAIChatJsonSchema, OpenAIChatMaxTokensField,
-    OpenAIChatStreamUsage, OpenAIChatThinkingFormat, OpenAIChatThinkingReplay, OpenAIChatUserField,
-    ResolvedOpenAIChatCompat, OPENAI_CHAT_PRESETS, OPENAI_CHAT_PRESET_BASE_URLS,
+    OpenAIChatStreamUsage, OpenAIChatThinkingFormat, OpenAIChatThinkingReplay,
+    OpenAIChatTokenScoring, OpenAIChatUserField, ResolvedOpenAIChatCompat, OPENAI_CHAT_PRESETS,
+    OPENAI_CHAT_PRESET_BASE_URLS,
 };
 pub use openai_responses::{
     OpenAIResponsesBuiltinTools, OpenAIResponsesCommentaryPhase, OpenAIResponsesCompat,

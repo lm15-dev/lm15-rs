@@ -29,11 +29,39 @@ pub fn batch_status(status: &str) -> BatchStatus {
     }
 }
 
+/// Batch generation is not a stream we can close at a client-side stop cut.
+/// Inspect every item without credentials or media reads before building paid work.
+pub(crate) fn preflight_requests(
+    dialect: &dyn Dialect,
+    cx: &BuildContext<'_>,
+    request: &BatchRequest,
+    policy: crate::AdaptationPolicy,
+) -> Result<(), Lm15Error> {
+    for nested in &request.requests {
+        let (_, records) = crate::adaptation::collect_planning(
+            crate::AdaptationPolicy::Note,
+            cx.provider,
+            || dialect.build(nested, false, &cx.for_model(&nested.model)),
+        )?;
+        if crate::adaptation::has_client_side_stop(&records) {
+            return Err(crate::adaptation::refusal(cx.provider, "config.stop",
+                "batch cannot close the generation source at a client-side stop cut; use a dialect with native stop support or individual complete()/stream() calls"));
+        }
+        if policy == crate::AdaptationPolicy::Refuse {
+            crate::adaptation::collect_planning(policy, cx.provider, || {
+                dialect.build(nested, false, &cx.for_model(&nested.model))
+            })?;
+        }
+    }
+    Ok(())
+}
+
 pub fn upload_request(
     dialect: &dyn Dialect,
     cx: &BuildContext<'_>,
     request: &BatchRequest,
 ) -> Result<WireRequest, Lm15Error> {
+    preflight_requests(dialect, cx, request, crate::AdaptationPolicy::Note)?;
     let mut lines = String::new();
     for (i, nested) in request.requests.iter().enumerate() {
         let body = dialect
@@ -63,6 +91,12 @@ pub fn submit_request(
     request: &BatchRequest,
     upload_body: Option<&Map<String, Value>>,
 ) -> Result<WireRequest, Lm15Error> {
+    preflight_requests(
+        &super::OpenAIResponses,
+        cx,
+        request,
+        crate::AdaptationPolicy::Note,
+    )?;
     let input_file_id = upload_body
         .and_then(|b| str_field(b, "id"))
         .ok_or_else(|| {
@@ -209,6 +243,7 @@ pub fn entries(
                         outcome: BatchOutcome::Errored,
                         response: None,
                         error: Some(ErrorDetail {
+                            http_response: err.meta().http_response(),
                             code: err.code(),
                             message: non_empty_or(err.message(), "batch entry errored"),
                             provider_code: err.provider_code().map(str::to_string),

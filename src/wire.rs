@@ -60,6 +60,9 @@ pub struct TransportRequest {
     /// The idle read timeout for this request (the reference's
     /// per-request `read_timeout`); `None` takes the transport's default.
     pub read_timeout: Option<Duration>,
+    /// Identity used when this request was signed. Local diagnostic metadata,
+    /// never serialized to a header/body, and never a secret value.
+    pub credential_source: Option<crate::auth::CredentialSource>,
 }
 
 impl TransportRequest {
@@ -806,14 +809,43 @@ pub fn emit_wire(
     credentials: &dyn CredentialProvider,
     clock: &dyn Clock,
 ) -> Result<TransportRequest, Lm15Error> {
-    // AUTH-2: once per request, never cached.
-    let credential = credentials.credential().map_err(Lm15Error::from)?;
+    emit_wire_with_source(dialect, wire, stream, cx, credentials, clock).map(|(request, _)| request)
+}
+
+/// Emit with an atomic snapshot of the identity actually used. HTTP drivers
+/// retain this snapshot for failures instead of reading a provider after I/O.
+pub fn emit_wire_with_source(
+    dialect: &dyn Dialect,
+    wire: WireRequest,
+    stream: bool,
+    cx: &BuildContext<'_>,
+    credentials: &dyn CredentialProvider,
+    clock: &dyn Clock,
+) -> Result<(TransportRequest, Option<crate::auth::CredentialSource>), Lm15Error> {
+    // AUTH-2: once per request, never cached by the adapter.
+    let (credential, mut source) = credentials.credential_with_source().map_err(|error| {
+        let mut error = Lm15Error::from(error);
+        error.meta_mut().credential_source = credentials.source();
+        error
+    })?;
     let scheme = select_scheme(cx.policy.auth_scheme, &credential).map_err(|err| {
         let mut meta = ErrorMeta::new(format!("{}: {err}", cx.provider));
         meta.provider = Some(cx.provider.to_string());
         Lm15Error::NotConfiguredError(meta)
     })?;
 
+    if scheme == AuthScheme::Bearer
+        && cx
+            .policy
+            .auth_scheme
+            .iter()
+            .any(|s| matches!(s, AuthScheme::ApiKey | AuthScheme::XApiKey))
+        && matches!(&credential, Credential::ApiKey { value } if crate::auth::is_jwt(value))
+    {
+        if let Some(source) = &mut source {
+            source.label.push_str("; sent as bearer (JWT)");
+        }
+    }
     let mut headers = wire.headers;
     if let Some((name, value)) = auth_header(scheme, &credential, dialect.api_key_header()) {
         if !has_header(&headers, &name) {
@@ -913,19 +945,15 @@ pub fn emit_wire(
             .collect(),
         body,
         raw,
-        // Every dialect's `build_request`: `read_timeout=120.0 if stream
-        // else 60.0`.
-        read_timeout: Some(if stream {
-            crate::transport::STREAM_READ_TIMEOUT
-        } else {
-            crate::transport::DEFAULT_READ_TIMEOUT
-        }),
+        // Budgets belong to the shared transport, not the wire dialect.
+        read_timeout: None,
+        credential_source: source.clone(),
     };
 
     if scheme == AuthScheme::SigV4 {
         out.headers = sign_request(cx, &out, &credential, clock.now_unix())?;
     }
-    Ok(out)
+    Ok((out, source))
 }
 
 /// The headers to send under `sigv4` (`lm15/cloud/hosts.py:176-207`): the

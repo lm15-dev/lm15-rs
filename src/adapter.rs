@@ -24,7 +24,7 @@ use std::task::{Context, Poll};
 use futures_core::Stream;
 
 use crate::auth::{AccessPolicy, CredentialProvider};
-use crate::cloud::hosts::{render_base_url, resolve_settings, HostSettings};
+use crate::cloud::hosts::{resolve_base_url, resolve_settings_with_endpoint, HostSettings};
 use crate::compat::{
     preset_base_url, preset_key, AnthropicCompat, Compat, OpenAIChatCompat, OpenAIResponsesCompat,
     ANTHROPIC_PRESET_BASE_URLS, OPENAI_CHAT_PRESET_BASE_URLS, OPENAI_RESPONSES_PRESET_BASE_URLS,
@@ -46,7 +46,7 @@ use crate::types::{
     SpeechGenerationResponse, StreamEvent, VideoGenerationRequest, VideoJobInfo, VideoPart,
 };
 use crate::wire::{
-    emit, emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
+    emit_wire, BuildContext, Clock, Dialect, SystemClock, TransportRequest, WireRequest,
 };
 
 type BoxedCredentials = Arc<dyn CredentialProvider + Send + Sync>;
@@ -66,14 +66,17 @@ pub struct ProviderLM {
 /// The immutable part of a binding: what a `BuildContext` borrows. Shared
 /// with every [`EventStream`] the adapter opens, so a stream owns its
 /// context and outlives the borrow of the adapter.
+#[derive(Clone)]
 struct Binding {
     provider: String,
+    aliases: Vec<String>,
     dialect: DialectId,
     policy: &'static AccessPolicy,
     compat: Compat,
     base_url: String,
     settings: HostSettings,
     account_id: Option<String>,
+    adaptations: crate::adaptation::AdaptationPolicy,
 }
 
 impl Binding {
@@ -81,7 +84,10 @@ impl Binding {
     fn wire_model<'a>(&self, model: &'a str) -> &'a str {
         match model.split_once(':') {
             Some((head, rest))
-                if crate::registry::canonical_provider(head) == self.provider
+                if (crate::registry::canonical_provider(head) == self.provider
+                    || self
+                        .aliases
+                        .contains(&crate::registry::canonical_provider(head)))
                     && !rest.is_empty() =>
             {
                 rest
@@ -158,6 +164,13 @@ impl ProviderLM {
         request: &Request,
         stream: bool,
     ) -> Result<TransportRequest, Lm15Error> {
+        if self.uses_candidate_scoring(request) {
+            if stream {
+                let (effective, _) = self.prepare_stream(request)?;
+                return self.build_request(&effective, true);
+            }
+            return Err(crate::adaptation::refusal(self.provider(), "config.probabilities", "candidate likelihood needs tokenization and a batched scoring exchange; use complete() or scoring_plan(), not a single wire request"));
+        }
         // The public boundary: a `Request` is a plain struct a caller may
         // have edited after `Request::new`; the dialects assume the
         // invariants (INV-*) hold and never re-check them.
@@ -167,14 +180,148 @@ impl ProviderLM {
             Lm15Error::InvalidRequestError(meta)
         })?;
         let cx = self.binding.context(request);
-        emit(
+        let (wire, _) =
+            crate::adaptation::collect(self.binding.adaptations, self.provider(), || {
+                dialect_for(self.dialect()).build(request, stream, &cx)
+            })?;
+        emit_wire(
             dialect_for(self.dialect()),
-            request,
+            wire,
             stream,
             &cx,
             self.credentials.as_ref(),
             self.clock.as_ref(),
         )
+    }
+
+    /// What this request would adapt. No credential is invoked and no
+    /// host endpoint is resolved. Silent policy still returns the full plan.
+    pub fn plan(&self, request: &Request) -> Result<Vec<crate::adaptation::Adaptation>, Lm15Error> {
+        request
+            .validate()
+            .map_err(|e| Lm15Error::InvalidRequestError(ErrorMeta::new(e.message)))?;
+        let cx = self.binding.context(request);
+        let (_, records) =
+            crate::adaptation::collect_planning(self.binding.adaptations, self.provider(), || {
+                if self.uses_candidate_scoring(request) {
+                    crate::scoring::plan(request, &cx).map(|_| ())
+                } else {
+                    dialect_for(self.dialect())
+                        .build(request, false, &cx)
+                        .map(|_| ())
+                }
+            })?;
+        Ok(records)
+    }
+
+    fn prepare_stream(
+        &self,
+        request: &Request,
+    ) -> Result<(Request, Vec<crate::Adaptation>), Lm15Error> {
+        if !self.uses_candidate_scoring(request) {
+            request
+                .validate()
+                .map_err(|e| Lm15Error::InvalidRequestError(ErrorMeta::new(e.message)))?;
+            let cx = self.binding.context(request);
+            let (_, records) = crate::adaptation::collect_planning(
+                self.binding.adaptations,
+                self.provider(),
+                || {
+                    dialect_for(self.dialect())
+                        .build(request, true, &cx)
+                        .map(|_| ())
+                },
+            )?;
+            return Ok((request.clone(), records));
+        }
+        let reason = "streaming cannot deliver measured candidate likelihoods; use complete() for distributions";
+        if request.config.probabilities == Some(crate::ProbabilityPolicy::Required)
+            || self.binding.adaptations == crate::AdaptationPolicy::Refuse
+        {
+            return Err(crate::adaptation::refusal(
+                self.provider(),
+                "config.probabilities",
+                reason,
+            ));
+        }
+        let mut effective = request.clone();
+        effective.config.probabilities = Some(crate::ProbabilityPolicy::Off);
+        let (_, mut records) = self.prepare_stream(&effective)?;
+        records.push(crate::Adaptation {
+            field: "config.probabilities".into(),
+            action: crate::AdaptationAction::Dropped,
+            asked: Some(Value::from("if_available")),
+            applied: None,
+            reason: reason.into(),
+        });
+        Ok((effective, records))
+    }
+
+    /// Streaming may have fewer measurement capabilities than complete().
+    pub fn plan_stream(&self, request: &Request) -> Result<Vec<crate::Adaptation>, Lm15Error> {
+        self.prepare_stream(request).map(|(_, records)| records)
+    }
+
+    pub fn uses_candidate_scoring(&self, request: &Request) -> bool {
+        self.dialect() == DialectId::OpenaiChat
+            && matches!(
+                request.config.probabilities,
+                Some(crate::ProbabilityPolicy::Required | crate::ProbabilityPolicy::IfAvailable)
+            )
+            && !crate::judgments::request_judgments(request).is_empty()
+            && crate::dialects::openai_chat::resolve_compat(
+                &self.binding.context(request),
+                self.wire_model(&request.model),
+            )
+            .token_scoring
+                == crate::compat::OpenAIChatTokenScoring::LogprobTokenIds
+    }
+
+    /// Pure multi-exchange measurement plan for hosts that own networking.
+    pub fn scoring_plan(
+        &self,
+        request: &Request,
+    ) -> Result<crate::scoring::ScoringPlan, Lm15Error> {
+        if !self.uses_candidate_scoring(request) {
+            return Err(crate::adaptation::refusal(
+                self.provider(),
+                "config.probabilities",
+                "this request does not select a measured token-scoring capability",
+            ));
+        }
+        let (plan, _) =
+            crate::adaptation::collect(self.binding.adaptations, self.provider(), || {
+                crate::scoring::plan(request, &self.binding.context(request))
+            })?;
+        Ok(plan)
+    }
+
+    pub fn build_score_request(
+        &self,
+        request: &Request,
+        prompts: Vec<Vec<u64>>,
+        token_ids: &std::collections::BTreeSet<u64>,
+    ) -> Result<TransportRequest, Lm15Error> {
+        if !self.uses_candidate_scoring(request) {
+            return Err(crate::adaptation::refusal(
+                self.provider(),
+                "config.probabilities",
+                "named token scoring is not selected",
+            ));
+        }
+        self.surface_request(
+            crate::scoring::score_request(&self.binding.context(request), prompts, token_ids),
+            0,
+        )
+    }
+
+    pub fn adaptation_policy(&self) -> crate::adaptation::AdaptationPolicy {
+        self.binding.adaptations
+    }
+
+    pub fn with_adaptations(mut self, policy: crate::adaptation::AdaptationPolicy) -> Self {
+        Arc::make_mut(&mut self.binding).adaptations = policy;
+        self
     }
 
     /// MAP-12 (module 4b): a Chat Completions request body → the canonical
@@ -240,22 +387,127 @@ impl ProviderLM {
         body: &[u8],
     ) -> Result<Response, Lm15Error> {
         if status >= 400 {
-            let text = String::from_utf8_lossy(body);
-            return Err(
-                crate::errors::normalize_error(self.provider(), status, &text)
-                    .map_err(|err| Lm15Error::ConfigurationError(ErrorMeta::new(err.message)))?,
-            );
+            return Err(self.http_error(status, &[], body));
         }
         let cx = self.binding.context(request);
-        dialect_for(self.dialect()).parse_response(request, &cx, body)
+        reply_context(
+            dialect_for(self.dialect()).parse_response(request, &cx, body),
+            status,
+            &[],
+            body,
+        )
+    }
+
+    /// Parse a host-supplied response while retaining HTTP diagnostic evidence.
+    pub fn parse_response_with_headers(
+        &self,
+        request: &Request,
+        status: u16,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<Response, Lm15Error> {
+        if status >= 400 {
+            return Err(self.http_error(status, headers, body));
+        }
+        let mut response = reply_context(
+            self.parse_response(request, status, body),
+            status,
+            headers,
+            body,
+        )?;
+        if self.dialect() == DialectId::Typesafe && response.id.is_none() {
+            response.id = headers
+                .iter()
+                .find(|(k, v)| k.eq_ignore_ascii_case("x-typesafe-request-id") && !v.is_empty())
+                .map(|(_, v)| v.clone());
+        }
+        Ok(response)
+    }
+
+    /// Finish a reply to a request built by this binding, retaining its build
+    /// record. Raw `parse_response` does not invent execution metadata for a
+    /// captured exchange. A client-side stop requires the prepared stream path.
+    pub fn parse_prepared_response(
+        &self,
+        request: &Request,
+        status: u16,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<Response, Lm15Error> {
+        if self.uses_candidate_scoring(request) {
+            return Err(crate::adaptation::refusal(
+                self.provider(),
+                "config.probabilities",
+                "use the scoring reply hooks for measured candidate likelihoods",
+            ));
+        }
+        let records = self.plan(request)?;
+        if crate::adaptation::has_client_side_stop(&records) {
+            return Err(crate::adaptation::refusal(self.provider(), "config.stop", "client-side stopping requires a prepared stream decoder and closing the actual source at the cut"));
+        }
+        let mut response = self.parse_response_with_headers(request, status, headers, body)?;
+        if self.binding.adaptations != crate::AdaptationPolicy::Silent {
+            response.adaptations = records;
+        }
+        Ok(response)
+    }
+
+    /// Strict generated-JSON half of a measured or unavailable judgment call.
+    /// Hosts use this boundary instead of treating a recovered JSON fragment as
+    /// an answer; `measured` permits only measured judgment fields to be absent.
+    pub fn parse_generated_judgment_response(
+        &self,
+        request: &Request,
+        status: u16,
+        headers: &[(String, String)],
+        body: &[u8],
+        measured: bool,
+    ) -> Result<Response, Lm15Error> {
+        if status >= 400 {
+            return Err(self.http_error(status, headers, body));
+        }
+        let evidence = crate::scoring::ScoringReply::from_http(
+            status,
+            headers.to_vec(),
+            body.to_vec(),
+            self.provider(),
+        )?;
+        evidence.parse(|raw| {
+            crate::scoring::parse_generated(request, &self.binding.context(request), raw, measured)
+        })
     }
 
     /// A decoder for one streamed response: feed the SSE bytes as they
     /// arrive and take the canonical events (post-coalesce: one start,
     /// one final end — MAP-3, MAP-4). Owns a copy of the request and
     /// shares the binding, so it outlives the borrow of the adapter.
+    pub fn prepared_stream_decoder(&self, request: &Request) -> StreamDecoder {
+        let (effective, records, error) = match self.prepare_stream(request) {
+            Ok((effective, records)) => (effective, records, None),
+            Err(e) => (request.clone(), Vec::new(), Some(e)),
+        };
+        let mut decoder = self.stream_decoder(&effective);
+        decoder.stop = crate::adaptation::has_client_side_stop(&records)
+            .then(|| crate::stop::StopCutter::new(&request.config.stop));
+        decoder.records = records;
+        decoder.initial_error = error;
+        decoder.coalescer = Some(Coalescer::new(Some(
+            self.wire_model(&effective.model).to_string(),
+        )));
+        decoder
+    }
+
+    /// Decode captured wire events without reconstructing build adaptations or
+    /// applying a stop that the capture may never have executed.
     pub fn stream_decoder(&self, request: &Request) -> StreamDecoder {
         StreamDecoder {
+            records: Vec::new(),
+            initial_error: None,
+            stop: None,
+            close_source: false,
+            headers: Vec::new(),
+            body_prefix: Vec::new(),
+            source: None,
             dialect: dialect_for(self.dialect()),
             binding: Arc::clone(&self.binding),
             request: request.clone(),
@@ -292,17 +544,14 @@ impl ProviderLM {
         let dialect = dialect_for(self.dialect());
         let cx = self.binding.surface_context();
         let wire = dialect.models_request(&cx)?;
-        let mut built = emit_wire(
+        emit_wire(
             dialect,
             wire,
             false,
             &cx,
             self.credentials.as_ref(),
             self.clock.as_ref(),
-        )?;
-        // Every dialect's `_models_request`: `read_timeout=30.0`.
-        built.read_timeout = Some(std::time::Duration::from_secs(30));
-        Ok(built)
+        )
     }
 
     /// The canonical `ModelInfo` list of a catalog body; a status of 400
@@ -313,7 +562,12 @@ impl ProviderLM {
             return Err(self.http_error(status, &[], body));
         }
         let cx = self.binding.surface_context();
-        dialect_for(self.dialect()).parse_models(&cx, body)
+        reply_context(
+            dialect_for(self.dialect()).parse_models(&cx, body),
+            status,
+            &[],
+            body,
+        )
     }
 
     /// The models this credential can use (`BaseProviderLM.list_models`).
@@ -322,15 +576,25 @@ impl ProviderLM {
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, Lm15Error> {
         self.ready().await?;
         let built = self.models_request()?;
+        let source = built.credential_source.clone();
         let mut response = self.transport.send(built).await?;
         let status = response.status;
         let headers = std::mem::take(&mut response.headers);
         let body = response.read().await?;
         if status >= 400 {
-            return Err(self.http_error(status, &headers, &body));
+            return Err(with_source(
+                self.http_error(status, &headers, &body),
+                source,
+            ));
         }
         let cx = self.binding.surface_context();
-        dialect_for(self.dialect()).parse_models(&cx, &body)
+        reply_context(
+            dialect_for(self.dialect()).parse_models(&cx, &body),
+            status,
+            &headers,
+            &body,
+        )
+        .map_err(|e| with_source(e, source))
     }
 
     // ─── endpoint surfaces (modules 7–8) ─────────────────────────────
@@ -339,10 +603,10 @@ impl ProviderLM {
     pub fn surface_request(
         &self,
         wire: WireRequest,
-        read_timeout: u64,
+        _read_timeout: u64,
     ) -> Result<TransportRequest, Lm15Error> {
         let cx = self.binding.surface_context();
-        let mut built = emit_wire(
+        let built = emit_wire(
             dialect_for(self.dialect()),
             wire,
             false,
@@ -350,7 +614,6 @@ impl ProviderLM {
             self.credentials.as_ref(),
             self.clock.as_ref(),
         )?;
-        built.read_timeout = Some(std::time::Duration::from_secs(read_timeout));
         Ok(built)
     }
 
@@ -360,12 +623,16 @@ impl ProviderLM {
         &self,
         built: TransportRequest,
     ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Lm15Error> {
+        let source = built.credential_source.clone();
         let mut response = self.transport.send(built).await?;
         let status = response.status;
         let headers = std::mem::take(&mut response.headers);
         let body = response.read().await?;
         if status >= 400 {
-            return Err(self.http_error(status, &headers, &body));
+            return Err(with_source(
+                self.http_error(status, &headers, &body),
+                source,
+            ));
         }
         Ok((status, headers, body))
     }
@@ -394,7 +661,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).file_info(&self.binding.surface_context(), body)
+        reply_context(
+            dialect_for(self.dialect()).file_info(&self.binding.surface_context(), body),
+            status,
+            &[],
+            body,
+        )
     }
 
     pub fn parse_file_page(&self, status: u16, body: &[u8]) -> Result<FilePage, Lm15Error> {
@@ -402,7 +674,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).file_page(&self.binding.surface_context(), body)
+        reply_context(
+            dialect_for(self.dialect()).file_page(&self.binding.surface_context(), body),
+            status,
+            &[],
+            body,
+        )
     }
 
     /// Store a file with the provider; `FileInfo.id` is the reference a
@@ -411,15 +688,15 @@ impl ProviderLM {
     pub async fn file_upload(&self, request: &FileUploadRequest) -> Result<FileInfo, Lm15Error> {
         self.ready().await?;
         let built = self.file_request(&FileOp::Upload(request))?;
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_file_info(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(self.parse_file_info(status, &body), status, &headers, &body)
     }
 
     pub async fn file_get(&self, file_id: &str) -> Result<FileInfo, Lm15Error> {
         self.ready().await?;
         let built = self.file_request(&FileOp::Get(file_id))?;
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_file_info(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(self.parse_file_info(status, &body), status, &headers, &body)
     }
 
     /// One page of this credential's stored files; `cursor` is the
@@ -427,8 +704,8 @@ impl ProviderLM {
     pub async fn file_list(&self, limit: u64, cursor: Option<&str>) -> Result<FilePage, Lm15Error> {
         self.ready().await?;
         let built = self.file_request(&FileOp::List { limit, cursor })?;
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_file_page(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(self.parse_file_page(status, &body), status, &headers, &body)
     }
 
     /// Delete a stored file. Returning without an error IS the
@@ -473,6 +750,20 @@ impl ProviderLM {
 
     // ─── batch (the third execution mode; module 7b) ─────────────────
 
+    fn batch_preflight(&self, request: &BatchRequest) -> Result<(), Lm15Error> {
+        request.validate().map_err(|err| {
+            let mut meta = ErrorMeta::new(format!("{}: {}", self.provider(), err.message));
+            meta.provider = Some(self.provider().to_string());
+            Lm15Error::InvalidRequestError(meta)
+        })?;
+        crate::dialects::openai_responses::batch::preflight_requests(
+            dialect_for(self.dialect()),
+            &self.binding.surface_context(),
+            request,
+            self.binding.adaptations,
+        )
+    }
+
     /// The wire requests of one batch action (the shim's `batch_op_build`):
     /// ALWAYS a list — `upload` is empty on a single-step wire,
     /// `result_fetches` is empty when results are inlined.
@@ -481,32 +772,46 @@ impl ProviderLM {
         action: &BatchAction<'_>,
     ) -> Result<Vec<TransportRequest>, Lm15Error> {
         self.require("batches")?;
+        match action {
+            BatchAction::Upload(request) | BatchAction::Submit { request, .. } => {
+                self.batch_preflight(request)?
+            }
+            _ => {}
+        }
         let cx = self.binding.surface_context();
         let dialect = dialect_for(self.dialect());
-        let wires: Vec<(WireRequest, u64)> = match action {
-            BatchAction::Upload(request) => dialect
-                .batch_upload_request(&cx, request)?
-                .into_iter()
-                .map(|w| (w, 300))
-                .collect(),
-            BatchAction::Submit {
-                request,
-                upload_body,
-            } => {
-                vec![(
-                    dialect.batch_submit_request(&cx, request, *upload_body)?,
-                    120,
-                )]
-            }
-            BatchAction::Status(id) => vec![(dialect.batch_status_request(&cx, id)?, 60)],
-            BatchAction::Cancel(id) => vec![(dialect.batch_cancel_request(&cx, id)?, 60)],
-            BatchAction::ResultFetches(status_body) => dialect
-                .batch_result_fetches(&cx, status_body)?
-                .into_iter()
-                .map(|w| (w, 300))
-                .collect(),
-            BatchAction::List(limit) => vec![(dialect.batch_list_request(&cx, *limit)?, 60)],
-        };
+        let (wires, _) = crate::adaptation::collect(
+            self.binding.adaptations,
+            self.provider(),
+            || -> Result<Vec<(WireRequest, u64)>, Lm15Error> {
+                Ok(match action {
+                    BatchAction::Upload(request) => dialect
+                        .batch_upload_request(&cx, request)?
+                        .into_iter()
+                        .map(|w| (w, 300))
+                        .collect(),
+                    BatchAction::Submit {
+                        request,
+                        upload_body,
+                    } => {
+                        vec![(
+                            dialect.batch_submit_request(&cx, request, *upload_body)?,
+                            120,
+                        )]
+                    }
+                    BatchAction::Status(id) => vec![(dialect.batch_status_request(&cx, id)?, 60)],
+                    BatchAction::Cancel(id) => vec![(dialect.batch_cancel_request(&cx, id)?, 60)],
+                    BatchAction::ResultFetches(status_body) => dialect
+                        .batch_result_fetches(&cx, status_body)?
+                        .into_iter()
+                        .map(|w| (w, 300))
+                        .collect(),
+                    BatchAction::List(limit) => {
+                        vec![(dialect.batch_list_request(&cx, *limit)?, 60)]
+                    }
+                })
+            },
+        )?;
         wires
             .into_iter()
             .map(|(wire, timeout)| self.surface_request(wire, timeout))
@@ -518,7 +823,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).batch_job(&self.binding.surface_context(), body)
+        reply_context(
+            dialect_for(self.dialect()).batch_job(&self.binding.surface_context(), body),
+            status,
+            &[],
+            body,
+        )
     }
 
     pub fn parse_batch_jobs(
@@ -530,7 +840,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).batch_jobs(&self.binding.surface_context(), body)
+        reply_context(
+            dialect_for(self.dialect()).batch_jobs(&self.binding.surface_context(), body),
+            status,
+            &[],
+            body,
+        )
     }
 
     /// The entries of a terminal batch, in submission order, from its
@@ -550,19 +865,17 @@ impl ProviderLM {
 
     /// Submit a batch: the optional upload step, then the submit.
     pub async fn batch_submit(&self, request: &BatchRequest) -> Result<BatchJobInfo, Lm15Error> {
+        self.require("batches")?;
+        self.batch_preflight(request)?;
         self.ready().await?;
-        request.validate().map_err(|err| {
-            let mut meta = ErrorMeta::new(format!("{}: {}", self.provider(), err.message));
-            meta.provider = Some(self.provider().to_string());
-            Lm15Error::InvalidRequestError(meta)
-        })?;
         let mut upload_body = None;
         for built in self.batch_requests(&BatchAction::Upload(request))? {
-            let (_, _, body) = self.send_surface(built).await?;
-            upload_body = Some(crate::surfaces::body_object(
-                self.provider(),
+            let (status, headers, body) = self.send_surface(built).await?;
+            upload_body = Some(reply_context(
+                crate::surfaces::body_object(self.provider(), &body, "batch upload"),
+                status,
+                &headers,
                 &body,
-                "batch upload",
             )?);
         }
         let built = self
@@ -571,8 +884,8 @@ impl ProviderLM {
                 upload_body: upload_body.as_ref(),
             })?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_batch_job(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(self.parse_batch_job(status, &body), status, &headers, &body)
     }
 
     pub async fn batch_status(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
@@ -580,8 +893,8 @@ impl ProviderLM {
         let built = self
             .batch_requests(&BatchAction::Status(batch_id))?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_batch_job(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(self.parse_batch_job(status, &body), status, &headers, &body)
     }
 
     pub async fn batch_cancel(&self, batch_id: &str) -> Result<BatchJobInfo, Lm15Error> {
@@ -589,8 +902,8 @@ impl ProviderLM {
         let built = self
             .batch_requests(&BatchAction::Cancel(batch_id))?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_batch_job(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(self.parse_batch_job(status, &body), status, &headers, &body)
     }
 
     /// The entries of a batch: its status, then the result fetches the
@@ -601,8 +914,8 @@ impl ProviderLM {
         let built = self
             .batch_requests(&BatchAction::Status(batch_id))?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        let job = self.parse_batch_job(status, &body)?;
+        let (status, headers, body) = self.send_surface(built).await?;
+        let job = reply_context(self.parse_batch_job(status, &body), status, &headers, &body)?;
         if !job.status.is_terminal() {
             let mut meta = ErrorMeta::new(format!(
                 "{}: batch {batch_id} is {} — results exist once the job is terminal",
@@ -624,8 +937,13 @@ impl ProviderLM {
     pub async fn batch_list(&self, limit: u64) -> Result<Vec<BatchJobInfo>, Lm15Error> {
         self.ready().await?;
         let built = self.batch_requests(&BatchAction::List(limit))?.remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_batch_jobs(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_batch_jobs(status, &body),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     // ─── stored caches (MAP-6 resource tier; module 7c) ──────────────
@@ -634,28 +952,34 @@ impl ProviderLM {
         self.require("caches")?;
         let cx = self.binding.surface_context();
         let dialect = dialect_for(self.dialect());
-        let (wire, timeout) = match op {
-            CacheOp::Create {
-                prefix,
-                ttl_seconds,
-                label,
-            } => (
-                dialect.cache_create_request(&cx, prefix, *ttl_seconds, *label)?,
-                120,
-            ),
-            CacheOp::Get(id) => (dialect.cache_get_request(&cx, id)?, 60),
-            CacheOp::List { limit, cursor } => {
-                (dialect.cache_list_request(&cx, *limit, *cursor)?, 60)
-            }
-            CacheOp::Delete(id) => (dialect.cache_delete_request(&cx, id)?, 60),
-            CacheOp::Update {
-                cache_id,
-                ttl_seconds,
-            } => (
-                dialect.cache_update_request(&cx, cache_id, *ttl_seconds)?,
-                60,
-            ),
-        };
+        let ((wire, timeout), _) = crate::adaptation::collect(
+            self.binding.adaptations,
+            self.provider(),
+            || -> Result<(WireRequest, u64), Lm15Error> {
+                Ok(match op {
+                    CacheOp::Create {
+                        prefix,
+                        ttl_seconds,
+                        label,
+                    } => (
+                        dialect.cache_create_request(&cx, prefix, *ttl_seconds, *label)?,
+                        120,
+                    ),
+                    CacheOp::Get(id) => (dialect.cache_get_request(&cx, id)?, 60),
+                    CacheOp::List { limit, cursor } => {
+                        (dialect.cache_list_request(&cx, *limit, *cursor)?, 60)
+                    }
+                    CacheOp::Delete(id) => (dialect.cache_delete_request(&cx, id)?, 60),
+                    CacheOp::Update {
+                        cache_id,
+                        ttl_seconds,
+                    } => (
+                        dialect.cache_update_request(&cx, cache_id, *ttl_seconds)?,
+                        60,
+                    ),
+                })
+            },
+        )?;
         self.surface_request(wire, timeout)
     }
 
@@ -664,7 +988,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).cache_info(&self.binding.surface_context(), body)
+        reply_context(
+            dialect_for(self.dialect()).cache_info(&self.binding.surface_context(), body),
+            status,
+            &[],
+            body,
+        )
     }
 
     pub fn parse_cache_page(&self, status: u16, body: &[u8]) -> Result<CachePage, Lm15Error> {
@@ -672,7 +1001,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).cache_page(&self.binding.surface_context(), body)
+        reply_context(
+            dialect_for(self.dialect()).cache_page(&self.binding.surface_context(), body),
+            status,
+            &[],
+            body,
+        )
     }
 
     /// Store a prefix (model, system, tools, messages) as a provider-side
@@ -689,15 +1023,25 @@ impl ProviderLM {
             ttl_seconds,
             label,
         })?;
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_cache_info(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_cache_info(status, &body),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     pub async fn cache_get(&self, cache_id: &str) -> Result<CacheInfo, Lm15Error> {
         self.ready().await?;
         let built = self.cache_request(&CacheOp::Get(cache_id))?;
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_cache_info(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_cache_info(status, &body),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     pub async fn cache_list(
@@ -707,8 +1051,13 @@ impl ProviderLM {
     ) -> Result<CachePage, Lm15Error> {
         self.ready().await?;
         let built = self.cache_request(&CacheOp::List { limit, cursor })?;
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_cache_page(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_cache_page(status, &body),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     pub async fn cache_delete(&self, cache_id: &str) -> Result<(), Lm15Error> {
@@ -727,8 +1076,13 @@ impl ProviderLM {
             cache_id,
             ttl_seconds,
         })?;
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_cache_info(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_cache_info(status, &body),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     // ─── generation: image, speech (module 8) ────────────────────────
@@ -754,9 +1108,14 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, headers, body));
         }
-        dialect_for(self.dialect()).image_generation(
-            &self.binding.surface_context(),
-            request,
+        reply_context(
+            dialect_for(self.dialect()).image_generation(
+                &self.binding.surface_context(),
+                request,
+                headers,
+                body,
+            ),
+            status,
             headers,
             body,
         )
@@ -793,9 +1152,14 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, headers, body));
         }
-        dialect_for(self.dialect()).speech_generation(
-            &self.binding.surface_context(),
-            request,
+        reply_context(
+            dialect_for(self.dialect()).speech_generation(
+                &self.binding.surface_context(),
+                request,
+                headers,
+                body,
+            ),
+            status,
             headers,
             body,
         )
@@ -852,7 +1216,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).video_job(&self.binding.surface_context(), body, video_id)
+        reply_context(
+            dialect_for(self.dialect()).video_job(&self.binding.surface_context(), body, video_id),
+            status,
+            &[],
+            body,
+        )
     }
 
     pub fn parse_video_jobs(
@@ -864,7 +1233,12 @@ impl ProviderLM {
         if status >= 400 {
             return Err(self.http_error(status, &[], body));
         }
-        dialect_for(self.dialect()).video_jobs(&self.binding.surface_context(), body)
+        reply_context(
+            dialect_for(self.dialect()).video_jobs(&self.binding.surface_context(), body),
+            status,
+            &[],
+            body,
+        )
     }
 
     /// The finished video of a terminal status body, with the fetched
@@ -890,8 +1264,13 @@ impl ProviderLM {
         let built = self
             .video_requests(&VideoAction::Submit(request))?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_video_job(status, &body, None)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_video_job(status, &body, None),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     pub async fn video_status(&self, video_id: &str) -> Result<VideoJobInfo, Lm15Error> {
@@ -899,8 +1278,13 @@ impl ProviderLM {
         let built = self
             .video_requests(&VideoAction::Status(video_id))?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_video_job(status, &body, Some(video_id))
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_video_job(status, &body, Some(video_id)),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     /// The finished video: the status, then the content fetch the
@@ -911,8 +1295,13 @@ impl ProviderLM {
         let built = self
             .video_requests(&VideoAction::Status(video_id))?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        let job = self.parse_video_job(status, &body, Some(video_id))?;
+        let (status, headers, body) = self.send_surface(built).await?;
+        let job = reply_context(
+            self.parse_video_job(status, &body, Some(video_id)),
+            status,
+            &headers,
+            &body,
+        )?;
         if job.status != crate::types::VideoStatus::Completed {
             let mut meta = ErrorMeta::new(format!(
                 "{}: video {video_id} is {} — the result exists once the job completed",
@@ -947,8 +1336,13 @@ impl ProviderLM {
         let built = self
             .video_requests(&VideoAction::List { limit, model })?
             .remove(0);
-        let (status, _, body) = self.send_surface(built).await?;
-        self.parse_video_jobs(status, &body)
+        let (status, headers, body) = self.send_surface(built).await?;
+        reply_context(
+            self.parse_video_jobs(status, &body),
+            status,
+            &headers,
+            &body,
+        )
     }
 
     // ─── live: the websocket codec (module 9) ───────────────────────
@@ -993,6 +1387,25 @@ impl ProviderLM {
         Err(Lm15Error::UnsupportedFeatureError(meta))
     }
 
+    /// Provenance only: never the credential's secret value.
+    pub fn credential_source(&self) -> Option<crate::auth::CredentialSource> {
+        self.credentials.source()
+    }
+
+    pub fn doctor(&self) -> String {
+        let source = self
+            .credential_source()
+            .map(|s| s.describe())
+            .unwrap_or_else(|| "cloud credential has not been resolved yet".into());
+        format!(
+            "provider: {}\nbase url: {}\ncredential: {}\nsettings: {:?}",
+            self.provider(),
+            self.base_url(),
+            source,
+            self.settings()
+        )
+    }
+
     /// The transport this adapter sends through.
     pub fn transport(&self) -> &dyn Transport {
         self.transport.as_ref()
@@ -1013,16 +1426,118 @@ impl ProviderLM {
     /// `retry_after` from the `Retry-After` header when the body did not
     /// say; a failure below HTTP is `TransportError`.
     pub async fn complete(&self, request: &Request) -> Result<Response, Lm15Error> {
+        let records = self.plan(request)?;
+        if self.uses_candidate_scoring(request) {
+            let cx = self.binding.context(request);
+            let outcome = crate::scoring::complete(request, &cx, |wire| async move {
+                self.ready().await?;
+                let built = self.surface_request(wire, 0)?;
+                let (status, headers, body) = self.send_surface(built).await?;
+                crate::scoring::ScoringReply::from_http(status, headers, body, self.provider())
+            })
+            .await?;
+            return match outcome {
+                crate::scoring::ScoringOutcome::Measured(mut response) => {
+                    if self.binding.adaptations != crate::AdaptationPolicy::Silent {
+                        response.adaptations = records;
+                    }
+                    Ok(response)
+                }
+                crate::scoring::ScoringOutcome::Unavailable(record, scoring_usage) => {
+                    if self.binding.adaptations == crate::AdaptationPolicy::Refuse {
+                        return Err(crate::adaptation::refusal(
+                            self.provider(),
+                            &record.field,
+                            &record.reason,
+                        ));
+                    }
+                    let mut fallback = request.clone();
+                    fallback.config.probabilities = Some(crate::ProbabilityPolicy::Off);
+                    let mut response = self.complete_generated_judgment(&fallback).await?;
+                    response.usage = crate::scoring::combined_usage(
+                        self.provider(),
+                        scoring_usage,
+                        response.usage,
+                    )?;
+                    response
+                        .provider_data
+                        .get_or_insert_with(crate::types::JsonObject::new)
+                        .insert(
+                            "scoring_usage".into(),
+                            crate::serde::Canonical::to_json(&scoring_usage),
+                        );
+                    if self.binding.adaptations != crate::AdaptationPolicy::Silent {
+                        let mut all = records;
+                        if !all.contains(&record) {
+                            all.push(record);
+                        }
+                        for note in response.adaptations {
+                            if !all.contains(&note) {
+                                all.push(note);
+                            }
+                        }
+                        response.adaptations = all;
+                    }
+                    Ok(response)
+                }
+            };
+        }
+        self.complete_ordinary(request).await
+    }
+
+    async fn complete_ordinary(&self, request: &Request) -> Result<Response, Lm15Error> {
+        let records = self.plan(request)?;
+        if crate::adaptation::has_client_side_stop(&records) {
+            use futures_util::StreamExt;
+            let mut source = self.stream(request);
+            let mut events = Vec::new();
+            while let Some(event) = source.next().await {
+                events.push(event?);
+            }
+            return materialize_response(events.iter(), request);
+        }
+        self.complete_generated(request).await
+    }
+
+    async fn complete_generated_judgment(&self, request: &Request) -> Result<Response, Lm15Error> {
         self.ready().await?;
         let built = self.build_request(request, false)?;
+        let source = built.credential_source.clone();
+        let mut reply = self.transport.send(built).await?;
+        let status = reply.status;
+        let headers = std::mem::take(&mut reply.headers);
+        let body = reply.read().await?;
+        if status >= 400 {
+            return Err(with_source(
+                self.http_error(status, &headers, &body),
+                source,
+            ));
+        }
+        let mut response = self
+            .parse_generated_judgment_response(request, status, &headers, &body, false)
+            .map_err(|error| with_source(error, source))?;
+        if self.binding.adaptations != crate::AdaptationPolicy::Silent {
+            response.adaptations = self.plan(request)?;
+        }
+        Ok(response)
+    }
+
+    async fn complete_generated(&self, request: &Request) -> Result<Response, Lm15Error> {
+        self.ready().await?;
+        let built = self.build_request(request, false)?;
+        let source = built.credential_source.clone();
         let mut response = self.transport.send(built).await?;
         let status = response.status;
         let headers = std::mem::take(&mut response.headers);
         let body = response.read().await?;
         if status >= 400 {
-            return Err(self.http_error(status, &headers, &body));
+            return Err(with_source(
+                self.http_error(status, &headers, &body),
+                source,
+            ));
         }
-        self.parse_response(request, status, &body)
+        self.parse_prepared_response(request, status, &headers, &body)
+            .map_err(|e| with_source(e, source))
     }
 
     /// The canonical events of one streamed call, as they arrive
@@ -1035,46 +1550,67 @@ impl ProviderLM {
     /// the stream closes the connection. The stream owns everything it
     /// needs (`'static`): it can be spawned, sent, or stored.
     pub fn stream(&self, request: &Request) -> EventStream {
+        if self.uses_candidate_scoring(request) {
+            return match self.prepare_stream(request) {
+                Err(error) => EventStream::failed(self.provider().into(), error),
+                Ok((effective, records)) => {
+                    let mut stream = self.stream(&effective);
+                    if let StreamState::Connecting { decoder, .. } = &mut stream.state {
+                        decoder.records = records;
+                    }
+                    stream
+                }
+            };
+        }
         // Validation first (no wire, no credential); the build itself runs
         // inside the future so a cloud chain can `prepare` before it.
-        let state = match request.validate() {
-            Ok(()) => {
+        let state = match self.plan_stream(request) {
+            Ok(_) => {
                 let transport = Arc::clone(&self.transport);
                 let binding = Arc::clone(&self.binding);
                 let credentials = Arc::clone(&self.credentials);
                 let clock = Arc::clone(&self.clock);
-                let decoder = Box::new(self.stream_decoder(request));
+                let decoder = Box::new(self.prepared_stream_decoder(request));
                 let request = request.clone();
-                let fut: BoxFuture<'static, Result<TransportResponse, Lm15Error>> =
-                    Box::pin(async move {
-                        if let Some(prepare) = credentials.prepare() {
-                            prepare.await.map_err(Lm15Error::from)?;
+                let fut: BoxFuture<
+                    'static,
+                    Result<(TransportResponse, Option<crate::auth::CredentialSource>), Lm15Error>,
+                > = Box::pin(async move {
+                    if let Some(prepare) = credentials.prepare() {
+                        prepare.await.map_err(Lm15Error::from)?;
+                    }
+                    let cx = binding.context(&request);
+                    let (wire, _) =
+                        crate::adaptation::collect(binding.adaptations, &binding.provider, || {
+                            dialect_for(binding.dialect).build(&request, true, &cx)
+                        })?;
+                    let built = emit_wire(
+                        dialect_for(binding.dialect),
+                        wire,
+                        true,
+                        &cx,
+                        credentials.as_ref(),
+                        clock.as_ref(),
+                    )?;
+                    let source = built.credential_source.clone();
+                    let response = transport.send(built).await?;
+                    if response.status >= 400 {
+                        let status = response.status;
+                        let headers = response.headers.clone();
+                        let body = response.read().await?;
+                        let mut error =
+                            http_error(binding.policy.provider, status, &headers, &body);
+                        error.meta_mut().provider = Some(binding.provider.clone());
+                        if error.code() == crate::errors::ErrorCode::Auth {
+                            error.meta_mut().credential_source = source;
                         }
-                        let cx = binding.context(&request);
-                        let built = emit(
-                            dialect_for(binding.dialect),
-                            &request,
-                            true,
-                            &cx,
-                            credentials.as_ref(),
-                            clock.as_ref(),
-                        )?;
-                        let response = transport.send(built).await?;
-                        if response.status >= 400 {
-                            let status = response.status;
-                            let headers = response.headers.clone();
-                            let body = response.read().await?;
-                            return Err(http_error(&binding.provider, status, &headers, &body));
-                        }
-                        Ok(response)
-                    });
+                        return Err(error);
+                    }
+                    Ok((response, source))
+                });
                 StreamState::Connecting { fut, decoder }
             }
-            Err(err) => {
-                let mut meta = ErrorMeta::new(format!("{}: {}", self.provider(), err.message));
-                meta.provider = Some(self.provider().to_string());
-                StreamState::Failed(Lm15Error::InvalidRequestError(meta))
-            }
+            Err(err) => StreamState::Failed(err),
         };
         EventStream {
             provider: self.provider().to_string(),
@@ -1087,8 +1623,44 @@ impl ProviderLM {
     /// over the body, `Retry-After` and the request id from the headers
     /// filling what the body did not say (contract 2026-09-11 § 3).
     pub fn http_error(&self, status: u16, headers: &[(String, String)], body: &[u8]) -> Lm15Error {
-        http_error(self.provider(), status, headers, body)
+        let mut error = http_error(self.binding.policy.provider, status, headers, body);
+        error.meta_mut().provider = Some(self.provider().into());
+        if error.code() == crate::errors::ErrorCode::Auth {
+            error.meta_mut().credential_source = self.credentials.source();
+        }
+        error
     }
+}
+
+fn with_source(mut error: Lm15Error, source: Option<crate::auth::CredentialSource>) -> Lm15Error {
+    if error.code() == crate::errors::ErrorCode::Auth {
+        error.meta_mut().credential_source = source;
+    }
+    error
+}
+
+fn reply_context<T>(
+    result: Result<T, Lm15Error>,
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Result<T, Lm15Error> {
+    result.map_err(|mut error| {
+        let in_band = (200..300).contains(&status)
+            && serde_json::from_slice::<Value>(body).ok().is_some_and(|v| {
+                v.get("error").is_some_and(|e| !e.is_null())
+                    || v.get("status").and_then(Value::as_str) == Some("failed")
+            });
+        if in_band {
+            if error.meta().status.is_some_and(|s| (200..300).contains(&s)) {
+                error.meta_mut().status = None;
+            }
+            attach_error_metadata(&mut error, headers);
+        } else {
+            crate::transport::attach_http_error(&mut error, status, headers, body);
+        }
+        error
+    })
 }
 
 fn http_error(provider: &str, status: u16, headers: &[(String, String)], body: &[u8]) -> Lm15Error {
@@ -1097,7 +1669,7 @@ fn http_error(provider: &str, status: u16, headers: &[(String, String)], body: &
         Ok(error) => error,
         Err(err) => Lm15Error::ConfigurationError(ErrorMeta::new(err.message)),
     };
-    attach_error_metadata(&mut error, headers);
+    crate::transport::attach_http_error(&mut error, status, headers, body);
     error
 }
 
@@ -1217,7 +1789,10 @@ pub struct EventStream {
 enum StreamState {
     Failed(Lm15Error),
     Connecting {
-        fut: BoxFuture<'static, Result<TransportResponse, Lm15Error>>,
+        fut: BoxFuture<
+            'static,
+            Result<(TransportResponse, Option<crate::auth::CredentialSource>), Lm15Error>,
+        >,
         // Boxed: the decoder (SSE buffer + coalescer) is the fat variant.
         decoder: Box<StreamDecoder>,
     },
@@ -1265,12 +1840,14 @@ impl Stream for EventStream {
                         this.state = StreamState::Done;
                         return Poll::Ready(Some(Err(err)));
                     }
-                    Poll::Ready(Ok(response)) => {
-                        let StreamState::Connecting { decoder, .. } =
+                    Poll::Ready(Ok((response, source))) => {
+                        let StreamState::Connecting { mut decoder, .. } =
                             std::mem::replace(&mut this.state, StreamState::Done)
                         else {
                             unreachable!()
                         };
+                        decoder.headers = response.headers.clone();
+                        decoder.source = source;
                         this.state = StreamState::Streaming {
                             body: response.into_body(),
                             decoder,
@@ -1280,11 +1857,19 @@ impl Stream for EventStream {
                 StreamState::Streaming { body, decoder } => match body.as_mut().poll_next(cx) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Some(Err(err))) => {
+                        let err = decoder.record_failure(err);
                         this.state = StreamState::Done;
                         return Poll::Ready(Some(Err(err)));
                     }
                     Poll::Ready(Some(Ok(chunk))) => match decoder.feed(&chunk) {
-                        Ok(events) => this.pending.extend(events),
+                        Ok(events) => {
+                            this.pending.extend(events);
+                            if decoder.should_close_source() {
+                                // Drop the real response body now, before delivering the
+                                // cut events. Never poll/drain a provider after the stop.
+                                this.state = StreamState::Done;
+                            }
+                        }
                         Err(err) => {
                             this.state = StreamState::Done;
                             return Poll::Ready(Some(Err(err)));
@@ -1329,40 +1914,173 @@ pub struct StreamDecoder {
     request: Request,
     sse: SseParser,
     coalescer: Option<Coalescer>,
+    records: Vec<crate::adaptation::Adaptation>,
+    initial_error: Option<Lm15Error>,
+    stop: Option<crate::stop::StopCutter>,
+    close_source: bool,
+    headers: Vec<(String, String)>,
+    body_prefix: Vec<u8>,
+    source: Option<crate::auth::CredentialSource>,
 }
 
 impl StreamDecoder {
     /// Feed a chunk of the body; the canonical events it completed.
     pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, Lm15Error> {
-        let frames = self.sse.feed(chunk)?;
-        self.frames(&frames)
+        if let Some(error) = &self.initial_error {
+            return Err(error.clone());
+        }
+        if self.close_source {
+            return Ok(Vec::new());
+        }
+        let count = chunk
+            .len()
+            .min(200usize.saturating_sub(self.body_prefix.len()));
+        self.body_prefix.extend_from_slice(&chunk[..count]);
+        self.feed_inner(chunk)
+            .map_err(|error| self.record_failure(error))
+    }
+
+    fn feed_inner(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, Lm15Error> {
+        let mut events = Vec::new();
+        // Stop at the first completed event, not after parsing every frame
+        // already buffered in a network chunk (a later frame may be invalid).
+        for line in chunk.split_inclusive(|byte| *byte == b'\n') {
+            let frames = self.sse.feed(line)?;
+            events.extend(self.frames(&frames)?);
+            if self.close_source {
+                break;
+            }
+        }
+        Ok(events)
     }
 
     /// End of body: the last unterminated frame, then the merged end event.
+    pub fn should_close_source(&self) -> bool {
+        self.close_source
+    }
+
+    /// Supply handshake evidence when the host, rather than this crate,
+    /// owns HTTP. Only bounded allowlisted diagnostics reach error events.
+    pub fn response_headers(&mut self, headers: Vec<(String, String)>) {
+        self.headers = headers;
+    }
+
     pub fn finish(&mut self) -> Result<Vec<StreamEvent>, Lm15Error> {
+        if let Some(error) = &self.initial_error {
+            return Err(error.clone());
+        }
+        if self.close_source {
+            return Ok(Vec::new());
+        }
+        self.finish_inner()
+            .map_err(|error| self.record_failure(error))
+    }
+
+    fn finish_inner(&mut self) -> Result<Vec<StreamEvent>, Lm15Error> {
         let mut out = Vec::new();
         if let Some(frame) = self.sse.finish()? {
             out.extend(self.frames(&[frame])?);
         }
         if let Some(coalescer) = self.coalescer.take() {
-            out.extend(coalescer.finish());
+            out.extend(self.postprocess(coalescer.finish()));
+        }
+        if let Some(stop) = &mut self.stop {
+            out.extend(stop.finish());
         }
         Ok(out)
     }
 
-    fn frames(&mut self, frames: &[SseEvent]) -> Result<Vec<StreamEvent>, Lm15Error> {
-        let coalescer = self.coalescer.as_mut().ok_or_else(|| {
-            Lm15Error::ConfigurationError(ErrorMeta::new("stream already finished"))
-        })?;
-        let cx = self.binding.context(&self.request);
-        let mut raw = Vec::new();
-        for frame in frames {
-            self.dialect
-                .parse_stream_event(&self.request, &cx, frame, &mut raw)?;
+    fn record_failure(&mut self, mut error: Lm15Error) -> Lm15Error {
+        attach_error_metadata(&mut error, &self.headers);
+        // A successful handshake is not an HTTP error status for an SSE fault.
+        if error
+            .meta()
+            .status
+            .is_some_and(|status| (200..300).contains(&status))
+        {
+            error.meta_mut().status = None;
         }
-        let mut out = Vec::with_capacity(raw.len());
-        for event in raw {
-            out.extend(coalescer.push(event));
+        if error.is_a(crate::ErrorClass::ProviderError) {
+            if error.meta().content_type.is_none() {
+                error.meta_mut().content_type = self
+                    .headers
+                    .iter()
+                    .find(|(name, value)| {
+                        name.eq_ignore_ascii_case("content-type") && !value.is_empty()
+                    })
+                    .map(|(_, value)| value.clone());
+            }
+            if error.meta().body_excerpt.is_none() {
+                error.meta_mut().body_excerpt =
+                    Some(String::from_utf8_lossy(&self.body_prefix).into_owned());
+            }
+        }
+        let error = with_source(error, self.source.clone());
+        self.initial_error = Some(error.clone());
+        self.close_source = true;
+        error
+    }
+
+    fn postprocess(&mut self, events: Vec<StreamEvent>) -> Vec<StreamEvent> {
+        let mut out = Vec::new();
+        for mut event in events {
+            if self.close_source {
+                break;
+            }
+            if let StreamEvent::Start(start) = &mut event {
+                if self.binding.adaptations != crate::adaptation::AdaptationPolicy::Silent {
+                    start.adaptations = self.records.clone();
+                }
+            }
+            if let StreamEvent::Error(fault) = &mut event {
+                if fault.error.code == crate::errors::ErrorCode::Auth {
+                    if let Some(source) = &self.source {
+                        fault
+                            .error
+                            .message
+                            .push_str(&format!("\nCredential source: {}", source.describe()));
+                    }
+                }
+                let mut error = Lm15Error::ProviderError(ErrorMeta::new(&fault.error.message));
+                attach_error_metadata(&mut error, &self.headers);
+                fault.error.http_response = error.meta().http_response();
+            }
+            if let Some(stop) = &mut self.stop {
+                let result = stop.step(event);
+                self.close_source = result.close_source;
+                out.extend(result.events);
+            } else {
+                out.push(event);
+            }
+        }
+        out
+    }
+
+    fn frames(&mut self, frames: &[SseEvent]) -> Result<Vec<StreamEvent>, Lm15Error> {
+        if self.coalescer.is_none() {
+            return Err(Lm15Error::ConfigurationError(ErrorMeta::new(
+                "stream already finished",
+            )));
+        }
+        let mut out = Vec::new();
+        for frame in frames {
+            if self.close_source {
+                break;
+            }
+            let mut raw = Vec::new();
+            self.dialect.parse_stream_event(
+                &self.request,
+                &self.binding.context(&self.request),
+                frame,
+                &mut raw,
+            )?;
+            for event in raw {
+                if self.close_source {
+                    break;
+                }
+                let events = self.coalescer.as_mut().expect("checked above").push(event);
+                out.extend(self.postprocess(events));
+            }
         }
         Ok(out)
     }
@@ -1383,35 +2101,79 @@ impl fmt::Debug for ProviderLM {
 /// Builds a [`ProviderLM`]. Obtained from a named constructor
 /// (`AnthropicLM::builder()`, ...) or from the registry.
 pub struct LmBuilder {
-    provider: &'static str,
+    provider: String,
+    aliases: Vec<String>,
     dialect: DialectId,
     policy: &'static AccessPolicy,
     compat_name: Option<Cow<'static, str>>,
     compat: Option<Compat>,
     credentials: Option<BoxedCredentials>,
+    credential_name: Option<String>,
+    env: Option<std::collections::BTreeMap<String, String>>,
     base_url: Option<String>,
     settings: HostSettings,
     clock: Option<BoxedClock>,
     transport: Option<SharedTransport>,
     account_id: Option<String>,
+    adaptations: crate::adaptation::AdaptationPolicy,
+    timeouts: crate::transport::Timeouts,
+    max_connections: usize,
+    budget_explicit: bool,
 }
 
 impl LmBuilder {
     /// A builder for a registry entry (dialect + policy + preset name).
     pub fn for_entry(definition: &'static ProviderDefinition) -> LmBuilder {
         LmBuilder {
-            provider: definition.id,
+            provider: definition.id.to_string(),
+            aliases: Vec::new(),
             dialect: definition.dialect,
             policy: definition.access(),
             compat_name: definition.compat.map(Cow::Borrowed),
             compat: None,
             credentials: None,
+            credential_name: None,
+            env: None,
             base_url: None,
             settings: HostSettings::new(),
             clock: None,
             transport: None,
             account_id: None,
+            adaptations: crate::adaptation::AdaptationPolicy::Note,
+            timeouts: crate::transport::Timeouts::default(),
+            max_connections: crate::transport::DEFAULT_MAX_CONNECTIONS,
+            budget_explicit: false,
         }
+    }
+
+    pub fn timeouts(mut self, timeouts: crate::transport::Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self.budget_explicit = true;
+        self
+    }
+    pub fn max_connections(mut self, maximum: usize) -> Self {
+        self.max_connections = maximum;
+        self.budget_explicit = true;
+        self
+    }
+
+    /// Bind an application-declared name without changing the global registry.
+    pub fn provider_name(mut self, provider: impl Into<String>) -> Self {
+        self.provider = provider.into();
+        self
+    }
+
+    pub fn provider_aliases(mut self, aliases: &[String]) -> Self {
+        self.aliases = aliases
+            .iter()
+            .map(|a| crate::registry::canonical_provider(a))
+            .collect();
+        self
+    }
+
+    pub fn adaptations(mut self, policy: crate::adaptation::AdaptationPolicy) -> Self {
+        self.adaptations = policy;
+        self
     }
 
     fn for_provider(provider: &'static str) -> LmBuilder {
@@ -1422,6 +2184,19 @@ impl LmBuilder {
     /// value, or any `CredentialProvider` (invoked once per request).
     pub fn api_key(mut self, credentials: impl CredentialProvider + Send + Sync + 'static) -> Self {
         self.credentials = Some(Arc::new(credentials));
+        self
+    }
+
+    /// Select exactly one cloud identity family; never fall back to a key
+    /// or a different family. Incompatible with an explicit api_key.
+    pub fn credential(mut self, name: impl Into<String>) -> Self {
+        self.credential_name = Some(name.into());
+        self
+    }
+
+    /// A hermetic environment for named cloud identity and host settings.
+    pub fn env(mut self, env: std::collections::BTreeMap<String, String>) -> Self {
+        self.env = Some(env);
         self
     }
 
@@ -1473,8 +2248,8 @@ impl LmBuilder {
         self
     }
 
-    /// The transport to send through; the process-wide
-    /// [`HttpTransport::shared`] otherwise.
+    /// A caller-owned transport; otherwise this adapter owns a new pool.
+    /// Configure custom transport budgets on that transport, not this builder.
     pub fn transport(mut self, transport: impl Transport + 'static) -> Self {
         self.transport = Some(Arc::new(transport));
         self
@@ -1492,10 +2267,152 @@ impl LmBuilder {
         self
     }
 
+    /// Pure request planning even before a hosted adapter can be configured.
+    pub fn plan(&self, request: &Request) -> Result<Vec<crate::adaptation::Adaptation>, Lm15Error> {
+        request
+            .validate()
+            .map_err(|e| Lm15Error::InvalidRequestError(ErrorMeta::new(e.message)))?;
+        let compat = match &self.compat {
+            Some(c) => c.clone(),
+            None => compat_for(self.dialect, self.compat_name.as_deref())?,
+        };
+        let model = match request.model.split_once(':') {
+            Some((head, rest))
+                if !rest.is_empty()
+                    && (crate::registry::canonical_provider(head) == self.provider
+                        || self
+                            .aliases
+                            .contains(&crate::registry::canonical_provider(head))) =>
+            {
+                rest
+            }
+            _ => &request.model,
+        };
+        let cx = BuildContext {
+            provider: &self.provider,
+            policy: self.policy,
+            settings: &self.settings,
+            compat: &compat,
+            base_url: self
+                .base_url
+                .as_deref()
+                .unwrap_or(self.dialect.default_base_url()),
+            model,
+            account_id: self.account_id.as_deref(),
+        };
+        let scoring = self.dialect == DialectId::OpenaiChat
+            && matches!(
+                request.config.probabilities,
+                Some(crate::ProbabilityPolicy::Required | crate::ProbabilityPolicy::IfAvailable)
+            )
+            && !crate::judgments::request_judgments(request).is_empty()
+            && crate::dialects::openai_chat::resolve_compat(&cx, model).token_scoring
+                == crate::compat::OpenAIChatTokenScoring::LogprobTokenIds;
+        let (_, records) =
+            crate::adaptation::collect_planning(self.adaptations, &self.provider, || {
+                if scoring {
+                    crate::scoring::plan(request, &cx).map(|_| ())
+                } else {
+                    dialect_for(self.dialect)
+                        .build(request, false, &cx)
+                        .map(|_| ())
+                }
+            })?;
+        Ok(records)
+    }
+
     pub fn build(self) -> Result<ProviderLM, Lm15Error> {
         let provider = self.provider;
         let policy = self.policy;
-        let credentials = self.credentials.ok_or_else(|| {
+        if self.transport.is_some() && self.budget_explicit {
+            return Err(Lm15Error::not_configured("custom transport and client connection budgets are mutually exclusive; configure the transport itself"));
+        }
+        if let Some(name) = &self.credential_name {
+            if !matches!(
+                name.as_str(),
+                "platform" | "workload" | "environment" | "cli"
+            ) || !policy.is_cloud_chain()
+            {
+                return Err(Lm15Error::not_configured(format!("{provider}: named credential {name:?} requires a cloud chain and one of platform, workload, environment, cli")));
+            }
+            if self.credentials.is_some() {
+                return Err(Lm15Error::not_configured(format!(
+                    "{provider}: credential and api_key are mutually exclusive"
+                )));
+            }
+        }
+        let env = self
+            .env
+            .clone()
+            .unwrap_or_else(|| std::env::vars().collect());
+        let endpoint = self.base_url.clone().or_else(|| {
+            policy.host.as_ref().and_then(|host| {
+                crate::cloud::hosts::endpoint_from_env(host, &env).map(|(_, v)| v.to_string())
+            })
+        });
+        let mut given = self.settings.clone();
+        #[cfg(feature = "native")]
+        if self.credential_name.is_some() {
+            let profile_transport = match &self.transport {
+                Some(t) => t.clone(),
+                None => crate::transport::default_transport()?,
+            };
+            let ctx = crate::cloud::chains::ChainContext::online(
+                env.clone(),
+                profile_transport,
+                crate::auth::time_now(),
+            );
+            if let Some(host) = &policy.host {
+                for setting in host.settings {
+                    if !given.contains_key(setting.name)
+                        && !setting.env.iter().any(|v| env.contains_key(*v))
+                    {
+                        if let Some(value) =
+                            crate::cloud::chains::profile_setting(policy, &ctx, setting.name)
+                        {
+                            given.insert(setting.name.into(), value);
+                        }
+                    }
+                }
+            }
+        }
+        let settings = resolve_settings_with_endpoint(
+            policy.host.as_ref(),
+            &given,
+            Some(&env),
+            &provider,
+            endpoint.as_deref(),
+        )?;
+        let transport = match self.transport {
+            Some(transport) => transport,
+            #[cfg(feature = "native")]
+            None => Arc::new(
+                crate::transport::HttpTransport::builder()
+                    .timeouts(self.timeouts)
+                    .max_connections(self.max_connections)
+                    .build()?,
+            ),
+            #[cfg(not(feature = "native"))]
+            None => crate::transport::default_transport()?,
+        };
+        let mut credentials = self.credentials;
+        #[cfg(feature = "native")]
+        if let Some(name) = &self.credential_name {
+            let mut ctx = crate::cloud::chains::ChainContext::online(
+                env,
+                transport.clone(),
+                crate::auth::time_now(),
+            );
+            ctx.settings = settings.clone();
+            credentials = Some(Arc::new(crate::cloud::chains::ChainProvider::named(
+                policy, ctx, name,
+            )?));
+        }
+        #[cfg(not(feature = "native"))]
+        if self.credential_name.is_some() {
+            return Err(Lm15Error::not_configured("named cloud credentials require the native feature; supply a credential to the codec"));
+        }
+        let credentials = credentials.ok_or_else(|| {
             let hint = match (policy.login_hint, policy.env_keys.is_empty()) {
                 (Some(hint), _) => format!("; {hint}"),
                 (None, false) => format!("; set {} or pass api_key", policy.env_keys.join(" or ")),
@@ -1506,14 +2423,21 @@ impl LmBuilder {
             Lm15Error::NotConfiguredError(meta)
         })?;
 
-        // AUTH-10 settings: explicit values and defaults only; the router
-        // fills env fallbacks (module 5), like it does for the key.
-        let settings = resolve_settings(policy.host.as_ref(), &self.settings, None, provider)?;
-
         let compat = match self.compat {
             Some(compat) => compat,
             None => compat_for(self.dialect, self.compat_name.as_deref())?,
         };
+        if !matches!(
+            (self.dialect, &compat),
+            (DialectId::Anthropic, Compat::Anthropic(_))
+                | (DialectId::OpenaiChat, Compat::OpenAIChat(_))
+                | (DialectId::OpenaiResponses, Compat::OpenAIResponses(_))
+                | (DialectId::Gemini | DialectId::Typesafe, Compat::None)
+        ) {
+            return Err(Lm15Error::ConfigurationError(ErrorMeta::new(format!(
+                "{provider}: compat value belongs to a different wire dialect"
+            ))));
+        }
 
         // Base URL precedence (`lm15/providers/base.py:236-278`,
         // `lm15/providers/openai_chat.py:180-186`): explicit, host
@@ -1523,10 +2447,13 @@ impl LmBuilder {
         // a named server is never sent to the OpenAI cloud with whatever
         // key is around. Only the dialect's own default name resolves to
         // the cloud default.
-        let base_url = match self.base_url {
-            Some(explicit) => explicit,
+        let base_url = match endpoint {
+            Some(explicit) => match &policy.host {
+                Some(host) => resolve_base_url(host, &settings, Some(&explicit))?,
+                None => crate::cloud::hosts::join_endpoint(&explicit, "")?,
+            },
             None => match (&policy.host, policy.base_url) {
-                (Some(host), _) => render_base_url(host, &settings)?,
+                (Some(host), _) => resolve_base_url(host, &settings, None)?,
                 (None, Some(url)) => url.to_string(),
                 (None, None) => match self.compat_name.as_deref() {
                     None => self.dialect.default_base_url().to_string(),
@@ -1550,20 +2477,17 @@ impl LmBuilder {
             },
         };
 
-        let transport = match self.transport {
-            Some(transport) => transport,
-            None => crate::transport::default_transport()?,
-        };
-
         Ok(ProviderLM {
             binding: Arc::new(Binding {
                 provider: provider.to_string(),
+                aliases: self.aliases,
                 dialect: self.dialect,
                 policy,
                 compat,
                 base_url,
                 settings,
                 account_id: self.account_id,
+                adaptations: self.adaptations,
             }),
             credentials,
             clock: match self.clock {
@@ -1580,7 +2504,7 @@ impl fmt::Debug for LmBuilder {
         f.debug_struct("LmBuilder")
             .field("provider", &self.provider)
             .field("dialect", &self.dialect)
-            .field("base_url", &self.base_url)
+            .field("base_url_supplied", &self.base_url.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -1615,7 +2539,7 @@ fn compat_for(dialect: DialectId, name: Option<&str>) -> Result<Compat, Lm15Erro
             None => OpenAIChatCompat::EMPTY,
         }),
         // The Gemini dialect takes no compat (the router does the same).
-        DialectId::Gemini => Compat::None,
+        DialectId::Gemini | DialectId::Typesafe => Compat::None,
     })
 }
 
@@ -1624,7 +2548,7 @@ fn preset_url(dialect: DialectId, name: &str) -> Option<&'static str> {
         DialectId::Anthropic => preset_base_url(ANTHROPIC_PRESET_BASE_URLS, name),
         DialectId::OpenaiResponses => preset_base_url(OPENAI_RESPONSES_PRESET_BASE_URLS, name),
         DialectId::OpenaiChat => preset_base_url(OPENAI_CHAT_PRESET_BASE_URLS, name),
-        DialectId::Gemini => None,
+        DialectId::Gemini | DialectId::Typesafe => None,
     }
 }
 
@@ -1689,6 +2613,11 @@ named_constructor!(
     /// Gemini dialect with the API-key policy.
     GeminiLM,
     "gemini"
+);
+named_constructor!(
+    /// TypeSafe System One (Jev) judgment interface.
+    TypeSafeLM,
+    "typesafe"
 );
 named_constructor!(
     /// The chat dialect with the `xai` policy and preset.
@@ -1883,7 +2812,8 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(lm.base_url(), "https://x/v1");
+        // AUTH-19: override replaces the root, not the door's path.
+        assert_eq!(lm.base_url(), "https://x/v1/openai/v1");
         let err = adapter_for("bedrock-chat", "k", None, None, None).unwrap_err();
         assert_eq!(err.class_name(), "NotConfiguredError");
         let err = adapter_for("nope", "k", None, None, None).unwrap_err();

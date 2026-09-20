@@ -279,6 +279,14 @@ impl StoredLogin {
 }
 
 impl CredentialProvider for StoredLogin {
+    fn source(&self) -> Option<super::CredentialSource> {
+        Some(super::CredentialSource {
+            kind: "oauth-file".into(),
+            label: format!("the stored {} login", self.provider),
+            named: None,
+            expires_at: None,
+        })
+    }
     fn credential(&self) -> Result<Credential, AuthError> {
         let credential = self.read()?;
         if credential.expired() {

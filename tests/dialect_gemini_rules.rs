@@ -1,5 +1,6 @@
 //! The Gemini dialect's refusals (MAP-5..8 and the no-silent-drop rule),
 //! its `changes/`-documented corners, and the two Vertex doors.
+//! Legacy adaptation refusals explicitly opt in to MAP-13 Refuse.
 
 // The library's own allowance (src/lib.rs): `Lm15Error` is one enum by
 // contract; the error path is not the hot path.
@@ -30,7 +31,11 @@ fn body(provider: &str, canonical: Value) -> Value {
 }
 
 fn refusal(canonical: Value) -> Lm15Error {
-    build("gemini", canonical).unwrap_err()
+    let lm = adapter_for("gemini", "k", None, None, None)
+        .unwrap()
+        .with_adaptations(lm15::AdaptationPolicy::Refuse);
+    lm.build_request(&Request::from_json(&canonical).unwrap(), false)
+        .unwrap_err()
 }
 
 fn user(text: &str) -> Value {

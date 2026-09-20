@@ -189,6 +189,7 @@ fn usage_from_response(response: &Map<String, Value>) -> Option<Usage> {
 
 fn error_detail(provider_code: &str, message: &str) -> ErrorDetail {
     ErrorDetail {
+        http_response: Default::default(),
         code: stream_error_class(provider_code).code(),
         message: if message.is_empty() {
             if provider_code.is_empty() {

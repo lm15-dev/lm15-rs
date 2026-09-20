@@ -18,6 +18,9 @@
 //! ```
 
 use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -28,7 +31,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::adapter::LiveCodec;
 use crate::auth::{select_scheme, AuthScheme, Credential};
-use crate::errors::{ErrorMeta, Lm15Error};
+use crate::errors::{CollectionLimit, ErrorMeta, Lm15Error};
 use crate::types::{
     base64_decode, ErrorDetail, LiveClientAudioEvent, LiveClientEndAudioEvent, LiveClientEvent,
     LiveClientImageEvent, LiveClientInterruptEvent, LiveClientTextEvent, LiveClientToolResultEvent,
@@ -57,6 +60,8 @@ pub enum TurnEnd {
     Error,
     /// The model is waiting for YOUR tool result (`result()` returns here).
     ToolCall,
+    /// The view stopped before an actual boundary; never success.
+    Incomplete,
 }
 
 impl TurnEnd {
@@ -66,6 +71,7 @@ impl TurnEnd {
             TurnEnd::Interrupted => "interrupted",
             TurnEnd::Error => "error",
             TurnEnd::ToolCall => "tool_call",
+            TurnEnd::Incomplete => "incomplete",
         }
     }
 }
@@ -94,28 +100,30 @@ impl Turn {
 
 /// Field-wise sum of two Usage values from one session; absent on either
 /// side is unknown in the sum, never zero (INV-029).
-pub fn sum_usage(acc: Option<Usage>, more: &Usage) -> Usage {
+pub fn sum_usage(acc: Option<Usage>, more: &Usage) -> Result<Usage, Lm15Error> {
     let Some(acc) = acc else {
-        return *more;
+        return Ok(*more);
     };
     let add = |a: Option<u64>, b: Option<u64>| match (a, b) {
-        (Some(a), Some(b)) => Some(a + b),
-        _ => None,
+        (Some(a), Some(b)) => a.checked_add(b).map(Some).ok_or_else(|| {
+            Lm15Error::ProviderError(ErrorMeta::new("live turn usage counter overflow"))
+        }),
+        _ => Ok(None),
     };
-    Usage {
-        input_tokens: add(acc.input_tokens, more.input_tokens),
-        output_tokens: add(acc.output_tokens, more.output_tokens),
-        total_tokens: add(acc.total_tokens, more.total_tokens),
-        cache_read_tokens: add(acc.cache_read_tokens, more.cache_read_tokens),
-        cache_write_tokens: add(acc.cache_write_tokens, more.cache_write_tokens),
-        reasoning_tokens: add(acc.reasoning_tokens, more.reasoning_tokens),
-        input_audio_tokens: add(acc.input_audio_tokens, more.input_audio_tokens),
-        output_audio_tokens: add(acc.output_audio_tokens, more.output_audio_tokens),
-    }
+    Ok(Usage {
+        input_tokens: add(acc.input_tokens, more.input_tokens)?,
+        output_tokens: add(acc.output_tokens, more.output_tokens)?,
+        total_tokens: add(acc.total_tokens, more.total_tokens)?,
+        cache_read_tokens: add(acc.cache_read_tokens, more.cache_read_tokens)?,
+        cache_write_tokens: add(acc.cache_write_tokens, more.cache_write_tokens)?,
+        reasoning_tokens: add(acc.reasoning_tokens, more.reasoning_tokens)?,
+        input_audio_tokens: add(acc.input_audio_tokens, more.input_audio_tokens)?,
+        output_audio_tokens: add(acc.output_audio_tokens, more.output_audio_tokens)?,
+    })
 }
 
 /// Materialize one turn's events (the reference's `_materialize_turn`).
-pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Turn {
+pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Result<Turn, Lm15Error> {
     let mut text = String::new();
     let mut audio = Vec::new();
     let mut audio_media_type = None;
@@ -126,9 +134,24 @@ pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Turn {
         match event {
             LiveServerEvent::Text(e) => text.push_str(&e.text),
             LiveServerEvent::Audio(e) => {
-                if let Ok(bytes) = base64_decode(&e.data) {
-                    audio.extend_from_slice(&bytes);
+                if audio_media_type
+                    .as_ref()
+                    .zip(e.media_type.as_ref())
+                    .is_some_and(|(a, b)| a != b)
+                {
+                    return Err(Lm15Error::ProviderError(ErrorMeta::new(
+                        "a live turn cannot concatenate different audio media types; consume raw events",
+                    )));
                 }
+                if e.data.is_empty() || !crate::types::is_base64_shaped(&e.data) {
+                    return Err(Lm15Error::ProviderError(ErrorMeta::new(
+                        "malformed base64 audio in live turn",
+                    )));
+                }
+                let bytes = base64_decode(&e.data).map_err(|_| {
+                    Lm15Error::ProviderError(ErrorMeta::new("malformed base64 audio in live turn"))
+                })?;
+                audio.extend_from_slice(&bytes);
                 if audio_media_type.is_none() {
                     audio_media_type = e.media_type.clone();
                 }
@@ -139,8 +162,8 @@ pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Turn {
                 input: e.input.clone(),
             }),
             // A turn's bill is every usage-bearing event it saw (LIVE-2).
-            LiveServerEvent::TurnEnd(e) => usage = Some(sum_usage(usage.take(), &e.usage)),
-            LiveServerEvent::Usage(e) => usage = Some(sum_usage(usage.take(), &e.usage)),
+            LiveServerEvent::TurnEnd(e) => usage = Some(sum_usage(usage.take(), &e.usage)?),
+            LiveServerEvent::Usage(e) => usage = Some(sum_usage(usage.take(), &e.usage)?),
             LiveServerEvent::Error(e) => error = Some(e.error.clone()),
             LiveServerEvent::ToolCallDelta(_) | LiveServerEvent::Interrupted(_) => {}
         }
@@ -149,9 +172,10 @@ pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Turn {
         Some(LiveServerEvent::TurnEnd(_)) => TurnEnd::TurnEnd,
         Some(LiveServerEvent::Interrupted(_)) => TurnEnd::Interrupted,
         Some(LiveServerEvent::ToolCall(_)) => TurnEnd::ToolCall,
-        _ => TurnEnd::Error,
+        Some(LiveServerEvent::Error(_)) => TurnEnd::Error,
+        _ => TurnEnd::Incomplete,
     };
-    Turn {
+    Ok(Turn {
         ended_by,
         text,
         audio,
@@ -160,7 +184,7 @@ pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Turn {
         usage,
         error,
         events,
-    }
+    })
 }
 
 /// Iterator over one turn's server events. Ends itself after yielding the
@@ -169,43 +193,251 @@ pub fn materialize_turn(events: Vec<LiveServerEvent>) -> Turn {
 /// (you hold the session, so you can answer and keep iterating);
 /// `result()` cannot answer for you, so it returns at a `tool_call` instead
 /// of deadlocking against a model that is waiting for your result.
-pub struct TurnView<'a> {
-    session: &'a mut LiveSession,
+pub struct TurnView<'a, S: LiveEventSource + ?Sized = LiveSession> {
+    session: &'a mut S,
+    limits: TurnLimits,
+    events: Vec<LiveServerEvent>,
+    retained_bytes: usize,
     done: bool,
+    failure: Option<Lm15Error>,
+    result: Option<Arc<Turn>>,
 }
 
-impl TurnView<'_> {
-    /// The next event of this turn; `None` once the terminal event has been
-    /// yielded, or when the socket closed with nothing more to yield.
+pub const DEFAULT_TURN_MAX_BYTES: usize = 16 * 1024 * 1024;
+pub const DEFAULT_TURN_MAX_EVENTS: usize = 10_000;
+
+/// Per-view budgets, not WebSocket-frame or resident-memory limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnLimits {
+    pub max_bytes: usize,
+    pub max_events: usize,
+}
+
+impl Default for TurnLimits {
+    fn default() -> Self {
+        Self {
+            max_bytes: DEFAULT_TURN_MAX_BYTES,
+            max_events: DEFAULT_TURN_MAX_EVENTS,
+        }
+    }
+}
+
+impl TurnLimits {
+    pub fn new(max_bytes: usize, max_events: usize) -> Result<Self, Lm15Error> {
+        let limits = Self {
+            max_bytes,
+            max_events,
+        };
+        limits.validate()?;
+        Ok(limits)
+    }
+
+    pub fn validate(self) -> Result<(), Lm15Error> {
+        if self.max_bytes == 0 || self.max_events == 0 {
+            return Err(Lm15Error::InvalidRequestError(ErrorMeta::new(
+                "live turn max_bytes and max_events must be positive integers; use raw reads for unbuffered events",
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// A canonical live source. The exclusive mutable borrow enforces one reader;
+/// custom transports can implement this without constructing a WebSocket.
+pub trait LiveEventSource: Send {
+    fn recv(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<LiveServerEvent>, Lm15Error>> + Send + '_>>;
+
+    fn send(
+        &mut self,
+        _event: LiveClientEvent,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Lm15Error>> + Send + '_>> {
+        Box::pin(async {
+            Err(Lm15Error::UnsupportedFeatureError(ErrorMeta::new(
+                "this live source cannot send events",
+            )))
+        })
+    }
+}
+
+/// The compact ASCII JSON charge of one canonical event. This makes only a
+/// per-event serialized copy, never a serialized copy of the retained history.
+pub fn live_event_size(event: &LiveServerEvent) -> Result<usize, Lm15Error> {
+    let json = serde_json::to_string(event).map_err(|_| {
+        Lm15Error::ProviderError(ErrorMeta::new(
+            "live event cannot be serialized as canonical JSON",
+        ))
+    })?;
+    Ok(json
+        .chars()
+        .map(|c| if c < '\u{7f}' { 1 } else { 6 * c.len_utf16() })
+        .sum())
+}
+
+impl CollectionLimit {
+    /// Lazy salvage: failure construction never decodes audio or joins text.
+    /// If malformed audio prevents assembly, `partial_events` stays available.
+    pub fn partial(&self) -> Result<Turn, Lm15Error> {
+        let mut turn = materialize_turn(self.partial_events.as_ref().clone())?;
+        turn.ended_by = TurnEnd::Incomplete;
+        Ok(turn)
+    }
+}
+
+impl<'a, S: LiveEventSource + ?Sized> TurnView<'a, S> {
+    pub fn new(session: &'a mut S, limits: TurnLimits) -> Result<Self, Lm15Error> {
+        limits.validate()?;
+        Ok(Self {
+            session,
+            limits,
+            events: Vec::new(),
+            retained_bytes: 0,
+            done: false,
+            failure: None,
+            result: None,
+        })
+    }
+
+    pub fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
+    pub fn retained_events(&self) -> usize {
+        match &self.failure {
+            Some(Lm15Error::CollectionLimitError(error)) => error.retained_events,
+            _ => self.events.len(),
+        }
+    }
+
+    pub fn partial_events(&self) -> &[LiveServerEvent] {
+        match &self.failure {
+            Some(Lm15Error::CollectionLimitError(error)) => error.partial_events.as_slice(),
+            _ => &self.events,
+        }
+    }
+
+    /// Materialize retained data without receiving. A snapshot is always
+    /// incomplete; only result() certifies a boundary as the finished turn.
+    pub fn snapshot(&self) -> Result<Turn, Lm15Error> {
+        let mut turn = materialize_turn(self.partial_events().to_vec())?;
+        turn.ended_by = TurnEnd::Incomplete;
+        Ok(turn)
+    }
+
+    /// Stop this view only. In particular this does not clear a sealed failure.
+    pub fn close(&mut self) {
+        self.done = true;
+    }
+
+    fn fail(&mut self, error: Lm15Error) -> Lm15Error {
+        self.done = true;
+        self.failure = Some(error.clone());
+        error
+    }
+
+    fn limit_error(
+        &mut self,
+        limit: &'static str,
+        maximum: usize,
+        rejected: Option<LiveServerEvent>,
+    ) -> Lm15Error {
+        let error = Lm15Error::CollectionLimitError(CollectionLimit {
+            meta: ErrorMeta::new(format!(
+                "live turn collection exceeded {limit}={maximum}; inspect partial_events and rejected_event before continuing raw reads; the session remains open",
+            )),
+            limit, maximum, retained_bytes: self.retained_bytes,
+            retained_events: self.events.len(),
+            partial_events: Arc::new(std::mem::take(&mut self.events)),
+            rejected_event: rejected.map(Arc::new),
+        });
+        self.fail(error)
+    }
+
+    /// Yield one admitted event, retaining it for result/snapshot. Cancellation
+    /// of the receive future does not manufacture an error or terminal event.
     pub async fn next(&mut self) -> Result<Option<LiveServerEvent>, Lm15Error> {
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
+        }
         if self.done {
             return Ok(None);
         }
-        let Some(event) = self.session.recv().await? else {
-            self.done = true;
-            return Ok(None);
+        if self.events.len() >= self.limits.max_events {
+            return Err(self.limit_error("max_events", self.limits.max_events, None));
+        }
+        let event = match self.session.recv().await {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                return Err(self.fail(transport_error(
+                    "live session closed before the turn reached a boundary".into(),
+                )))
+            }
+            Err(error) => return Err(self.fail(error)),
         };
-        if matches!(
+        let size = match live_event_size(&event) {
+            Ok(size) => size,
+            Err(error) => return Err(self.fail(error)),
+        };
+        if size > self.limits.max_bytes - self.retained_bytes {
+            return Err(self.limit_error("max_bytes", self.limits.max_bytes, Some(event)));
+        }
+        self.retained_bytes += size;
+        self.done = matches!(
             event,
             LiveServerEvent::TurnEnd(_)
                 | LiveServerEvent::Interrupted(_)
                 | LiveServerEvent::Error(_)
-        ) {
-            self.done = true;
-        }
+        );
+        self.events.push(event.clone());
         Ok(Some(event))
     }
 
-    pub async fn result(mut self) -> Result<Turn, Lm15Error> {
-        let mut events = Vec::new();
-        while let Some(event) = self.next().await? {
-            let is_call = matches!(event, LiveServerEvent::ToolCall(_));
-            events.push(event);
-            if is_call {
-                break;
+    /// Includes already-yielded events. Repeated calls share the same cached
+    /// immutable Turn. A tool call seals this view without consuming late usage.
+    pub async fn result(&mut self) -> Result<Arc<Turn>, Lm15Error> {
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
+        }
+        if let Some(turn) = &self.result {
+            return Ok(Arc::clone(turn));
+        }
+        if !matches!(self.events.last(), Some(LiveServerEvent::ToolCall(_))) {
+            while let Some(event) = self.next().await? {
+                if matches!(event, LiveServerEvent::ToolCall(_)) {
+                    break;
+                }
             }
         }
-        Ok(materialize_turn(events))
+        let turn = match materialize_turn(self.events.clone()) {
+            Ok(turn) => turn,
+            Err(error) => return Err(self.fail(error)),
+        };
+        if turn.ended_by == TurnEnd::Incomplete {
+            return Err(self.fail(transport_error(
+                "turn view closed before a boundary; inspect snapshot()".into(),
+            )));
+        }
+        self.done = true;
+        let turn = Arc::new(turn);
+        self.result = Some(Arc::clone(&turn));
+        Ok(turn)
+    }
+
+    /// Forward client events while the view holds the mutable session borrow.
+    pub async fn send(&mut self, event: LiveClientEvent) -> Result<(), Lm15Error> {
+        self.session.send(event).await
+    }
+
+    pub async fn send_tool_result(
+        &mut self,
+        id: impl Into<String>,
+        content: Vec<Part>,
+    ) -> Result<(), Lm15Error> {
+        self.send(LiveClientEvent::ToolResult(LiveClientToolResultEvent {
+            id: id.into(),
+            content,
+        }))
+        .await
     }
 }
 
@@ -420,10 +652,11 @@ impl LiveSession {
     /// `result()` returns at it (you must answer with `send_tool_result`).
     /// The session itself stays open.
     pub fn turn(&mut self) -> TurnView<'_> {
-        TurnView {
-            session: self,
-            done: false,
-        }
+        TurnView::new(self, TurnLimits::default()).expect("default turn limits are positive")
+    }
+
+    pub fn turn_with_limits(&mut self, limits: TurnLimits) -> Result<TurnView<'_>, Lm15Error> {
+        TurnView::new(self, limits)
     }
 
     pub async fn close(mut self) -> Result<(), Lm15Error> {
@@ -436,6 +669,21 @@ impl LiveSession {
                 .map_err(|err| transport_error(format!("{provider}: live close: {err}")))?;
         }
         Ok(())
+    }
+}
+
+impl LiveEventSource for LiveSession {
+    fn recv(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<LiveServerEvent>, Lm15Error>> + Send + '_>> {
+        Box::pin(LiveSession::recv(self))
+    }
+
+    fn send(
+        &mut self,
+        event: LiveClientEvent,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Lm15Error>> + Send + '_>> {
+        Box::pin(LiveSession::send(self, event))
     }
 }
 

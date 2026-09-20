@@ -66,6 +66,7 @@ fn text_only(parts: &[Part], slot: &str, cx: &BuildContext<'_>) -> Result<String
     for part in parts {
         match part {
             Part::Text(t) => out.push(t.text.clone()),
+            Part::Data(d) => out.push(d.value.to_string()),
             Part::Citation(c) => {
                 let text = citation_text(c);
                 if !text.is_empty() {
@@ -119,7 +120,7 @@ fn media_part(
         inner.insert("data".into(), Value::String(data.to_string()));
         "inlineData"
     } else if let Some(path) = path {
-        let bytes = std::fs::read(path).map_err(|err| {
+        let bytes = crate::adaptation::read_media(path).map_err(|err| {
             invalid(
                 cx,
                 format!("cannot read media part path {}: {err}", path.display()),
@@ -165,11 +166,20 @@ fn function_response_name(
     if let Some(name) = &part.name {
         return Ok(name.clone());
     }
-    request
+    let boundary = request
         .messages
         .iter()
+        .position(|m| {
+            m.parts
+                .iter()
+                .any(|p| matches!(p,Part::ToolResult(r) if std::ptr::eq(r,part)))
+        })
+        .unwrap_or(request.messages.len());
+    request
+        .messages[..boundary]
+        .iter().rev()
         .filter(|m| m.role == Role::Assistant)
-        .flat_map(|m| m.parts.iter())
+        .flat_map(|m| m.parts.iter().rev())
         .find_map(|p| match p {
             Part::ToolCall(call) if call.id == part.id => Some(call.name.clone()),
             _ => None,
@@ -271,6 +281,7 @@ pub(crate) fn live_part(part: &Part, cx: &BuildContext<'_>) -> Result<Value, Lm1
 fn part(part: &Part, request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error> {
     Ok(match part {
         Part::Text(t) => text_part(&t.text, thought_signature(part, cx)?, false),
+        Part::Data(d) => text_part(&d.value.to_string(), thought_signature(part, cx)?, false),
         Part::Image(p) => media_part(
             &p.media_type,
             p.data.as_deref(),

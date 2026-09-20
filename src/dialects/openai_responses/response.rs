@@ -34,6 +34,8 @@ pub const OPENAI_PROVIDER_EXECUTED_ITEMS: &[&str] = &[
 pub const RESPONSE_ERROR_CODES: &[(&str, ErrorClass)] = &[
     ("server_error", ErrorClass::ServerError),
     ("rate_limit_exceeded", ErrorClass::RateLimitError),
+    ("no_capacity", ErrorClass::RateLimitError),
+    ("too_many_requests", ErrorClass::RateLimitError),
     ("invalid_prompt", ErrorClass::InvalidRequestError),
     ("vector_store_timeout", ErrorClass::TimeoutError),
     ("invalid_image", ErrorClass::InvalidRequestError),
@@ -79,14 +81,14 @@ fn lookup(table: &[(&str, ErrorClass)], code: &str) -> Option<ErrorClass> {
 }
 
 /// The in-band error of a 2xx body (`_response_error`): the class from
-/// the response table, else `ServerError`.
+/// the response table, else the non-retryable `ProviderError` fallback.
 pub fn response_error(provider: &str, error: &JsonObject) -> Lm15Error {
     let code = str_or_empty(error.get("code"));
     let message = match error.get("message") {
         Some(m) if truthy(Some(m)) => super::super::wire_json::py_str(m),
         _ => Value::Object(error.clone()).to_string(),
     };
-    let class = lookup(RESPONSE_ERROR_CODES, &code).unwrap_or(ErrorClass::ServerError);
+    let class = lookup(RESPONSE_ERROR_CODES, &code).unwrap_or(ErrorClass::ProviderError);
     let msg = if !message.is_empty() {
         message
     } else if !code.is_empty() {
@@ -338,7 +340,13 @@ pub fn parse_response(
     let usage = usage_from_responses(provider, object_or_empty(data.get("usage")))?;
     let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall(_)));
     let finish_reason = finish_from_status(&data, has_tool);
+    crate::judgments::replace_text_with_data(
+        &mut parts,
+        &crate::judgments::request_judgments(request),
+    );
     Ok(Response {
+        adaptations: Vec::new(),
+        logprobs_complete: true,
         id: id_or_none(data.get("id")),
         model: str_or_none(data.get("model")).unwrap_or_else(|| request.model.clone()),
         message: Message {
@@ -443,6 +451,7 @@ pub fn parse_stream_event(
         "response.created" => {
             let response = object_or_empty(payload.get("response"));
             out.push(StreamEvent::Start(StreamStartEvent {
+                adaptations: Vec::new(),
                 id: id_or_none(response.get("id")),
                 model: Some(
                     str_or_none(response.get("model")).unwrap_or_else(|| request.model.clone()),
@@ -451,6 +460,7 @@ pub fn parse_stream_event(
         }
         "response.output_text.delta" | "response.refusal.delta" => {
             out.push(delta(Delta::Text(TextDelta {
+                logprobs_complete: true,
                 text: str_or_empty(payload.get("delta")),
                 part_index: index(),
                 logprobs: openai_token_logprobs(payload.get("logprobs")),

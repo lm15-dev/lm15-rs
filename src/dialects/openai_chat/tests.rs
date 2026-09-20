@@ -52,7 +52,13 @@ fn build_with(
         model: &request.model,
         account_id: None,
     };
-    let wire = OPENAI_CHAT.build(request, stream, &cx)?;
+    // The historical refusal cells exercise the retained strict policy.
+    // MAP-13 note/silent behavior has separate regression coverage.
+    let (wire, _) = crate::adaptation::collect(
+        crate::types::AdaptationPolicy::Refuse,
+        policy.provider,
+        || OPENAI_CHAT.build(request, stream, &cx),
+    )?;
     assert_eq!(wire.path, "/chat/completions");
     assert_eq!(wire.endpoint, Some("chat/completions"));
     assert_eq!(wire.model.as_deref(), Some(request.model.as_str()));
@@ -464,8 +470,8 @@ fn thinking_format_every_shape_on_and_off() {
     );
 
     // MAP-5 / MAP-7: no dial on the wire is a raise, not an omission.
-    refuses(on(F::None), "thinking_format='none'");
-    refuses(off(F::None), "thinking_format='none'");
+    refuses(on(F::None), "config.reasoning.effort");
+    refuses(off(F::None), "config.reasoning.effort");
 }
 
 #[test]
@@ -635,12 +641,18 @@ fn cache_breakpoint_refuses_assistant_tool_and_non_text_prefixes() {
         prefix_until_index: Some(1),
         ..Default::default()
     });
-    refuses(build(preset("openai"), &req), "assistant message");
+    refuses(
+        build(preset("openai"), &req),
+        "config.cache.prefix_until_index",
+    );
     req.config.cache = Some(CacheConfig {
         prefix_until_index: Some(2),
         ..Default::default()
     });
-    refuses(build(preset("openai"), &req), "tool message");
+    refuses(
+        build(preset("openai"), &req),
+        "config.cache.prefix_until_index",
+    );
     // A user message whose last block is an image.
     let mut req = request(Config {
         cache: Some(CacheConfig {
@@ -654,7 +666,10 @@ fn cache_breakpoint_refuses_assistant_tool_and_non_text_prefixes() {
         Part::Image(ImagePart::from_url("https://img").unwrap()),
     ])
     .unwrap()];
-    refuses(build(preset("openai"), &req), "not text");
+    refuses(
+        build(preset("openai"), &req),
+        "config.cache.prefix_until_index",
+    );
 }
 
 #[test]
@@ -668,17 +683,24 @@ fn cache_control_none_and_anthropic_send_nothing() {
         },
         "gpt-5.6",
     );
+    let note = |compat: OpenAIChatCompat| {
+        let (body, records) =
+            crate::adaptation::collect(crate::types::AdaptationPolicy::Note, "chat", || {
+                super::payload::build_payload(&req, false, &req.model, &compat.resolve(), "chat")
+            })
+            .unwrap();
+        assert!(records.iter().any(|r| r.field == "config.cache.key"));
+        assert!(records.iter().any(|r| r.field == "config.cache.retention"));
+        Value::Object(body)
+    };
     for name in ["groq", "xai", "deepseek", "bedrock"] {
-        let body = build(preset(name), &req).unwrap();
+        let body = note(preset(name));
         assert_eq!(keys(&body), vec!["model", "messages", "tools"], "{name}");
         assert_eq!(body["messages"][0]["content"], json!("sys"));
     }
     let mut compat = OpenAIChatCompat::EMPTY;
     compat.cache_control = Some(Knob::Set(OpenAICacheControl::Anthropic));
-    assert_eq!(
-        keys(&build(compat, &req).unwrap()),
-        vec!["model", "messages", "tools"]
-    );
+    assert_eq!(keys(&note(compat)), vec!["model", "messages", "tools"]);
 }
 
 #[test]
@@ -757,7 +779,7 @@ fn forced_tool_choice_send_and_reject() {
         build(preset("bedrock"), &required).unwrap()["tool_choice"],
         json!("required")
     );
-    refuses(build(preset("zai"), &required), "silently ignored");
+    refuses(build(preset("zai"), &required), "config.tool_choice.mode");
     let none = request(Config {
         tool_choice: Some(ToolChoice {
             mode: ToolChoiceMode::None,
@@ -765,7 +787,7 @@ fn forced_tool_choice_send_and_reject() {
         }),
         ..Default::default()
     });
-    refuses(build(preset("zai"), &none), "mode=\"none\"");
+    refuses(build(preset("zai"), &none), "config.tool_choice.mode");
     let auto = request(Config {
         tool_choice: Some(ToolChoice::default()),
         ..Default::default()
@@ -782,10 +804,10 @@ fn forced_tool_choice_send_and_reject() {
         }),
         ..Default::default()
     });
-    refuses(build(preset("zai"), &allowed), "allowed=");
+    refuses(build(preset("zai"), &allowed), "config.tool_choice.allowed");
     let mut compat = OpenAIChatCompat::EMPTY;
     compat.forced_tool_choice = Some(Knob::Set(SendReject::Reject));
-    refuses(build(compat, &required), "silently ignored");
+    refuses(build(compat, &required), "config.tool_choice.mode");
 }
 
 #[test]
@@ -826,7 +848,7 @@ fn reasoning_efforts_allowlist_refuses_before_the_wire() {
     });
     refuses(
         build(preset("moonshotai"), &medium),
-        "accepts low, high, max",
+        "config.reasoning.effort",
     );
     let max = request(Config {
         reasoning: Some(Reasoning::new(ReasoningEffort::Max)),
@@ -968,7 +990,7 @@ fn xai_refusal_table() {
             reasoning: Some(Reasoning::new(ReasoningEffort::Off)),
             ..Default::default()
         }),
-        "cannot be disabled",
+        "config.reasoning.effort",
     );
     refuses(
         xai(Config {
@@ -986,7 +1008,7 @@ fn xai_refusal_table() {
             }),
             ..Default::default()
         }),
-        "allowed subsets",
+        "config.tool_choice.allowed",
     );
     refuses(
         xai(Config {
@@ -997,7 +1019,7 @@ fn xai_refusal_table() {
             }),
             ..Default::default()
         }),
-        "allowed subsets",
+        "config.tool_choice.allowed",
     );
     refuses(
         xai(Config {
@@ -1133,7 +1155,7 @@ fn tool_result_media_follows_the_preset_and_never_a_placeholder() {
     .unwrap();
     refuses(
         build(OpenAIChatCompat::EMPTY, &req),
-        "text-only tool results",
+        "messages[2].parts[0].content[1]",
     );
     let body = build(preset("xai"), &req).unwrap();
     assert_eq!(
@@ -1161,15 +1183,85 @@ fn tool_result_media_follows_the_preset_and_never_a_placeholder() {
     .unwrap();
     refuses(
         build(preset("xai"), &req),
-        "carries images but not document",
+        "messages[2].parts[0].content[0]",
     );
 }
 
 #[test]
-fn top_k_has_no_slot_and_refuses() {
+fn top_k_has_no_slot_and_refuses_under_strict_policy() {
     let req = request(Config {
         top_k: Some(40),
         ..Default::default()
     });
     refuses(build(preset("vllm"), &req), "top_k");
+}
+
+#[test]
+fn map13_note_and_silent_keep_identical_adapted_bytes() {
+    let mut req = request(Config {
+        top_k: Some(40),
+        seed: Some(7),
+        frequency_penalty: Some(0.0),
+        ..Default::default()
+    });
+    req.config.reasoning = Some(Reasoning {
+        effort: ReasoningEffort::Medium,
+        thinking_budget: Some(4000),
+        summary: Some(ReasoningSummary::Concise),
+    });
+    let compat = preset("moonshotai").resolve();
+    let run = |policy| {
+        crate::adaptation::collect(policy, "moonshotai", || {
+            super::payload::build_payload(&req, false, "m", &compat, "moonshotai")
+        })
+        .unwrap()
+    };
+    let (note, records) = run(crate::types::AdaptationPolicy::Note);
+    let (silent, hidden) = run(crate::types::AdaptationPolicy::Silent);
+    assert_eq!(note, silent);
+    assert_eq!(records, hidden);
+    assert!(note.get("top_k").is_none());
+    assert_eq!(note["seed"], json!(7));
+    assert_eq!(note["frequency_penalty"], json!(0.0));
+    assert_eq!(note["reasoning_effort"], json!("low"));
+    assert!(records
+        .iter()
+        .any(|a| a.field == "config.top_k" && a.action == crate::types::AdaptationAction::Dropped));
+    assert!(records.iter().any(|a| a.field == "config.reasoning.effort"
+        && a.action == crate::types::AdaptationAction::Clamped));
+}
+
+#[test]
+fn map13_ignored_schema_is_omitted_not_substituted_or_sent() {
+    let req = request(Config {
+        response_format: Some(
+            json!({"type":"json_schema","schema":{"type":"object"}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ),
+        ..Default::default()
+    });
+    let (body, records) =
+        crate::adaptation::collect(crate::types::AdaptationPolicy::Note, "zai", || {
+            super::payload::build_payload(&req, false, "m", &preset("zai").resolve(), "zai")
+        })
+        .unwrap();
+    assert!(!body.contains_key("response_format"));
+    assert_eq!(records[0].field, "config.response_format");
+    assert_eq!(records[0].action, crate::types::AdaptationAction::Dropped);
+}
+
+#[test]
+fn map14_data_history_is_compact_json_on_text_wire() {
+    let mut req = request(Config::default());
+    req.messages =
+        vec![Message::user(vec![Part::data(json!({"name":"café","value":1.0}))]).unwrap()];
+    let body =
+        super::payload::build_payload(&req, false, "m", &preset("openai").resolve(), "openai")
+            .unwrap();
+    assert_eq!(
+        body["messages"][0]["content"],
+        json!("{\"name\":\"café\",\"value\":1.0}")
+    );
 }

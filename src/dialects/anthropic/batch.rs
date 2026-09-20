@@ -6,7 +6,7 @@
 use serde_json::{json, Map, Value};
 
 use crate::errors::Lm15Error;
-use crate::surfaces::{body_object, iso_utc, provider_error, str_field, unsupported};
+use crate::surfaces::{body_object, iso_utc, provider_error, str_field};
 use crate::types::{
     BatchEntry, BatchJobInfo, BatchOutcome, BatchRequest, BatchStatus, ErrorDetail,
 };
@@ -64,14 +64,20 @@ pub fn submit_request(
     cx: &BuildContext<'_>,
     request: &BatchRequest,
 ) -> Result<WireRequest, Lm15Error> {
-    if request.label.is_some() {
-        let mut err = unsupported(cx.provider, "batch labels are");
-        err.meta_mut().message = format!(
-            "{}: batch labels are not supported — the Message Batches create body has no \
-             metadata field (verified live 2026-08-31); submit without a label and correlate by id",
-            cx.provider
-        );
-        return Err(err);
+    crate::dialects::openai_responses::batch::preflight_requests(
+        dialect,
+        cx,
+        request,
+        crate::AdaptationPolicy::Note,
+    )?;
+    if let Some(label) = &request.label {
+        crate::adaptation::adapt(
+            "label",
+            crate::adaptation::AdaptationAction::Dropped,
+            Some(Value::String(label.clone())),
+            None,
+            "the Message Batches create body has no metadata field; correlate by id",
+        )?;
     }
     let mut requests = Vec::new();
     for (i, nested) in request.requests.iter().enumerate() {
@@ -204,6 +210,7 @@ pub fn entries(
                     outcome: BatchOutcome::Errored,
                     response: None,
                     error: Some(ErrorDetail {
+                        http_response: err.meta().http_response(),
                         code: err.code(),
                         message: if err.message().is_empty() {
                             "batch entry errored".into()

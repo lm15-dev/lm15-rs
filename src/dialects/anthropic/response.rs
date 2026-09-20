@@ -190,7 +190,13 @@ pub fn parse_response(
 
     let usage = usage_from_messages(provider, object_or_empty(data.get("usage")))?;
     let has_tool = parts.iter().any(|p| matches!(p, Part::ToolCall(_)));
+    crate::judgments::replace_text_with_data(
+        &mut parts,
+        &crate::judgments::request_judgments(request),
+    );
     Ok(Response {
+        adaptations: Vec::new(),
+        logprobs_complete: true,
         id: id_or_none(data.get("id")),
         model: str_or_none(data.get("model")).unwrap_or_else(|| request.model.clone()),
         message: Message {
@@ -231,6 +237,7 @@ pub fn parse_stream_event(
         "message_start" => {
             let msg = object_or_empty(payload.get("message"));
             out.push(StreamEvent::Start(StreamStartEvent {
+                adaptations: Vec::new(),
                 id: id_or_none(msg.get("id")),
                 model: Some(str_or_none(msg.get("model")).unwrap_or_else(|| request.model.clone())),
             }));
@@ -282,6 +289,7 @@ pub fn parse_stream_event(
             let idx = index_of(payload.get("index"));
             match str_or_empty(d.get("type")).as_str() {
                 "text_delta" => out.push(delta(Delta::Text(TextDelta {
+                    logprobs_complete: true,
                     text: str_or_empty(d.get("text")),
                     part_index: idx,
                     logprobs: Vec::new(),

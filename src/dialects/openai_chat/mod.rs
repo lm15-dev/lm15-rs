@@ -34,7 +34,6 @@ pub fn response_from_openai_chat(
 
 use serde_json::Value;
 
-use self::text::unsupported;
 use crate::compat::{OpenAIChatCompat, ResolvedOpenAIChatCompat};
 use crate::errors::Lm15Error;
 use crate::registry::DialectId;
@@ -184,9 +183,12 @@ impl Dialect for OpenAIChat {
         cx: &BuildContext<'_>,
     ) -> Result<WireRequest, Lm15Error> {
         let compat = resolve_compat(cx, cx.model);
-        if cx.policy.provider == "xai" {
-            xai_refusals(request, cx.provider)?;
-        }
+        let prepared = if cx.policy.provider == "xai" {
+            Some(xai_prepare(request, cx.provider)?)
+        } else {
+            None
+        };
+        let request = prepared.as_ref().unwrap_or(request);
         let body = payload::build_payload(request, stream, cx.model, &compat, cx.provider)?;
         let mut wire = WireRequest::post("/chat/completions", Value::Object(body));
         // `_headers` (`openai_chat.py:197-203`): content type, then the
@@ -262,48 +264,45 @@ pub(crate) fn resolve_compat(cx: &BuildContext<'_>, model: &str) -> ResolvedOpen
     }
 }
 
-/// xAI's refusal table (`lm15/providers/xai.py:77-125`), each cell a
-/// live-measured silent no-op on api.x.ai: reasoning off (MAP-5),
-/// logprobs (docs.x.ai: ignored on grok-4.20+), allowlist subsets other
-/// than one forced name (MAP-8 rule 1), a forced tool next to
-/// `response_format` (MAP-8 rule 3).
-fn xai_refusals(request: &Request, provider: &str) -> Result<(), Lm15Error> {
-    let config = &request.config;
-    if config.reasoning.as_ref().is_some_and(|r| r.is_off()) {
-        return Err(unsupported(
-            provider,
-            "reasoning cannot be disabled — Grok reasoning models have no off switch, and xAI \
-             silently ignores disable fields on the wire. Omit the reasoning config, or pick a \
-             non-reasoning Grok model.",
-        ));
+/// xAI's receipted silent no-ops become visible adaptations (MAP-13).
+/// A forced tool conflicting with structured output still needs a real choice.
+fn xai_prepare(request: &Request, provider: &str) -> Result<Request, Lm15Error> {
+    use crate::adaptation::{adapt, drop_value, refusal, AdaptationAction::*};
+    let mut out = request.clone();
+    let config = &mut out.config;
+    if let Some(r) = config.reasoning.as_mut().filter(|r| r.is_off()) {
+        adapt("config.reasoning.effort",Substituted,Some(serde_json::json!("off")),Some(serde_json::json!("low")),"Grok has no off switch; the lowest reasoning level was sent and spend remains visible in usage")?;
+        r.effort = crate::types::ReasoningEffort::Low;
     }
-    if config.logprobs.is_some() {
-        return Err(unsupported(
-            provider,
-            "config.logprobs is not supported — grok-4.20 and newer silently ignore \
-             logprobs/top_logprobs on the wire (docs.x.ai, verified live 2026-09-01). OpenAI \
-             and Gemini carry logprobs.",
-        ));
-    }
-    if let Some(choice) = &config.tool_choice {
-        let forced_one = choice.allowed.len() == 1 && choice.mode == ToolChoiceMode::Required;
-        if !choice.allowed.is_empty() && !forced_one {
-            return Err(unsupported(
-                provider,
-                "tool_choice.allowed subsets are silently ignored by api.x.ai (verified live \
-                 2026-09-02); force a single tool with mode='required', or send only the \
-                 allowed tools in Request.tools",
-            ));
-        }
+    drop_value(
+        "config.logprobs",
+        &mut config.logprobs,
+        "grok-4.20 and newer ignore logprobs/top_logprobs",
+    )?;
+    if let Some(choice) = &mut config.tool_choice {
         if choice.mode == ToolChoiceMode::Required && config.response_format.is_some() {
-            return Err(unsupported(
+            return Err(refusal(
                 provider,
-                "a forced tool (mode='required') cannot be combined with response_format — \
-                 api.x.ai returns JSON text and drops the call (verified live 2026-09-02)",
+                "config.tool_choice",
+                "a real choice is needed: xAI drops a forced tool next to response_format",
             ));
         }
+        if !choice.allowed.is_empty()
+            && !(choice.allowed.len() == 1 && choice.mode == ToolChoiceMode::Required)
+        {
+            adapt(
+                "config.tool_choice.allowed",
+                ClientSide,
+                Some(serde_json::json!(choice.allowed)),
+                Some(serde_json::json!(choice.allowed)),
+                "xAI ignores allowlists; only allowed tools were sent",
+            )?;
+            out.tools
+                .retain(|t| choice.allowed.iter().any(|n| n == t.name()));
+            choice.allowed.clear();
+        }
     }
-    Ok(())
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -79,6 +79,75 @@ fn opaque_payloads_are_never_cleaned() {
     assert_eq!(rt("config", ext.clone()), ext);
 }
 
+#[test]
+fn data_values_are_opaque_and_distribution_floats_are_preserved() {
+    for value in [
+        json!(null),
+        json!(""),
+        json!({}),
+        json!([]),
+        json!({"empty": [], "null": null, "n": 1, "f": 1.0}),
+    ] {
+        let part = json!({"type": "data", "value": value});
+        assert_eq!(rt("part", part.clone()), part);
+    }
+    // INV-052: rounded provider distributions need not sum to exactly one.
+    let answer = json!({"role": "assistant", "parts": [{"type": "data", "value": {"pick": "a"},
+        "probabilities": {"pick": {"a": 0.6, "b": 0.3}}, "method": "provider_classification"}]});
+    assert_eq!(rt("message", answer.clone()), answer);
+    let mut wrong_role = answer.clone();
+    wrong_role["role"] = json!("user");
+    assert_eq!(rejects("message", wrong_role).type_name(), "ValueError");
+    let mut missing_method = answer;
+    missing_method["parts"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("method");
+    assert_eq!(rejects("message", missing_method).type_name(), "ValueError");
+    let one = rt(
+        "part",
+        json!({"type": "data", "value": true,
+        "probabilities": {"pick": {"true": 1}}, "method": "provider_classification"}),
+    );
+    assert!(one["probabilities"]["pick"]["true"].is_f64());
+    assert_eq!(one["probabilities"]["pick"]["true"].to_string(), "1.0");
+}
+
+#[test]
+fn promoted_sampling_knobs_preserve_zero_and_enforce_canonical_ranges() {
+    assert_eq!(
+        rt(
+            "config",
+            json!({"seed": 0.0, "frequency_penalty": 0, "presence_penalty": 0})
+        ),
+        json!({"seed": 0, "frequency_penalty": 0.0, "presence_penalty": 0.0})
+    );
+    assert_eq!(
+        rt(
+            "config",
+            json!({"seed": -7, "temperature": 2,
+        "frequency_penalty": -2, "presence_penalty": 2})
+        ),
+        json!({"seed": -7, "temperature": 2.0, "frequency_penalty": -2.0, "presence_penalty": 2.0})
+    );
+    for invalid in [
+        json!({"temperature": 2.01}),
+        json!({"temperature": -0.01}),
+        json!({"frequency_penalty": -2.01}),
+        json!({"presence_penalty": 2.01}),
+    ] {
+        assert_eq!(rejects("config", invalid).type_name(), "ValueError");
+    }
+    for invalid in [
+        json!({"seed": true}),
+        json!({"seed": 1.5}),
+        json!({"frequency_penalty": true}),
+        json!({"presence_penalty": false}),
+    ] {
+        assert_eq!(rejects("config", invalid).type_name(), "TypeError");
+    }
+}
+
 // ─── part_index, false, 0: data, not emptiness ───────────────────────
 
 #[test]

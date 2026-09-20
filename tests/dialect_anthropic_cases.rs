@@ -18,7 +18,7 @@ use lm15::serde::Canonical;
 use lm15::types::Request;
 
 const PROVIDERS: &[(&str, usize)] = &[
-    ("anthropic", 42),
+    ("anthropic", 45),
     ("deepseek-anthropic", 16),
     ("moonshotai-anthropic", 18),
     ("meta-anthropic", 15),
@@ -84,6 +84,9 @@ fn check_case(path: &PathBuf, provider: &str) -> Result<(), String> {
             Ok(out) => return Err(format!("{id}: built {} instead of raising", out.url)),
             Err(err) => err,
         };
+        if let Some(feature) = raises["feature"].as_str() {
+            assert_eq!(err.feature(), Some(feature), "{id}: feature");
+        }
         let class = raises["type"].as_str().unwrap();
         let code = raises["code"].as_str().unwrap();
         if err.class_name() != class || err.code().as_str() != code {
@@ -97,6 +100,31 @@ fn check_case(path: &PathBuf, provider: &str) -> Result<(), String> {
     }
 
     let out = built.map_err(|e| format!("{id}: {e}"))?;
+    let mut actual: Vec<Value> = lm
+        .plan(&request)
+        .unwrap()
+        .iter()
+        .map(|a| {
+            assert!(!a.reason.is_empty(), "{id}: empty adaptation reason");
+            let mut value = a.to_json();
+            value.as_object_mut().unwrap().remove("reason");
+            value
+        })
+        .collect();
+    let mut wanted = case["expect_lm15"]["adaptations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let order = |a: &Value, b: &Value| {
+        (a["field"].as_str(), a["action"].as_str())
+            .cmp(&(b["field"].as_str(), b["action"].as_str()))
+    };
+    actual.sort_by(order);
+    wanted.sort_by(order);
+    assert_eq!(
+        actual, wanted,
+        "{id}: adaptations (reason wording is not pinned)"
+    );
     let pinned = &case["request"];
     let mut problems = Vec::new();
     if out.method != pinned["method"].as_str().unwrap() {

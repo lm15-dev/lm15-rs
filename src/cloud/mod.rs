@@ -5,8 +5,9 @@
 //! - [`sigv4`]: AWS Signature Version 4 (`lm15/cloud/sigv4.py`), pinned
 //!   byte for byte by `auth/sigv4-vectors.json`.
 //!
-//! The cloud credential chains (module 3b) are not here; the signer takes
-//! an explicit `AwsCredentials` value.
+//! `chains` (native builds) resolves the vendor chains or deterministic named
+//! subsets and records their provenance. The pure signer accepts an explicit
+//! `AwsCredentials` value, including in codec-only builds.
 
 #[cfg(feature = "native")]
 pub mod chains;

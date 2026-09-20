@@ -13,12 +13,14 @@ use lm15::types::{
     CacheConfig, Config, ContinuationState, FunctionTool, JsonObject, Message, Part, Reasoning,
     ReasoningEffort, Request, ThinkingPart, Tool, ToolChoice, ToolChoiceMode,
 };
-use lm15::{AnthropicLM, ClaudeCodeLM, Lm15Error, ProviderLM};
+use lm15::{AdaptationPolicy, AnthropicLM, ClaudeCodeLM, Lm15Error, ProviderLM};
 
 fn bound(compat: AnthropicCompat) -> ProviderLM {
     AnthropicLM::builder()
         .api_key("k")
         .compat(Compat::Anthropic(compat))
+        // These knob tests pin the opt-in strict behavior, not MAP-13's default.
+        .adaptations(AdaptationPolicy::Refuse)
         .build()
         .unwrap()
 }
@@ -70,7 +72,7 @@ fn thinking_format_anthropic_is_the_model_class_table() {
         manual["thinking"],
         json!({"type": "enabled", "budget_tokens": 2048})
     );
-    assert_eq!(manual["max_tokens"], json!(2048 + 1024));
+    assert_eq!(manual["max_tokens"], json!(2048 + 16384));
     assert!(manual.get("output_config").is_none());
     let adaptive = body(
         &lm,
@@ -78,7 +80,7 @@ fn thinking_format_anthropic_is_the_model_class_table() {
     );
     assert_eq!(adaptive["thinking"], json!({"type": "adaptive"}));
     assert_eq!(adaptive["output_config"], json!({"effort": "low"}));
-    assert_eq!(adaptive["max_tokens"], json!(1024));
+    assert_eq!(adaptive["max_tokens"], json!(16384));
     let off = body(
         &lm,
         &request("claude-sonnet-5", reasoning(ReasoningEffort::Off)),
@@ -110,7 +112,7 @@ fn thinking_format_deepseek_sends_off_and_enabled_with_effort() {
     );
     assert_eq!(on["thinking"], json!({"type": "enabled"}));
     assert_eq!(on["output_config"], json!({"effort": "xhigh"}));
-    assert_eq!(on["max_tokens"], json!(1024));
+    assert_eq!(on["max_tokens"], json!(16384));
     let off = body(
         &lm,
         &request("deepseek-v4-flash", reasoning(ReasoningEffort::Off)),
@@ -244,15 +246,27 @@ fn cache_control_anthropic_marks_and_none_places_nothing() {
     let none = bound(AnthropicCompat {
         cache_control: set(AnthropicCacheControl::None),
         ..AnthropicCompat::EMPTY
-    });
+    })
+    .with_adaptations(AdaptationPolicy::Note);
     assert_eq!(body(&none, &req)["system"], json!("sys"));
-    // An explicit CacheConfig is not an error on a "none" server, and a
-    // key has nothing to attach to there.
+    // A cache key has no slot: Note drops it visibly, Refuse rejects it.
     req.config.cache = Some(CacheConfig {
         key: Some("k".into()),
         ..CacheConfig::default()
     });
     assert_eq!(body(&none, &req)["system"], json!("sys"));
+    let notes = none.plan(&req).unwrap();
+    let key = notes
+        .iter()
+        .find(|a| a.field == "config.cache.key")
+        .unwrap();
+    assert_eq!(key.action, lm15::AdaptationAction::Dropped);
+    assert_eq!(key.asked, Some(json!("k")));
+    assert_eq!(key.applied, None);
+    unsupported(
+        none.with_adaptations(AdaptationPolicy::Refuse)
+            .build_request(&req, false),
+    );
 }
 
 // ─── structured_output ──────────────────────────────────────────────

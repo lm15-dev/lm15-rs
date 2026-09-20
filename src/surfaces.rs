@@ -170,10 +170,15 @@ pub fn body_object(
             provider,
             format!("{what} body is not a JSON object"),
         )),
-        Err(err) => Err(provider_error(
-            provider,
-            format!("{what} body is not JSON: {err}"),
-        )),
+        Err(err) => {
+            let mut error = provider_error(provider, format!("{what} body is not JSON: {err}"));
+            // INV-054: retain bounded evidence even on the pure codec path.
+            // The driver adds the actual status, content type and request ID;
+            // this helper never invents an HTTP status for an unknown source.
+            error.meta_mut().body_excerpt =
+                Some(String::from_utf8_lossy(&body[..body.len().min(200)]).into_owned());
+            Err(error)
+        }
     }
 }
 

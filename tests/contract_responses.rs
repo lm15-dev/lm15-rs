@@ -78,6 +78,11 @@ fn first_difference(
             )),
         };
     }
+    let adaptation_record = path.rsplit_once(".adaptations[").is_some_and(|(_, index)| {
+        index
+            .strip_suffix(']')
+            .is_some_and(|index| index.parse::<usize>().is_ok())
+    });
     match (expected, actual) {
         (Value::Object(e), Value::Object(a)) => {
             for (key, ev) in e {
@@ -94,8 +99,19 @@ fn first_difference(
             }
             for key in a.keys() {
                 if !e.contains_key(key) {
+                    // MAP-13 pins every adaptation fact, but ports own the
+                    // reason wording. Presence and a nonempty string are required.
+                    if key == "reason" && adaptation_record {
+                        if a[key].as_str().is_some_and(|s| !s.is_empty()) {
+                            continue;
+                        }
+                        return Some(format!("{path}.reason: expected a nonempty string"));
+                    }
                     return Some(format!("{path}.{key}: unexpected key"));
                 }
+            }
+            if adaptation_record && !a.contains_key("reason") {
+                return Some(format!("{path}.reason: missing"));
             }
             None
         }
@@ -239,6 +255,8 @@ fn response_and_stream_goldens_replay_exactly() {
         if !golden_path.is_file() {
             continue;
         }
+        // Raw decoding compares the oracle exactly. Build/execution records
+        // belong to prepared calls, never an in-memory rewrite of a golden.
         let golden = read_json(&golden_path);
         let body = fs::read(dir.join("bodies").join(&id).join(pinned)).unwrap();
         let is_stream = case.get("stream") == Some(&Value::Bool(true)) || looks_like_sse(&body);
@@ -395,6 +413,9 @@ fn response_and_stream_goldens_replay_exactly() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    assert!(checked.0 >= 298, "complete cases checked: {}", checked.0);
-    assert!(checked.1 >= 40, "stream cases checked: {}", checked.1);
+    assert_eq!(
+        checked,
+        (308, 40),
+        "complete/stream goldens at the target CONTRACT_PIN"
+    );
 }
