@@ -4,7 +4,7 @@ use lm15::compat::{Compat, OpenAIResponsesCompat};
 use lm15::dialects::openai_responses::OpenAIResponses;
 use lm15::serde::Canonical;
 use lm15::transport::{BoxFuture, Transport, TransportResponse};
-use lm15::wire::{BuildContext, Dialect, TransportRequest};
+use lm15::wire::{BuildContext, Surfaces, TransportRequest};
 use lm15::{AdaptationPolicy, BatchRequest, HostSettings, Lm15Error, LmBuilder, OpenAILM};
 use serde_json::{json, Value};
 

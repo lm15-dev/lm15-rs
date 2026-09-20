@@ -513,7 +513,8 @@ fn canonical_error_evidence_is_bounded_and_not_opaque() {
         &json!({"code":"rate_limit","message":"limited","http_response":{
             "request_id":"r","retry_after":0,"rate_limit_headers":{
                 "X-Ratelimit-Limit-Requests":["1","2","3","4","5"],"Authorization":["secret"],
-                "retry-after":["bad\\nvalue","1"]
+                "retry-after":["bad\nvalue","bad\rvalue","bad\tvalue","\u{7f}","é","","1"],
+                "x-ratelimit-type":["bad\\nvalue"]
             }
         }}),
     )
@@ -526,6 +527,11 @@ fn canonical_error_evidence_is_bounded_and_not_opaque() {
     );
     assert!(block["rate_limit_headers"].get("Authorization").is_none());
     assert_eq!(block["rate_limit_headers"]["retry-after"], json!(["1"]));
+    // A literal backslash followed by 'n' is printable evidence, not a newline.
+    assert_eq!(
+        block["rate_limit_headers"]["x-ratelimit-type"],
+        json!(["bad\\nvalue"])
+    );
     for block in [
         Value::Null,
         json!({"status":200}),
