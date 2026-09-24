@@ -100,7 +100,9 @@ pub fn stream_error_class(provider_code: &str, message: &str) -> ErrorClass {
     if crate::errors::anthropic_is_context_length(message) {
         return ErrorClass::ContextLengthError;
     }
-    if provider_code == "not_found_error" && crate::errors::is_model_error(message) {
+    if (provider_code == "not_found_error" && crate::errors::is_model_error(message))
+        || crate::errors::is_pinned_model_not_found(provider_code, message)
+    {
         return ErrorClass::UnsupportedModelError;
     }
     crate::errors::ANTHROPIC_ERROR_TYPES

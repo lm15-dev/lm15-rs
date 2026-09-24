@@ -99,6 +99,15 @@ pub fn response_error(provider: &str, error: &JsonObject) -> Lm15Error {
     provider_error(class, provider, msg, Some(code))
 }
 
+/// The class of a stream error frame, from its code and message: a pinned
+/// MAP-15 form first, then the code tables.
+pub fn stream_error_class_for(provider_code: &str, message: &str) -> ErrorClass {
+    if crate::errors::is_pinned_model_not_found(provider_code, message) {
+        return ErrorClass::UnsupportedModelError;
+    }
+    stream_error_class(provider_code)
+}
+
 /// The class of a stream error frame's code (`_error_detail`).
 pub fn stream_error_class(provider_code: &str) -> ErrorClass {
     lookup(STREAM_ERROR_CODES, provider_code)
@@ -555,7 +564,11 @@ pub fn parse_stream_event(
                 ),
             };
             out.push(StreamEvent::Error(StreamErrorEvent {
-                error: error_detail(stream_error_class(&provider_code), &provider_code, &message),
+                error: error_detail(
+                    stream_error_class_for(&provider_code, &message),
+                    &provider_code,
+                    &message,
+                ),
             }));
         }
         _ => {}

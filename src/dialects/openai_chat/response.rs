@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 
-use super::super::openai_responses::response::{response_error, stream_error_class};
+use super::super::openai_responses::response::{response_error, stream_error_class_for};
 use super::super::wire_json::{
     array_or_empty, body_object, count_of, error_detail, first_str, frame_object, id_or_none,
     index_of, object_or_empty, openai_token_logprobs, parse_json_object, provider_error,
@@ -311,7 +311,11 @@ pub fn parse_stream_event(
             first_str(err, &["code", "type"]).unwrap_or_else(|| "provider".to_string());
         let message = str_or_empty(err.get("message"));
         out.push(StreamEvent::Error(StreamErrorEvent {
-            error: error_detail(stream_error_class(&provider_code), &provider_code, &message),
+            error: error_detail(
+                stream_error_class_for(&provider_code, &message),
+                &provider_code,
+                &message,
+            ),
         }));
         return Ok(());
     }

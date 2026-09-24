@@ -964,6 +964,64 @@ const MODEL_ERROR_MARKERS: &[&str] = &[
     "unknown",
 ];
 
+/// One pinned MAP-15 form of a provider's "no such model" answer: an exact
+/// provider code, and the text tests the message must pass (empty: no test).
+pub struct ModelNotFoundForm {
+    pub code: &'static str,
+    pub prefix: &'static str,
+    pub contains: &'static str,
+    pub suffix: &'static str,
+}
+
+const fn form(
+    code: &'static str,
+    prefix: &'static str,
+    contains: &'static str,
+    suffix: &'static str,
+) -> ModelNotFoundForm {
+    ModelNotFoundForm {
+        code,
+        prefix,
+        contains,
+        suffix,
+    }
+}
+
+/// The pinned forms that carry no model-specific code and no not-found class
+/// (lm15-contract spec/model-not-found.json, carried verbatim; each form has a
+/// live receipt).
+pub const MODEL_NOT_FOUND_FORMS: &[ModelNotFoundForm] = &[
+    form("not_found_error", "model: ", "", ""), // Anthropic, Claude Code
+    form(
+        "invalid_request_error",
+        "",
+        "The supported API model names are ",
+        "",
+    ), // DeepSeek
+    form("1211", "", "", ""),                   // Z.AI: Unknown Model
+    form("1214", "modelCode: ", "", ""),        // Z.AI: the model field is invalid
+    form("400", "", "", " is not a valid model ID"), // OpenRouter
+    form("invalid-argument", "Model not found: ", "", ""), // xAI (2026-09-01)
+    form(
+        "validation_error",
+        "",
+        "The provided model identifier is invalid",
+        "",
+    ), // Bedrock Chat
+];
+
+/// Whether an error is one of the pinned MAP-15 forms: the code matches
+/// exactly and the message passes every text test the form gives.
+pub fn is_pinned_model_not_found(provider_code: &str, message: &str) -> bool {
+    !provider_code.is_empty()
+        && MODEL_NOT_FOUND_FORMS.iter().any(|f| {
+            f.code == provider_code
+                && message.starts_with(f.prefix)
+                && message.contains(f.contains)
+                && message.ends_with(f.suffix)
+        })
+}
+
 pub(crate) fn is_model_error(text: &str) -> bool {
     let lowered = text.to_lowercase();
     lowered.contains("model") && MODEL_ERROR_MARKERS.iter().any(|m| lowered.contains(m))
@@ -1020,6 +1078,7 @@ fn normalize_openai_shape(ctx: &Context, status: u16, body: &str, codex: bool) -
     }
     if OPENAI_MODEL_ERROR_CODES.contains(&code.as_str())
         || (status == 404 && is_model_error(&format!("{msg} {code} {err_type}")))
+        || is_pinned_model_not_found(provider_code.as_deref().unwrap_or(""), &msg)
     {
         return ctx.error(
             ErrorClass::UnsupportedModelError,
@@ -1159,6 +1218,7 @@ fn normalize_anthropic(ctx: &Context, status: u16, body: &str) -> Lm15Error {
     if err_type == "DeploymentNotFound"
         || ((err_type == "not_found_error" || err_type == "resource_not_found_error")
             && is_model_error(&msg))
+        || is_pinned_model_not_found(&err_type, &msg)
     {
         return ctx.error(
             ErrorClass::UnsupportedModelError,
