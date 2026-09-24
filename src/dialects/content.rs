@@ -43,18 +43,44 @@ pub(crate) fn validate_slots(
                     return Err(crate::adaptation::refusal(provider,&format!("{path}.name"),"a real choice is needed: the Gemini function result needs a name and no preceding call with this id supplied one"));
                 }
                 for (k, part) in result.content.iter().enumerate() {
-                    if is_media(part) && !tool_media.admits(part.type_name()) {
-                        return Err(crate::adaptation::refusal(provider,&format!("{path}.content[{k}]"),format!("the program depends on the {} part, but this wire cannot carry it in a tool result (MAP-10)",part.type_name())));
+                    let kind = part.type_name();
+                    if is_media(part) && !tool_media.admits(kind) {
+                        // The same reason and remedy as check_tool_result_media,
+                        // addressed by the part's path (MAP-13.4b).
+                        let why = if tool_media == ToolResultMedia::Reject {
+                            "this server takes text-only tool results".to_string()
+                        } else {
+                            format!(
+                                "this server carries images but not {kind} parts in a tool result"
+                            )
+                        };
+                        return Err(crate::adaptation::refusal(
+                            provider,
+                            &format!("{path}.content[{k}]"),
+                            format!(
+                                "a {kind} part in tool_result {:?} cannot reach this wire — {why} \
+                                 (compat tool_result_media={:?}). Carried natively by {}; or render the \
+                                 part to text yourself before building the tool result (MAP-10)",
+                                result.id,
+                                tool_media.as_str(),
+                                door(kind)
+                            ),
+                        ));
                     }
                 }
             }
             let gap = match dialect {
-                "anthropic" => matches!(p, Part::Audio(_) | Part::Video(_) | Part::Binary(_)),
-                "openai" => {
-                    is_media(p)
-                        && (m.role == Role::Assistant
-                            || !matches!(p, Part::Image(_) | Part::Document(_)))
+                // Image and document blocks only; a developer turn is rendered
+                // as text on this wire (the reference), so it carries no media.
+                "anthropic" => {
+                    matches!(p, Part::Audio(_) | Part::Video(_) | Part::Binary(_))
+                        || (m.role == Role::Developer && is_media(p))
                 }
+                // The Responses input has user slots for every media kind
+                // (input_audio, input_video, input_file; Meta documents
+                // input_video), as the reference sends them; assistant
+                // content is output text (changes/2026-09-24-message-media.md).
+                "openai" => is_media(p) && m.role == Role::Assistant,
                 "openai_chat" => {
                     is_media(p) && (m.role == Role::Assistant || !matches!(p, Part::Image(_)))
                 }

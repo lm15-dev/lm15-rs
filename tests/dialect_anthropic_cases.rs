@@ -18,10 +18,10 @@ use lm15::serde::Canonical;
 use lm15::types::Request;
 
 const PROVIDERS: &[(&str, usize)] = &[
-    ("anthropic", 45),
+    ("anthropic", 46),
     ("deepseek-anthropic", 16),
     ("moonshotai-anthropic", 18),
-    ("meta-anthropic", 15),
+    ("meta-anthropic", 16),
 ];
 
 const API_KEY: &str = "test-key-123";

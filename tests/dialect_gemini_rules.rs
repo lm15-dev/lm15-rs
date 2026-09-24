@@ -282,7 +282,10 @@ fn tool_result_without_any_name_raises_never_the_placeholder() {
         ]
     }));
     assert_unsupported(&err);
-    assert!(err.message().contains("needs a function name"), "{err}");
+    // The refusal names the part and what is missing (MAP-13 wording since
+    // the adapt-visibly pass: "a real choice is needed: ... needs a name").
+    assert!(err.message().contains("messages[1].parts[0].name"), "{err}");
+    assert!(err.message().contains("needs a name"), "{err}");
     let out = body(
         "gemini",
         json!({

@@ -1046,10 +1046,20 @@ fn the_codex_backend_payload_and_headers() {
         .account_id("acct")
         .build()
         .unwrap();
-    let built = lm
+    // store=true is refused, not stripped (contract 2026-09-23
+    // codex-cap-refused): the backend cannot store a retrievable response.
+    let err = lm
         .build_request(
             &request(json!({"model": "gpt-5-codex", "messages": [user("hi")],
                             "config": {"store": true}})),
+            false,
+        )
+        .unwrap_err();
+    assert_eq!(err.class_name(), "UnsupportedFeatureError");
+    assert!(err.message().contains("config.store"), "{err}");
+    let built = lm
+        .build_request(
+            &request(json!({"model": "gpt-5-codex", "messages": [user("hi")]})),
             false,
         )
         .unwrap();

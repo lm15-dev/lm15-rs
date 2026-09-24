@@ -97,7 +97,9 @@ fn data_values_are_opaque_and_distribution_floats_are_preserved() {
     assert_eq!(rt("message", answer.clone()), answer);
     let mut wrong_role = answer.clone();
     wrong_role["role"] = json!("user");
-    assert_eq!(rejects("message", wrong_role).type_name(), "ValueError");
+    // A kind error, as the reference raises it (INV-052: user data parts carry
+    // value only; probabilities belong to assistant messages).
+    assert_eq!(rejects("message", wrong_role).type_name(), "TypeError");
     let mut missing_method = answer;
     missing_method["parts"][0]
         .as_object_mut()

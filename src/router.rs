@@ -2116,7 +2116,9 @@ mod tests {
         // … and a synchronous build before `prepare` says so, typed.
         let err = lm.build_request(&request, false).unwrap_err();
         assert_eq!(err.class_name(), "NotConfiguredError");
-        assert!(err.message().contains("not been resolved"), "{err}");
+        // It names the step to take (the wording since the credential
+        // provider learned expiry: "not been prepared or has expired").
+        assert!(err.message().contains("call prepare"), "{err}");
         // Static env keys: the chain selects them and signs (module 3b).
         let router = LMRouter::with_config(hermetic(&[
             ("AWS_REGION", "eu-west-1"),

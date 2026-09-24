@@ -733,7 +733,11 @@ fn cache_control_openai_implicit_forwards_the_key_and_no_mark() {
 }
 
 #[test]
-fn cache_resource_refuses_on_both_openai_controls() {
+fn cache_resource_refuses_on_every_provider_without_the_tier() {
+    // MAP-6 rule 7: providers without a stored-cache tier RAISE, whichever
+    // cache control they have. Groq has none at all; dropping the resource
+    // would send the request without the prefix it holds
+    // (changes/2026-09-24-cache-resource-refusal.md).
     let req = cache_request(
         CacheConfig {
             resource: Some("cache-1".into()),
@@ -743,7 +747,7 @@ fn cache_resource_refuses_on_both_openai_controls() {
     );
     refuses(build(preset("openai"), &req), "cache.resource");
     refuses(build(preset("meta"), &req), "cache.resource");
-    assert!(build(preset("groq"), &req).is_ok());
+    refuses(build(preset("groq"), &req), "cache.resource");
 }
 
 #[test]

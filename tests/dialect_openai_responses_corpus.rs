@@ -99,6 +99,33 @@ fn every_request_case_of_the_responses_providers_builds_its_fixture() {
             .unwrap();
             let request = Request::from_json(canonical).unwrap();
             let stream = case.get("stream").and_then(Value::as_bool).unwrap_or(false);
+            // A case that pins a refusal at build_request must refuse, with its
+            // class, code and (when pinned) feature; there is no wire to compare.
+            let raises = &case["expect_lm15"]["raises"];
+            if raises["op"] == "build_request" {
+                match lm.build_request(&request, stream) {
+                    Ok(_) => failures.push(format!("{id}: built, but the case pins a refusal")),
+                    Err(err) => {
+                        if err.class_name() != raises["type"]
+                            || err.code().as_str() != raises["code"]
+                        {
+                            failures.push(format!(
+                                "{id}: refused as {} {}",
+                                err.class_name(),
+                                err.code().as_str()
+                            ));
+                        }
+                        if let Some(feature) = raises["feature"].as_str() {
+                            if !err.message().contains(feature) {
+                                failures
+                                    .push(format!("{id}: refusal does not name {feature}: {err}"));
+                            }
+                        }
+                    }
+                }
+                checked += 1;
+                continue;
+            }
             let built = match lm.build_request(&request, stream) {
                 Ok(built) => built,
                 Err(err) => {
@@ -156,6 +183,6 @@ fn every_request_case_of_the_responses_providers_builds_its_fixture() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 98, "request cases with a canonical_request");
+    assert_eq!(checked, 100, "request cases with a canonical_request");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -2692,9 +2692,11 @@ mod tests {
                 .build()
                 .unwrap();
             assert_eq!(chat.base_url(), "http://localhost:1234/v1", "{name}");
+            // Its own policy since 2026-09-11 (lm15-python compat.py
+            // "lmstudio"): no reasoning dial, where ollama maps effort to think.
             assert_eq!(
                 chat.compat().openai_chat(),
-                OpenAIChatCompat::preset("ollama"),
+                OpenAIChatCompat::preset("lmstudio"),
                 "{name}"
             );
             let responses = OpenAILM::builder()
