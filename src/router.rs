@@ -1738,9 +1738,33 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
     if credential.is_none() && policy.credential_policy == CredentialPolicy::OAuthUnlessExplicit {
         // A usable stored subscription login outranks ambient env keys: it
         // spends no money per token (AUTH-1).
+        // An unusable or signed-out one BLOCKS them (R3, ratified
+        // 2026-09-22): a failed subscription is never silently replaced by
+        // a metered key.
         let login = refreshing_login(provider, config)?;
-        if login.is_usable() {
-            credential = Some(Box::new(login));
+        match login.state() {
+            crate::auth::StoredState::Usable => credential = Some(Box::new(login)),
+            state @ (crate::auth::StoredState::Unusable | crate::auth::StoredState::LoggedOut) => {
+                let what = if state == crate::auth::StoredState::LoggedOut {
+                    "was signed out"
+                } else {
+                    "is expired and cannot be renewed"
+                };
+                let present = policy
+                    .env_keys
+                    .iter()
+                    .find(|key| config.env_value(key).is_some())
+                    .map(|key| format!("${key} is set but is used only when passed explicitly: "))
+                    .unwrap_or_default();
+                let hint = policy.login_hint.unwrap_or("sign in");
+                let mut meta = ErrorMeta::new(format!(
+                    "the {provider:?} subscription login {what}. {present}sign in again ({hint}), \
+                     or pass the key deliberately with RouterConfig::new().api_key({provider:?}, ...)."
+                ));
+                meta.provider = Some(provider.to_string());
+                return Err(Lm15Error::NotConfiguredError(meta));
+            }
+            crate::auth::StoredState::Absent => {}
         }
     }
 
@@ -2269,15 +2293,47 @@ mod tests {
             LMRouter::with_config(hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&usable))
                 .unwrap();
         assert_eq!(bearer(&router), "Bearer stored");
-        // An unusable login (expired, no refresh) lets the env key through.
+        // An unusable login (expired, no refresh) BLOCKS the env key (R3,
+        // ratified 2026-09-22): a failed subscription is never silently
+        // replaced by a metered key. Passing the key explicitly still works.
         let unusable = write_login(
             "xai.json",
             &format!(r#"{{"xai":{{"type":"oauth","access":"stale","expires":{expired}}}}}"#),
         );
-        let router =
-            LMRouter::with_config(hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&unusable))
-                .unwrap();
-        assert_eq!(bearer(&router), "Bearer env");
+        let router = LMRouter::with_config(
+            hermetic(&[("XAI_API_KEY", "SECRET-SENTINEL-DO-NOT-PRINT")])
+                .credentials_path(&unusable),
+        )
+        .unwrap();
+        let err = router.lm("grok-4").unwrap_err();
+        assert_eq!(err.class_name(), "NotConfiguredError");
+        assert!(
+            err.message().contains("expired and cannot be renewed"),
+            "{err}"
+        );
+        assert!(err.message().contains("$XAI_API_KEY is set"), "{err}");
+        assert!(
+            !format!("{err:?}").contains("SECRET-SENTINEL"),
+            "the key's value never prints"
+        );
+        let router = LMRouter::with_config(
+            hermetic(&[("XAI_API_KEY", "env")])
+                .api_key("xai", "explicit")
+                .credentials_path(&unusable),
+        )
+        .unwrap();
+        assert_eq!(bearer(&router), "Bearer explicit");
+        // A signed-out marker in lm15's own store blocks it too, across restarts.
+        let signed_out = write_login(
+            "xai.json",
+            r#"{"_lm15":{"slots":{"xai":{"logged_out":true}}}}"#,
+        );
+        let router = LMRouter::with_config(
+            hermetic(&[("XAI_API_KEY", "env")]).credentials_path(&signed_out),
+        )
+        .unwrap();
+        let err = router.lm("grok-4").unwrap_err();
+        assert!(err.message().contains("was signed out"), "{err}");
         // A usable-but-expired login (refresh token present) is selected by
         // AUTH-1 (never the env key). `build_request` by hand skips the
         // adapter's `prepare` step that refreshes it (AUTH-3, tested end to

@@ -378,14 +378,27 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
         ));
     }
 
+    // An unusable or signed-out subscription login BLOCKS the env keys (R3,
+    // ratified 2026-09-22): they show as shadowed, and nothing is selected.
+    let mut blocked = false;
     if policy.credential_policy == CredentialPolicy::OAuthUnlessExplicit {
         // The stored subscription login outranks env keys (AUTH-1): it
         // spends no money per token. Only the explicit entry can shadow it.
-        let step = oauth_file_step(
-            &canonical,
-            &options.stored_login_paths(&canonical),
-            selected,
-        );
+        let paths = options.stored_login_paths(&canonical);
+        let mut step = oauth_file_step(&canonical, &paths, selected);
+        match crate::auth::StoredLogin::at(&canonical, paths).state() {
+            crate::auth::StoredState::LoggedOut if !selected => {
+                step = Step::new(
+                    "oauth-file",
+                    step.source.clone(),
+                    "signed out (marker present)",
+                    StepState::Absent,
+                );
+                blocked = true;
+            }
+            crate::auth::StoredState::Unusable if !selected => blocked = true,
+            _ => {}
+        }
         selected = selected || step.state == StepState::Selected;
         steps.push(step);
     }
@@ -394,13 +407,18 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
         let kind = format!("env:{key}");
         let source = format!("env ${key}");
         if options.env_value(key).is_some() {
-            let state = if selected {
+            let state = if selected || blocked {
                 StepState::Shadowed
             } else {
                 StepState::Selected
             };
-            steps.push(Step::new(kind, source, "set (value never shown)", state));
-            selected = true;
+            let detail = if blocked && !selected {
+                "set, blocked by the failed/signed-out subscription (pass it explicitly to use it)"
+            } else {
+                "set (value never shown)"
+            };
+            steps.push(Step::new(kind, source, detail, state));
+            selected = selected || !blocked;
         } else {
             steps.push(Step::new(kind, source, "not set", StepState::Absent));
         }
@@ -541,7 +559,7 @@ fn host_report(
                 )],
                 None,
                 None,
-            )
+            );
         }
     };
     let url = resolve_base_url(host, &resolved, endpoint);

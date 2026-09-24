@@ -274,8 +274,55 @@ impl StoredLogin {
     /// AUTH-1's offline probe: is a usable login (fresh, or expired with a
     /// refresh token) stored? Reads the file, never the network.
     pub fn is_usable(&self) -> bool {
-        self.read().is_ok_and(|credential| credential.usable())
+        self.state() == StoredState::Usable
     }
+
+    /// The stored login's state, offline (spec/auth.md AUTH-1, ratified
+    /// R2/R3 2026-09-22). The first path holding a login decides; a path
+    /// holding only lm15's non-secret sign-out marker is `LoggedOut`.
+    pub fn state(&self) -> StoredState {
+        let (reader, _) = reader_for(&self.provider);
+        for path in &self.paths {
+            if let Ok(credential) = reader(path) {
+                return if credential.usable() {
+                    StoredState::Usable
+                } else {
+                    StoredState::Unusable
+                };
+            }
+            if signed_out_marker(path, &self.provider) {
+                return StoredState::LoggedOut;
+            }
+        }
+        StoredState::Absent
+    }
+}
+
+/// A stored subscription login's state for the `oauth-unless-explicit`
+/// rung (AUTH-1, R3): `Usable` wins over env keys; `Unusable` (expired, no
+/// refresh token) and `LoggedOut` BLOCK them, since a failed subscription
+/// is never silently replaced by a metered key; `Absent` leaves the
+/// ordinary key chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoredState {
+    Usable,
+    Unusable,
+    LoggedOut,
+    Absent,
+}
+
+/// lm15's own store marks a signed-out slot `_lm15.slots.<provider>.logged_out`
+/// (non-secret), so the block survives a restart.
+fn signed_out_marker(path: &Path, provider: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    value
+        .pointer(&format!("/_lm15/slots/{provider}/logged_out"))
+        .is_some_and(|marker| !marker.is_null() && marker != &serde_json::Value::Bool(false))
 }
 
 impl CredentialProvider for StoredLogin {

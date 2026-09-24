@@ -53,7 +53,7 @@ pub use lock::{
     lock_dir, lock_path_for, try_lock_path_for, write_private_json_atomic, FileLock,
     DEFAULT_LOCK_TIMEOUT,
 };
-pub use login::{stored_login_paths, StoredLogin};
+pub use login::{stored_login_paths, StoredLogin, StoredState};
 pub use policy::{
     access_policy, canonical_provider, known_providers, AccessPolicy, AnthropicVersionIn,
     CredentialPolicy, EndpointSupport, HostSetting, HostSpec, ModelPlacement, StreamFraming,

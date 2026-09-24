@@ -391,7 +391,11 @@ impl Dialect for TypeSafe {
         Err(refuse(cx, "stream", "systemone has no stream"))
     }
     fn models_request(&self, cx: &BuildContext<'_>) -> Result<WireRequest, Lm15Error> {
+        // The reference's `_headers()` sends a JSON content type on the
+        // listing too (live capture 2026-09-17, cases/typesafe/models.json).
         let mut wire = WireRequest::get("/v1/models");
+        wire.headers
+            .push(("Content-Type".into(), "application/json".into()));
         apply_static_headers(&mut wire.headers, cx.policy);
         Ok(wire)
     }
