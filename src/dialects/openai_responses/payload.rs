@@ -230,7 +230,7 @@ fn prepare(
     prepare_openai_cache(&mut out, compat.cache_control, cx.provider)?;
     let c = &mut out.config;
     if !c.stop.is_empty() {
-        adapt("config.stop",ClientSide,Some(json!(c.stop)),None,"the Responses wire has no stop field; lm15 streams and closes the source at the first match; final usage is not reported")?;
+        adapt("config.stop",ClientSide,Some(json!(c.stop)),Some(json!(c.stop)),"the Responses wire has no stop field; lm15 streams and closes the source at the first match; final usage is not reported")?;
         c.stop.clear();
     }
     drop_value(
