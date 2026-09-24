@@ -96,9 +96,13 @@ impl Transport for Scripted {
 // ─── fixtures ────────────────────────────────────────────────────────
 
 fn sandbox() -> PathBuf {
+    // A counter, not only the clock: parallel tests on a coarse clock (seen on
+    // Windows) could otherwise share a home and read each other's logins.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "lm15-refresh-{}-{}",
+        "lm15-refresh-{}-{}-{}",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
