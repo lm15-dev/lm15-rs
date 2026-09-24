@@ -144,14 +144,30 @@ impl ChainContext {
             return self.exists(command).then(|| command.to_string());
         }
         let path = self.env("PATH").unwrap_or("");
-        for directory in path.split(':').filter(|d| !d.is_empty()) {
-            let candidate = format!("{}/{command}", directory.trim_end_matches('/'));
+        // The platform's separator, as the reference (os.pathsep): ";" on
+        // Windows, where every entry holds a ":" (C:\...).
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        for directory in path.split(separator).filter(|d| !d.is_empty()) {
+            let candidate = format!("{}/{command}", directory.trim_end_matches(['/', '\\']));
             if self.files.is_some() {
                 if self.exists(&candidate) {
                     return Some(candidate);
                 }
-            } else if is_executable(&self.path(&candidate)) {
+                continue;
+            }
+            if is_executable(&self.path(&candidate)) {
                 return Some(candidate);
+            }
+            // Windows runs `gcloud` as gcloud.cmd, `az` as az.cmd: try the
+            // executable extensions it tries (PATHEXT), as shutil.which does.
+            if cfg!(windows) {
+                let pathext = self.env("PATHEXT").unwrap_or(".COM;.EXE;.BAT;.CMD");
+                for ext in pathext.split(';').filter(|e| !e.is_empty()) {
+                    let with_ext = format!("{candidate}{}", ext.to_ascii_lowercase());
+                    if is_executable(&self.path(&with_ext)) {
+                        return Some(with_ext);
+                    }
+                }
             }
         }
         None

@@ -731,11 +731,17 @@ mod tests {
         );
         let unicode_file = real.join("ΟΣ.json");
         std::fs::write(&unicode_file, "{}").unwrap();
-        for alias in ["οσ.json", "ος.json"] {
-            assert_eq!(
-                try_lock_path_for(&locks, &real.join(alias)).unwrap(),
-                try_lock_path_for(&locks, &unicode_file).unwrap()
-            );
+        assert_eq!(
+            try_lock_path_for(&locks, &real.join("οσ.json")).unwrap(),
+            try_lock_path_for(&locks, &unicode_file).unwrap()
+        );
+        // Final sigma: whether the volume's upcase table folds "ς" to "Σ"
+        // varies (the GitHub Windows runner's NTFS does not: "ος.json" is
+        // another, missing file there). The safety property is never a
+        // DIFFERENT lock for what may be the same file: the same lock, or a
+        // refusal (a missing non-ASCII name).
+        if let Ok(other) = try_lock_path_for(&locks, &real.join("ος.json")) {
+            assert_eq!(other, try_lock_path_for(&locks, &unicode_file).unwrap());
         }
     }
 
