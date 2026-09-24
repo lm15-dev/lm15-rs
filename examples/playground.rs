@@ -10,15 +10,17 @@ mod openai_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("openai", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("openai", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "openai:gpt-4.1-mini".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -37,24 +39,32 @@ mod openai_first_turn {
 
 mod openai_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("openai", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("openai", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "openai:gpt-4.1-mini".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -76,15 +86,18 @@ mod anthropic_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("anthropic", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("anthropic", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "anthropic:claude-haiku-4-5".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -103,24 +116,33 @@ mod anthropic_first_turn {
 
 mod anthropic_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("anthropic", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("anthropic", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "anthropic:claude-haiku-4-5".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -142,15 +164,17 @@ mod gemini_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("gemini", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("gemini", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "gemini:gemini-2.5-flash".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -169,24 +193,32 @@ mod gemini_first_turn {
 
 mod gemini_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("gemini", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("gemini", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "gemini:gemini-2.5-flash".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -208,15 +240,17 @@ mod groq_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("groq", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("groq", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "groq:llama-3.3-70b-versatile".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -235,24 +269,32 @@ mod groq_first_turn {
 
 mod groq_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("groq", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("groq", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "groq:llama-3.3-70b-versatile".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -274,15 +316,18 @@ mod openrouter_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("openrouter", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("openrouter", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "openrouter:openai/gpt-4.1-mini".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -301,24 +346,33 @@ mod openrouter_first_turn {
 
 mod openrouter_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("openrouter", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("openrouter", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "openrouter:openai/gpt-4.1-mini".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -340,15 +394,18 @@ mod deepseek_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("deepseek", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("deepseek", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "deepseek:deepseek-chat".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -367,24 +424,33 @@ mod deepseek_first_turn {
 
 mod deepseek_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("deepseek", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("deepseek", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "deepseek:deepseek-chat".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -406,15 +472,17 @@ mod zai_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("zai", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("zai", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "zai:glm-4.5".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -433,24 +501,32 @@ mod zai_first_turn {
 
 mod zai_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("zai", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("zai", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "zai:glm-4.5".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -472,15 +548,17 @@ mod meta_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("meta", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("meta", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "meta:muse-spark-1.3".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -499,24 +577,32 @@ mod meta_first_turn {
 
 mod meta_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("meta", "YOUR_API_KEY")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("meta", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "meta:muse-spark-1.3".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -538,15 +624,18 @@ mod moonshotai_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("moonshotai", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("moonshotai", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "moonshotai:kimi-k2.5".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -565,24 +654,33 @@ mod moonshotai_first_turn {
 
 mod moonshotai_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("moonshotai", "YOUR_API_KEY")
-        )?;
+        let router =
+            LMRouter::with_config(RouterConfig::new().api_key("moonshotai", "YOUR_API_KEY"))?;
 
         let request = Request {
             model: "moonshotai:kimi-k2.5".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -604,15 +702,17 @@ mod ollama_first_turn {
     use lm15::{Config, LMRouter, Message, Request, ResponseStream, RouterConfig};
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("ollama", "unused")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("ollama", "unused"))?;
 
         let request = Request {
             model: "ollama:qwen3.5:0.8b".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -631,24 +731,32 @@ mod ollama_first_turn {
 
 mod ollama_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-        let router = LMRouter::with_config(
-            RouterConfig::new()
-                .api_key("ollama", "unused")
-        )?;
+        let router = LMRouter::with_config(RouterConfig::new().api_key("ollama", "unused"))?;
 
         let request = Request {
             model: "ollama:qwen3.5:0.8b".into(),
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -673,13 +781,18 @@ mod custom_first_turn {
         let router = LMRouter::with_config(
             RouterConfig::new()
                 .api_key("openai-chat", "unused")
-                .base_url("openai-chat", "http://localhost:1234/v1")
+                .base_url("openai-chat", "http://localhost:1234/v1"),
         )?;
 
         let request = Request {
             model: "openai-chat:custom-model".into(),
-            messages: vec![Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?],
-            config: Config { max_tokens: Some(400), ..Default::default() },
+            messages: vec![Message::user(
+                "Quotes \" and a newline\n</script> are text, not executable code.",
+            )?],
+            config: Config {
+                max_tokens: Some(400),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -698,13 +811,15 @@ mod custom_first_turn {
 
 mod custom_with_history {
     use futures_util::StreamExt;
-    use lm15::{Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig};
+    use lm15::{
+        Canonical, Config, LMRouter, Message, Reasoning, Request, ResponseStream, RouterConfig,
+    };
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let router = LMRouter::with_config(
             RouterConfig::new()
                 .api_key("openai-chat", "unused")
-                .base_url("openai-chat", "http://localhost:1234/v1")
+                .base_url("openai-chat", "http://localhost:1234/v1"),
         )?;
 
         let request = Request {
@@ -712,11 +827,20 @@ mod custom_with_history {
             system: Some("Answer briefly.".into()),
             // Earlier turns, replayed exactly as the model produced them.
             messages: vec![
-                Message::from_json(&serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}))?,
-                Message::from_json(&serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}))?,
+                Message::from_json(
+                    &serde_json::json!({"role":"user","parts":[{"type":"text","text":"Earlier question"}]}),
+                )?,
+                Message::from_json(
+                    &serde_json::json!({"role":"assistant","parts":[{"type":"thinking","text":"Earlier hidden reasoning","continuation":[{"provider":"anthropic","kind":"thinking_signature","data":{"signature":"opaque-replay-signature"}}]},{"type":"text","text":"Earlier answer"}]}),
+                )?,
                 Message::user("Quotes \" and a newline\n</script> are text, not executable code.")?,
             ],
-            config: Config { max_tokens: Some(64), temperature: Some(0.2), reasoning: Some(Reasoning::new("low".parse()?)), ..Default::default() },
+            config: Config {
+                max_tokens: Some(64),
+                temperature: Some(0.2),
+                reasoning: Some(Reasoning::new("low".parse()?)),
+                ..Default::default()
+            },
             ..Default::default()
         };
 

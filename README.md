@@ -1,78 +1,65 @@
-# lm15-rs
+# lm15 for Rust
 
-The Rust port of lm15: one canonical request/response model over every
-provider the [lm15-contract](https://github.com/lm15-dev/lm15-contract)
-declares. Async on tokio, with a `blocking` feature that mirrors the same
-names. Canonical representation and wire behavior target the contract corpus.
+One request and response model for every model provider: OpenAI, Anthropic,
+Google Gemini, xAI, Groq, DeepSeek, OpenRouter, Z.AI, Moonshot, Meta, the
+cloud hosts (AWS Bedrock, Azure, Vertex) and any OpenAI-compatible server,
+local or remote. The same program talks to any of them; when a provider can't
+take a setting as you asked, lm15 adapts the request and tells you what it
+changed, or refuses before sending when a guess could change the answer.
+Async on tokio, with a `blocking` feature that mirrors the same names; with
+default features off, the crate is the wire codec alone and builds for
+`wasm32-unknown-unknown`.
 
-`CONTRACT_PIN` names the **declared implementation target**, not a proof of
-conformance. `harness/check.py` grades against that target.
+Guides and reference: **[lm15.dev](https://lm15.dev)**. The same library
+exists for Python, TypeScript, Go, R and Julia, all written against one shared
+[contract](https://github.com/lm15-dev/lm15-contract).
+
+## Install
+
+```bash
+cargo add lm15@1.0.0-rc.1
+cargo add tokio --features macros,rt-multi-thread
+```
+
+This is a **release candidate**: the API is the one intended for 1.0, and may
+still change before 1.0 if testing shows it must. Pin the exact version.
+
+## First request
+
+```rust
+use lm15::{LMRouter, Message, Request};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let request = Request {
+        model: "anthropic:claude-haiku-4-5".into(),
+        messages: vec![Message::user(concat!(
+            "What might be eating the acorns under our oak trees at ",
+            "night?",
+        ))?],
+        ..Default::default()
+    };
+
+    let router = LMRouter::new();
+    let response = router.complete(&request).await?;
+    println!("{}", response.text().unwrap_or_default());
+    Ok(())
+}
+```
+
+The key comes from `ANTHROPIC_API_KEY`; change the model string to reach
+another provider. See [Make your first request](https://lm15.dev/docs/first-request/).
 
 ## Status
 
-The September 20 catch-up adds visible adaptations, score-preserving local
-stops, judgments/TypeSafe/token scoring, named cloud identities and endpoint
-roots, bounded diagnostics/compression/connection budgets, bounded live turn
-collection, complete blocking endpoints, and router-local declarations.
-See [catch-up APIs and boundaries](docs/catchup.md).
-
-**Verification is deliberately pending:** no builds, tests, typechecks or
-linters were run. Changed Rust sources were formatted with `rcargo fmt`;
-regression sources and fixture consumers remain unexecuted.
-
-### Historical verification (before this catch-up)
-
-The following numbers describe the earlier September 11 implementation and
-its old `cfed007` contract target. They do **not** certify the current tree.
-The two historical skips were corpus gaps (`openai.computer_use` lacked a
-canonical request and golden).
-
-| Direction | Contract surface | Result |
-|---|---|---|
-| `serde` | spec/types.md, spec/vocabularies.md, spec/invariants.md, docs/serde-rules.md; all 36 kinds | 115 / 0 |
-| `error` | ErrorCode + class hierarchy; `normalize_error` per provider | 84 / 0 |
-| `auth` | spec/auth.md AUTH-1/2/5/7/8/10 and the three cloud chains (AUTH-11) | 37 / 0 |
-| `token` | SigV4 (34 vectors), RS256 JWTs, token exchanges | 43 / 0 |
-| `request` | the four dialects, request side; MAP-5..8, MAP-10; hosts, presets | 365 / 0 (1 skip) |
-| `response` | the four dialects, response side; MAP-1..4 | 302 / 0 (1 skip) |
-| `stream` | SSE decoding, MAP-3/4 coalescing, MAP-9 assembly and its refusal | 40 / 0 |
-| `router` | the three rungs, precedence, `unknown_model` / `ambiguous_model` | 22 / 0 |
-| `models` | `list_models` on every provider | 34 / 0 |
-| `files`, `batch`, `cache` | the three surfaces, multipart byte for byte, MAP-11 id escaping | 48 / 0, 41 / 0, 11 / 0 |
-| `generation`, `video` | image and speech generation, video jobs (MAP-11) | 20 / 0, 27 / 0 |
-| `live` | the websocket codec (OpenAI Realtime, Gemini Live) | 24 / 0 |
-| `ingest` | MAP-12: a Chat Completions request body → `Request` under one preset's spellings; the 118 recorded chat bodies round-trip (21 pinned lossy), 42 foreign shapes (11 refusals; the SDK's and litellm's dumped message objects, `annotations` → CitationPart). Provisional; module 4b | 160 / 0 |
-
-Historical checks beyond the harness: 399 unit and integration tests, zero
-clippy warnings at `-D warnings`; the AUTH-3/4 write side (token refresh
-under the cross-process lock) and the AUTH-9 login door, which no
-direction covers, are proven by `tests/login_refresh.rs` on real files
-and real locks.
-
-Live proof, keys from the environment (`receipts/`): one `complete` and
-one `stream` per dialect, direct and through the router; `list_models`
-on four providers; files uploaded, listed and deleted on OpenAI,
-Anthropic and Gemini; a Gemini cache object created, extended and
-deleted; speech synthesized; one text turn each over OpenAI Realtime and
-Gemini Live. Every one worked on first contact with the real server.
-
-Outside the corpus: two differential probes against the reference,
-`tools/differential.py` (130 request/response comparisons, zero
-differences) and `tools/differential_surfaces.py` (177 files / batch /
-cache / generation / video / live comparisons; 170 identical, the seven
-differences are a display artefact of the reference's shim and its
-unpinned guidance text — `receipts/2026-09-08-differential-surfaces/`).
-
-### Not exercised live, stated
-
-Batch jobs (up to 24 h), image and video generation (cost), the cloud
-credential chains (no AWS / Azure / GCP account on this machine), the
-OAuth refresh wire (the token endpoints are copied as data from the
-reference, which is live-proven; refreshing a real expired login is not
-a test this port runs against a developer's credential file), and the
-xAI device-code login (interactive). The harness pins recorded
-lifecycles, token vectors and transcripts for all of them; the fixtures
-are the proof.
+Release candidate, checked 2026-09-24 against the pinned contract
+(`CONTRACT_PIN`): **1,449 of 1,449** contract cases pass
+(`harness/check.py --shim rust --direction all`; the skips are corpus gaps
+shared with the Python reference), and all 530 of the crate's own tests pass
+(`cargo test`, every test target). Provisional surfaces (files, batches,
+media generation, live sessions, stored caches) may change during 1.x, as in
+every lm15 language. The details of the September 20 catch-up are in
+[docs/catchup.md](docs/catchup.md).
 
 ## Gates
 

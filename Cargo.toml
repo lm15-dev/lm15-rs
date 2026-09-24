@@ -1,10 +1,16 @@
 [package]
 name = "lm15"
-version = "0.5.0"
+version = "1.0.0-rc.1"
 edition = "2021"
-description = "lm15 canonical model, Rust port — rebuilt module-by-module from the lm15-contract spec."
+description = "One request and response model for every LLM provider (OpenAI, Anthropic, Gemini, xAI, Groq, Bedrock, Azure, Vertex, local servers), with visible adaptations. Implements the lm15 contract."
 license = "MIT"
 repository = "https://github.com/lm15-dev/lm15-rs"
+homepage = "https://lm15.dev"
+documentation = "https://docs.rs/lm15"
+readme = "README.md"
+# What a user needs: the library, its docs and examples. Not the contract
+# receipts, research findings or tests (they read ../lm15-contract).
+include = ["src/**", "examples/**", "docs/**", "Cargo.toml", "README.md", "LICENSE", "CONTRACT_PIN"]
 keywords = ["llm", "openai", "anthropic", "gemini", "ai"]
 categories = ["api-bindings"]
 
