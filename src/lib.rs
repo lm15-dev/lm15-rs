@@ -38,6 +38,8 @@ pub mod jobs;
 pub mod judgments;
 #[cfg(feature = "native")]
 pub mod live;
+#[cfg(feature = "native")]
+pub mod login;
 pub mod registry;
 pub mod response_stream;
 pub mod router;

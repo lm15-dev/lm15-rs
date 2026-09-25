@@ -212,7 +212,7 @@ async fn a_turn_returns_at_the_tool_call_and_the_continuation_carries_its_usage(
     assert_eq!(second.ended_by, lm15::TurnEnd::TurnEnd);
     assert!(second.ok());
     assert!(!second.text.is_empty());
-    let usage = second.usage.clone().expect("a turn_end carries usage");
+    let usage = second.usage.expect("a turn_end carries usage");
     let usage_events: Vec<&LiveServerEvent> = second
         .events
         .iter()

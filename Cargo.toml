@@ -63,7 +63,7 @@ default = ["native"]
 # parser and stream accumulator — and compiles for wasm32-unknown-unknown,
 # where the host (a page) supplies the network. Same split as the
 # TypeScript port's `lm15/browser` (docs/browser.md there).
-native = ["dep:reqwest", "dep:aws-lc-rs", "dep:tokio-tungstenite"]
+native = ["dep:reqwest", "dep:aws-lc-rs", "dep:tokio-tungstenite", "tokio/net", "tokio/io-util", "tokio/macros"]
 # api-family rule 4: the same names, blocking, for programs without an
 # async runtime (`lm15::blocking`). Owns one tokio runtime thread.
 blocking = ["native", "tokio/rt-multi-thread"]

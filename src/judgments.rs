@@ -263,7 +263,7 @@ pub fn data_part_from_text(text: &str, found: &[Judgment]) -> Option<DataPart> {
     value.is_object().then(|| DataPart::new(value))
 }
 
-pub fn replace_text_with_data(parts: &mut Vec<Part>, found: &[Judgment]) {
+pub fn replace_text_with_data(parts: &mut [Part], found: &[Judgment]) {
     let indices: Vec<usize> = parts
         .iter()
         .enumerate()

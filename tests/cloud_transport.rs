@@ -1,3 +1,5 @@
+// Lm15Error is the crate's one large error enum; see the crate-level allow in src/lib.rs.
+#![allow(clippy::result_large_err)]
 //! Connection-budget, content-decoding and HTTP-evidence regressions.
 //! Pure decoder tests also exercise the host-transport/codec build.
 use std::io::Write;

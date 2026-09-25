@@ -1610,7 +1610,7 @@ impl ProviderLM {
                 });
                 StreamState::Connecting { fut, decoder }
             }
-            Err(err) => StreamState::Failed(err),
+            Err(err) => StreamState::Failed(Box::new(err)),
         };
         EventStream {
             provider: self.provider().to_string(),
@@ -1787,7 +1787,7 @@ pub struct EventStream {
 }
 
 enum StreamState {
-    Failed(Lm15Error),
+    Failed(Box<Lm15Error>),
     Connecting {
         fut: BoxFuture<
             'static,
@@ -1809,7 +1809,7 @@ impl EventStream {
     pub(crate) fn failed(provider: String, err: Lm15Error) -> EventStream {
         EventStream {
             provider,
-            state: StreamState::Failed(err),
+            state: StreamState::Failed(Box::new(err)),
             pending: VecDeque::new(),
         }
     }
@@ -1832,7 +1832,7 @@ impl Stream for EventStream {
                     else {
                         unreachable!()
                     };
-                    return Poll::Ready(Some(Err(err)));
+                    return Poll::Ready(Some(Err(*err)));
                 }
                 StreamState::Connecting { fut, .. } => match fut.as_mut().poll(cx) {
                     Poll::Pending => return Poll::Pending,
@@ -2262,6 +2262,13 @@ impl LmBuilder {
 
     /// The ChatGPT account id for the Codex door (`chatgpt-account-id`);
     /// without it the token's own claim is read per request.
+    /// Bind another access policy (a declared connection-only route's:
+    /// its provider name, static headers and default base URL).
+    pub fn access_policy(mut self, policy: &'static AccessPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
     pub fn account_id(mut self, account_id: impl Into<String>) -> Self {
         self.account_id = Some(account_id.into());
         self

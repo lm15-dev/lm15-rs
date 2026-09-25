@@ -13,9 +13,9 @@
 //! guidance strings, not wire facts. Nothing here prompts, opens a
 //! browser, or spends money except the one flow explicitly requested.
 //!
-//! Not shipped, stated: a loopback callback listener. No flow this port
-//! owns uses one, and a listener is a server with its own attack surface;
-//! it is built when a flow needs it, not before.
+//! The managed sign-in (`crate::login`) runs the same xAI protocol and
+//! every other provider's flow, with a loopback return listener where a
+//! flow needs one (`crate::login::listener`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;

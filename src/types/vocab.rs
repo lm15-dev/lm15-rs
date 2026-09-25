@@ -214,6 +214,7 @@ vocab!(AdaptationAction, "adaptation action", {
 vocab!(AdaptationPolicy, "adaptation policy", {
     Note => "note", Silent => "silent", Refuse => "refuse",
 });
+#[allow(clippy::derivable_impls)] // the enum is macro-generated; `#[default]` cannot reach it
 impl Default for AdaptationPolicy {
     fn default() -> Self {
         Self::Note

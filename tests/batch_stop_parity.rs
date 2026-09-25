@@ -1,3 +1,5 @@
+// Lm15Error is the crate's one large error enum; see the crate-level allow in src/lib.rs.
+#![allow(clippy::result_large_err)]
 use lm15::adapter::BatchAction;
 use lm15::auth::{AuthError, Credential, CredentialProvider, OPENAI_API};
 use lm15::compat::{Compat, OpenAIResponsesCompat};

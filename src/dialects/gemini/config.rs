@@ -287,7 +287,7 @@ fn cache_resource(id: &str) -> String {
 }
 
 /// MAP-6 on Gemini (`lm15/providers/gemini.py:651-680`).
-pub fn cache_plan(request: &Request, cx: &BuildContext<'_>) -> Result<CachePlan, Lm15Error> {
+pub fn cache_plan(request: &Request, _cx: &BuildContext<'_>) -> Result<CachePlan, Lm15Error> {
     let mut plan = CachePlan::default();
     let Some(cache) = &request.config.cache else {
         return Ok(plan);

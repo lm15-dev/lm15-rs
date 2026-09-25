@@ -1,3 +1,5 @@
+// Lm15Error is the crate's one large error enum; see the crate-level allow in src/lib.rs.
+#![allow(clippy::result_large_err)]
 use lm15::transport::NoTransport;
 use lm15::{ErrorCode, Message, OpenAILM, Request};
 use serde_json::json;

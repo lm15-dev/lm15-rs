@@ -194,6 +194,11 @@ pub struct ExplainOptions {
     /// Explicit entries supplied by callables. Their presence is reported,
     /// but no callable is invoked or inspected. May overlap api_key_providers.
     pub callable_providers: Vec<String>,
+    /// A managed `Auth` (AUTH-15 mode B): the walk is the managed router's —
+    /// explicit entry, named identity, the saved connection; environment keys
+    /// shown and not consulted. Store reads only, no renewal.
+    #[cfg(feature = "native")]
+    pub auth: Option<crate::login::Auth>,
 }
 
 impl fmt::Debug for ExplainOptions {
@@ -284,6 +289,10 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
     })?;
     let canonical = policy.provider.to_string();
     validate_explicit_entries(options)?;
+    #[cfg(feature = "native")]
+    if let Some(auth) = &options.auth {
+        return explain_managed(policy, &canonical, auth, options);
+    }
     if let Some(name) = &options.credential {
         if !policy.credential_policy.is_cloud_chain() {
             return Err(AuthError::not_configured(
@@ -341,22 +350,21 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
     // AUTH-1 § Shared explicit keys, AUTH-7: the same selection the router
     // makes; the source configuration key is named when it differs from
     // the target. Ambiguity is the router's NotConfiguredError, here too.
-    let explicit =
-        super::policy::shared_api_key_source(options.explicit_providers().into_iter(), &canonical)
-            .map_err(|candidates| AuthError::NotConfigured {
-                provider: Some(canonical.clone()),
-                message: format!(
-                    "ambiguous explicit credentials for {canonical:?} from {}",
-                    candidates
-                        .iter()
-                        .map(|c| format!("{c:?}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                hint: Some(format!(
-                    "supply one entry under {canonical:?} or keep only one shared entry"
-                )),
-            })?;
+    let explicit = super::policy::shared_api_key_source(options.explicit_providers(), &canonical)
+        .map_err(|candidates| AuthError::NotConfigured {
+        provider: Some(canonical.clone()),
+        message: format!(
+            "ambiguous explicit credentials for {canonical:?} from {}",
+            candidates
+                .iter()
+                .map(|c| format!("{c:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        hint: Some(format!(
+            "supply one entry under {canonical:?} or keep only one shared entry"
+        )),
+    })?;
     if let Some(entry) = explicit {
         let mut source = "explicit api_keys entry".to_string();
         if canonical_provider(entry) != canonical {
@@ -757,6 +765,133 @@ fn expiry_detail(credential: &LocalOAuthCredential) -> String {
     } else {
         format!("fresh, expires in {minutes}m")
     }
+}
+
+/// AUTH-15 mode B, rung by rung: the explicit entry, the named cloud
+/// identity, the scope's saved connection; environment keys shown and
+/// marked not consulted. Store reads only, no renewal (AUTH-7).
+#[cfg(feature = "native")]
+fn explain_managed(
+    policy: &super::policy::AccessPolicy,
+    canonical: &str,
+    auth: &crate::login::Auth,
+    options: &ExplainOptions,
+) -> Result<Report, AuthError> {
+    let mut steps = Vec::new();
+    let mut selected = false;
+    match options.explicit_source(canonical)? {
+        Some(entry) => {
+            steps.push(Step::new(
+                "api_keys",
+                explicit_source_label(canonical, Some(entry)),
+                "provided (value never shown)",
+                StepState::Selected,
+            ));
+            selected = true;
+        }
+        None => steps.push(Step::new(
+            "api_keys",
+            "explicit api_keys entry",
+            "not provided",
+            StepState::Absent,
+        )),
+    }
+    if let Some(named) = &options.credential {
+        steps.push(Step::new(
+            "named_cloud",
+            format!("named credential \"{named}\""),
+            "explicit",
+            if selected {
+                StepState::Shadowed
+            } else {
+                StepState::Selected
+            },
+        ));
+        selected = true;
+    }
+    let status = auth
+        .status(canonical)
+        .map_err(|e| AuthError::Lm15(Box::new(e)))?;
+    match &status.connection {
+        Some(connection) => {
+            let expires = status
+                .expires_at
+                .as_ref()
+                .map(|e| format!(", expires {e}"))
+                .unwrap_or_default();
+            let detail = format!("{} ({}{expires})", connection.label, status.usability);
+            let state = if selected {
+                StepState::Shadowed
+            } else if status.ready() {
+                StepState::Selected
+            } else {
+                StepState::Absent
+            };
+            steps.push(Step::new(
+                "connection",
+                format!("saved connection {}", connection.id),
+                detail,
+                state,
+            ));
+            selected = selected || state == StepState::Selected;
+        }
+        None => {
+            let detail = if status.logged_out {
+                "signed out (marker present)"
+            } else {
+                "none saved in this scope"
+            };
+            steps.push(Step::new(
+                "connection",
+                format!("saved connection in {}", auth.store().description()),
+                detail,
+                StepState::Absent,
+            ));
+        }
+    }
+    for key in policy.env_keys {
+        let set = options.env_value(key).is_some_and(|v| !v.is_empty());
+        steps.push(if set {
+            Step::new(
+                format!("env:{key}"),
+                format!("env ${key}"),
+                "set, not consulted under a managed Auth (pass it explicitly to use it)",
+                StepState::Shadowed,
+            )
+        } else {
+            Step::new(
+                format!("env:{key}"),
+                format!("env ${key}"),
+                "not set",
+                StepState::Absent,
+            )
+        });
+    }
+    let placeholder = crate::registry::lookup(canonical)
+        .and_then(|d| d.placeholder_key)
+        .or(policy.placeholder_key);
+    if placeholder.is_some() && !status.logged_out {
+        steps.push(Step::new(
+            "placeholder",
+            "local-server placeholder key",
+            format!("preset default for keyless {canonical} servers"),
+            if selected {
+                StepState::Shadowed
+            } else {
+                StepState::Selected
+            },
+        ));
+        selected = true;
+    }
+    Ok(Report {
+        provider: canonical.to_string(),
+        steps,
+        configured: selected,
+        settings: Vec::new(),
+        named_credential: None,
+        base_url: None,
+        endpoint_source: None,
+    })
 }
 
 #[cfg(test)]

@@ -54,6 +54,8 @@ pub enum ErrorCode {
     StreamAssembly,
     CollectionLimit,
     Provider,
+    /// A local managed-auth lifecycle failure (AUTH-24), root-level.
+    AuthOperation,
 }
 
 impl ErrorCode {
@@ -75,6 +77,7 @@ impl ErrorCode {
         ErrorCode::StreamAssembly,
         ErrorCode::CollectionLimit,
         ErrorCode::Provider,
+        ErrorCode::AuthOperation,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -96,6 +99,7 @@ impl ErrorCode {
             ErrorCode::StreamAssembly => "stream_assembly",
             ErrorCode::CollectionLimit => "collection_limit",
             ErrorCode::Provider => "provider",
+            ErrorCode::AuthOperation => "auth_operation",
         }
     }
 
@@ -127,6 +131,7 @@ impl ErrorCode {
             ErrorCode::StreamAssembly => ErrorClass::StreamAssemblyError,
             ErrorCode::CollectionLimit => ErrorClass::CollectionLimitError,
             ErrorCode::Provider => ErrorClass::ProviderError,
+            ErrorCode::AuthOperation => ErrorClass::AuthOperationError,
         }
     }
 }
@@ -160,6 +165,7 @@ pub enum ErrorClass {
     UnsupportedModelError,
     TimeoutError,
     ServerError,
+    AuthOperationError,
 }
 
 impl ErrorClass {
@@ -185,6 +191,7 @@ impl ErrorClass {
             ErrorClass::UnsupportedModelError => "UnsupportedModelError",
             ErrorClass::TimeoutError => "TimeoutError",
             ErrorClass::ServerError => "ServerError",
+            ErrorClass::AuthOperationError => "AuthOperationError",
         }
     }
 
@@ -198,7 +205,8 @@ impl ErrorClass {
             | ErrorClass::CollectionLimitError
             | ErrorClass::ConfigurationError
             | ErrorClass::CapabilityError
-            | ErrorClass::ProviderError => ErrorClass::LM15Error,
+            | ErrorClass::ProviderError
+            | ErrorClass::AuthOperationError => ErrorClass::LM15Error,
             ErrorClass::NotConfiguredError
             | ErrorClass::UnknownModelError
             | ErrorClass::AmbiguousModelError => ErrorClass::ConfigurationError,
@@ -252,6 +260,7 @@ impl ErrorClass {
             ErrorClass::StreamAssemblyError => ErrorCode::StreamAssembly,
             ErrorClass::CollectionLimitError => ErrorCode::CollectionLimit,
             ErrorClass::ProviderError | ErrorClass::LM15Error => ErrorCode::Provider,
+            ErrorClass::AuthOperationError => ErrorCode::AuthOperation,
         }
     }
 }
@@ -488,6 +497,83 @@ pub enum Lm15Error {
     UnsupportedModelError(ErrorMeta),
     TimeoutError(ErrorMeta),
     ServerError(ErrorMeta),
+    /// AUTH-24: a managed-auth operation failed locally; see [`AuthOperation`].
+    AuthOperationError(Box<AuthOperation>),
+}
+
+/// The fields of an `AuthOperationError` (spec/auth-managed.md AUTH-24):
+/// programs match on `reason`; `commit_state` says whether the store
+/// changed; `recovery` is guidance for a person, never an instruction to
+/// retry. Identifiers are safe references, never secrets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuthOperation {
+    pub meta: ErrorMeta,
+    pub reason: String,
+    pub stage: String,
+    pub commit_state: String,
+    pub recovery: String,
+    pub operation: Option<String>,
+    pub connection_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub method_id: Option<String>,
+}
+
+/// AUTH-24's closed vocabularies.
+pub const AUTH_OPERATION_REASONS: &[&str] = &[
+    "method_unavailable",
+    "interaction_required",
+    "login_in_progress",
+    "login_expired",
+    "login_denied",
+    "invalid_login_state",
+    "connection_exists",
+    "connection_changed",
+    "login_required",
+    "credential_rejected",
+    "indeterminate",
+    "storage_unavailable",
+    "unsupported_store_version",
+    "attempt_unavailable",
+    "selection_mismatch",
+];
+
+impl AuthOperation {
+    /// An operation error; `reason`, `stage`, `commit_state` and `recovery`
+    /// are AUTH-24 literals.
+    pub fn error(
+        message: impl Into<String>,
+        reason: &str,
+        stage: &str,
+        commit_state: &str,
+        recovery: &str,
+    ) -> Lm15Error {
+        Lm15Error::AuthOperationError(Box::new(AuthOperation {
+            meta: ErrorMeta::new(message.into()),
+            reason: reason.into(),
+            stage: stage.into(),
+            commit_state: commit_state.into(),
+            recovery: recovery.into(),
+            operation: None,
+            connection_id: None,
+            attempt_id: None,
+            method_id: None,
+        }))
+    }
+}
+
+impl Lm15Error {
+    /// The AUTH-24 fields when this is an `AuthOperationError`.
+    pub fn auth_operation(&self) -> Option<&AuthOperation> {
+        match self {
+            Lm15Error::AuthOperationError(op) => Some(op),
+            _ => None,
+        }
+    }
+
+    /// `reason` of an `AuthOperationError`, else `None`.
+    pub fn reason(&self) -> Option<&str> {
+        self.auth_operation().map(|op| op.reason.as_str())
+    }
 }
 
 impl Lm15Error {
@@ -537,6 +623,19 @@ impl Lm15Error {
             ErrorClass::UnsupportedModelError => Lm15Error::UnsupportedModelError(meta),
             ErrorClass::TimeoutError => Lm15Error::TimeoutError(meta),
             ErrorClass::ServerError => Lm15Error::ServerError(meta),
+            ErrorClass::AuthOperationError => {
+                Lm15Error::AuthOperationError(Box::new(AuthOperation {
+                    meta,
+                    reason: "indeterminate".into(),
+                    stage: "resolution".into(),
+                    commit_state: "unknown".into(),
+                    recovery: "none".into(),
+                    operation: None,
+                    connection_id: None,
+                    attempt_id: None,
+                    method_id: None,
+                }))
+            }
         }
     }
 
@@ -561,6 +660,7 @@ impl Lm15Error {
             Lm15Error::UnsupportedModelError(_) => ErrorClass::UnsupportedModelError,
             Lm15Error::TimeoutError(_) => ErrorClass::TimeoutError,
             Lm15Error::ServerError(_) => ErrorClass::ServerError,
+            Lm15Error::AuthOperationError(_) => ErrorClass::AuthOperationError,
         }
     }
 
@@ -599,6 +699,7 @@ impl Lm15Error {
             Lm15Error::LockTimeoutError(l) => &l.meta,
             Lm15Error::UnknownModelError(u) => &u.meta,
             Lm15Error::AmbiguousModelError(a) => &a.meta,
+            Lm15Error::AuthOperationError(op) => &op.meta,
             Lm15Error::TransportError(m)
             | Lm15Error::ConfigurationError(m)
             | Lm15Error::NotConfiguredError(m)
@@ -623,6 +724,7 @@ impl Lm15Error {
             Lm15Error::LockTimeoutError(l) => &mut l.meta,
             Lm15Error::UnknownModelError(u) => &mut u.meta,
             Lm15Error::AmbiguousModelError(a) => &mut a.meta,
+            Lm15Error::AuthOperationError(op) => &mut op.meta,
             Lm15Error::TransportError(m)
             | Lm15Error::ConfigurationError(m)
             | Lm15Error::NotConfiguredError(m)

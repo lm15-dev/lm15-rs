@@ -8,7 +8,7 @@ use std::fmt;
 
 use super::policy::known_providers;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AuthError {
     /// The provider string names nothing in the access-policy table.
     /// Class `NotConfiguredError`, code `not_configured`.
@@ -56,6 +56,11 @@ pub enum AuthError {
         message: String,
         hint: Option<String>,
     },
+    /// An lm15 error carried through the auth plumbing unchanged (a managed
+    /// connection's `AuthOperationError`, a renewal's `ServerError` …): the
+    /// credential `prepare` step returns `AuthError`, and the class must
+    /// reach the caller as it was raised.
+    Lm15(Box<crate::errors::Lm15Error>),
 }
 
 impl AuthError {
@@ -66,6 +71,7 @@ impl AuthError {
             | AuthError::Rejected { .. }
             | AuthError::DeviceCodeExpired { .. } => "auth",
             AuthError::LockTimeout { .. } => "lock_timeout",
+            AuthError::Lm15(err) => err.code().as_str(),
             _ => "not_configured",
         }
     }
@@ -77,6 +83,7 @@ impl AuthError {
             | AuthError::Rejected { .. }
             | AuthError::DeviceCodeExpired { .. } => "AuthError",
             AuthError::LockTimeout { .. } => "LockTimeoutError",
+            AuthError::Lm15(err) => err.class_name(),
             _ => "NotConfiguredError",
         }
     }
@@ -91,6 +98,7 @@ impl AuthError {
                 provider.as_deref()
             }
             AuthError::LockTimeout { .. } => None,
+            AuthError::Lm15(err) => err.provider(),
         }
     }
 
@@ -191,6 +199,7 @@ impl fmt::Display for AuthError {
                 "{provider}: device authorization expired before it was approved. Start the \
                  login again."
             ),
+            AuthError::Lm15(err) => f.write_str(err.message()),
         }
     }
 }
@@ -203,6 +212,9 @@ impl From<AuthError> for crate::errors::Lm15Error {
     /// message is the redacted rendering, the provider is carried when
     /// known.
     fn from(err: AuthError) -> Self {
+        if let AuthError::Lm15(inner) = err {
+            return *inner;
+        }
         let mut meta = crate::errors::ErrorMeta::new(err.to_string());
         meta.provider = err.provider().map(str::to_string);
         match err {

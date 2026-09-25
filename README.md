@@ -52,14 +52,20 @@ another provider. See [Make your first request](https://lm15.dev/docs/first-requ
 
 ## Status
 
-Release candidate, checked 2026-09-24 against the pinned contract
-(`CONTRACT_PIN`): **1,449 of 1,449** contract cases pass
+Release candidate, checked 2026-09-25 against the pinned contract
+(`CONTRACT_PIN`): **1,492 of 1,492** contract cases pass
 (`harness/check.py --shim rust --direction all`; the skips are corpus gaps
-shared with the Python reference), and all 530 of the crate's own tests pass
+shared with the Python reference), and all 548 of the crate's own tests pass
 (`cargo test`, every test target). Provisional surfaces (files, batches,
 media generation, live sessions, stored caches) may change during 1.x, as in
 every lm15 language. The details of the September 20 catch-up are in
 [docs/catchup.md](docs/catchup.md).
+
+Sign in once, use everywhere: `lm15::login` (`Auth`, `connect()`,
+`BoundClient`, `RouterConfig::auth`) is the managed authentication lm15-python
+and lm15-ts have — same rules, same store file, graded by the same contract
+runs (`managed` direction, 43 runs) and by mixed-language runs on one store
+([managed login](docs/managed-login.md)).
 
 ## Gates
 
@@ -619,16 +625,15 @@ tool call on the complete path became the contract on 2026-09-07
 
 ## Not implemented, stated
 
+- Managed login in the wasm codec build (`--no-default-features`): it has
+  no network, filesystem or randomness source of its own, so `lm15::login`
+  needs the `native` feature. A web page uses lm15-ts's browser sign-in.
 - Python-style runtime reflection/function introspection. Rust instead exposes
   `tooling::surface_dump()`, driven by canonical declarations (not a gate).
 - `aws-event-stream` framing: a `StreamFraming` vocabulary value no
   declared door uses (every Bedrock door streams SSE). A host that named
   it would be refused with `UnsupportedFeatureError` on `stream` —
   exactly the reference's "phase 2" branch (`lm15/cloud/hosts.py:138`).
-- A loopback OAuth callback listener (AUTH-9 lists it as a primitive a
-  port *may* ship): no flow this port owns uses one, and a listener is a
-  server with its own attack surface; it is built when a flow needs it.
-  PKCE S256 and RFC 8628 device polling are shipped.
 - Cloud-chain gaps shared with the reference remain outside this catch-up:
   `aws login` DPoP refresh (fresh cached credentials still work), Azure
   Service Fabric managed identity, and GCP `external_account` with an AWS

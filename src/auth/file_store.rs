@@ -200,7 +200,7 @@ impl CredentialFileStore {
     }
 }
 
-fn canonical_destination(path: &Path) -> Result<PathBuf, AuthError> {
+pub(crate) fn canonical_destination(path: &Path) -> Result<PathBuf, AuthError> {
     match std::fs::canonicalize(path) {
         Ok(path) => Ok(path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

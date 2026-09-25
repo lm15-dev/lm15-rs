@@ -264,8 +264,10 @@ pub struct DeclaredProvider {
     pub placeholder_key: Option<String>,
     pub compat: crate::compat::Compat,
     pub note: String,
-    factory: Option<Arc<dyn Fn(LmBuilder) -> Result<ProviderLM, Lm15Error> + Send + Sync>>,
+    factory: Option<DeclaredFactory>,
 }
+
+type DeclaredFactory = Arc<dyn Fn(LmBuilder) -> Result<ProviderLM, Lm15Error> + Send + Sync>;
 
 impl DeclaredProvider {
     pub fn chat(
@@ -378,6 +380,8 @@ pub struct RouterConfig {
     timeouts: crate::transport::Timeouts,
     max_connections: usize,
     budget_explicit: bool,
+    #[cfg(feature = "native")]
+    auth: Option<crate::login::Auth>,
 }
 
 impl Default for RouterConfig {
@@ -398,6 +402,8 @@ impl Default for RouterConfig {
             timeouts: crate::transport::Timeouts::default(),
             max_connections: crate::transport::DEFAULT_MAX_CONNECTIONS,
             budget_explicit: false,
+            #[cfg(feature = "native")]
+            auth: None,
         }
     }
 }
@@ -415,6 +421,25 @@ impl RouterConfig {
     pub fn adaptations(mut self, policy: crate::adaptation::AdaptationPolicy) -> Self {
         self.adaptations = policy;
         self
+    }
+
+    /// Managed authentication (AUTH-15 mode B): an [`Auth`](crate::login::Auth)
+    /// whose saved connections supply the credential when no explicit
+    /// `api_key` / named `credential` does. With it, environment keys, other
+    /// tools' login files and the machine's cloud identity are never
+    /// consulted: a missing, expired, rejected or signed-out connection is a
+    /// typed `AuthOperationError`, never a silent switch to a metered key.
+    /// Keyless local servers still work without a connection. It also routes
+    /// the connection-only providers (`kimi-code`, `github-copilot`).
+    #[cfg(feature = "native")]
+    pub fn auth(mut self, auth: crate::login::Auth) -> Self {
+        self.auth = Some(auth);
+        self
+    }
+
+    #[cfg(feature = "native")]
+    pub fn managed_auth(&self) -> Option<&crate::login::Auth> {
+        self.auth.as_ref()
     }
 
     pub fn credential(mut self, provider: &str, name: impl Into<String>) -> Self {
@@ -761,6 +786,21 @@ impl LMRouter {
     /// by must name a routable provider; a near miss is named
     /// (`NotConfiguredError`) rather than silently ignored.
     pub fn with_config(mut config: RouterConfig) -> Result<Self, Lm15Error> {
+        #[cfg(feature = "native")]
+        if config.auth.is_some() {
+            // A managed router also routes the connection-only doors: declared
+            // providers, added only here because only a managed Auth can hold
+            // their credential.
+            for declared in crate::login::declared_providers() {
+                if !config
+                    .providers
+                    .iter()
+                    .any(|d| canonical_provider(&d.id) == declared.id)
+                {
+                    config.providers.push(declared);
+                }
+            }
+        }
         for definition in &mut config.providers {
             definition.id = canonical_provider(&definition.id);
             definition.aliases = definition
@@ -909,23 +949,27 @@ impl LMRouter {
                 endpoint_source: Some("RouterConfig declaration".into()),
             });
         }
-        let mut options = crate::auth::ExplainOptions::default();
-        options.env = Some(self.config.env_map().into_iter().collect());
-        options.api_key_providers = self.config.api_keys.keys().cloned().collect();
-        options.callable_providers = self
-            .config
-            .api_keys
-            .iter()
-            .filter(|(_, c)| c.source().is_some_and(|s| s.kind == "callable"))
-            .map(|(k, _)| k.clone())
-            .collect();
-        options.credentials_path = self.config.credentials_path.clone();
-        options.settings = self.config.settings.get(&resolution.provider).cloned();
-        options.credential = self.config.credentials.get(&resolution.provider).cloned();
-        options.base_url = self
-            .config
-            .explicit_base_url(&resolution.provider)
-            .map(str::to_string);
+        let options = crate::auth::ExplainOptions {
+            env: Some(self.config.env_map().into_iter().collect()),
+            api_key_providers: self.config.api_keys.keys().cloned().collect(),
+            callable_providers: self
+                .config
+                .api_keys
+                .iter()
+                .filter(|(_, c)| c.source().is_some_and(|s| s.kind == "callable"))
+                .map(|(k, _)| k.clone())
+                .collect(),
+            credentials_path: self.config.credentials_path.clone(),
+            settings: self.config.settings.get(&resolution.provider).cloned(),
+            credential: self.config.credentials.get(&resolution.provider).cloned(),
+            base_url: self
+                .config
+                .explicit_base_url(&resolution.provider)
+                .map(str::to_string),
+            #[cfg(feature = "native")]
+            auth: self.config.auth.clone(),
+            ..Default::default()
+        };
         crate::auth::explain_auth(&resolution.provider, &options).map_err(Lm15Error::from)
     }
 
@@ -1595,9 +1639,37 @@ pub(crate) fn provider_from_environment(provider: &str) -> Result<ProviderLM, Lm
 }
 
 fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Error> {
+    #[cfg(feature = "native")]
+    let managed = match &config.auth {
+        Some(auth)
+            if config.explicit_credential(provider)?.is_none()
+                && !config.credentials.contains_key(&config.canonical(provider)) =>
+        {
+            let placeholder = match config.declared(provider) {
+                Some(d) => d.placeholder_key.clone(),
+                None => lookup(provider)
+                    .and_then(|d| d.placeholder_key.or(d.access().placeholder_key))
+                    .map(str::to_string),
+            };
+            let hosted = config.declared(provider).is_none()
+                && lookup(provider).is_some_and(|d| d.access().host.is_some());
+            Some(crate::login::managed_route(
+                auth,
+                &config.canonical(provider),
+                placeholder,
+                hosted,
+            )?)
+        }
+        _ => None,
+    };
     if let Some(d) = config.declared(provider) {
+        #[cfg(feature = "native")]
+        let managed_credential = managed.as_ref().and_then(|m| m.credential.clone());
+        #[cfg(not(feature = "native"))]
+        let managed_credential: Option<SharedCredentials> = None;
         let credentials = match config.explicit_credential(&d.id)? {
             Some(c) => c,
+            None if managed_credential.is_some() => managed_credential.clone().expect("checked"),
             None => d
                 .env_keys
                 .iter()
@@ -1612,11 +1684,24 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
                     ))
                 })?,
         };
+        #[allow(unused_mut)]
+        let mut base_url = config
+            .explicit_base_url(&d.id)
+            .unwrap_or(&d.base_url)
+            .to_string();
+        #[cfg(feature = "native")]
+        if let Some(from_connection) = managed
+            .as_ref()
+            .and_then(|m| m.base_url.clone())
+            .filter(|_| config.explicit_base_url(&d.id).is_none())
+        {
+            base_url = from_connection;
+        }
         let mut builder = LmBuilder::for_entry(d.template())
             .provider_name(&d.id)
             .provider_aliases(&d.aliases)
             .compat(d.compat.clone())
-            .base_url(config.explicit_base_url(&d.id).unwrap_or(&d.base_url))
+            .base_url(&base_url)
             .api_key(credentials)
             .adaptations(config.adaptations);
         if let Some(t) = &config.transport {
@@ -1635,8 +1720,22 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
     if let Some(transport) = &config.transport {
         builder = builder.transport_shared(Arc::clone(transport));
     }
+    #[cfg(feature = "native")]
+    if let Some(route) = &managed {
+        if let Some(account_id) = &route.account_id {
+            builder = builder.account_id(account_id);
+        }
+        if let (Some(url), None) = (&route.base_url, config.explicit_base_url(provider)) {
+            if policy.host.is_none() {
+                builder = builder.base_url(url);
+            }
+        }
+    }
+    #[cfg(feature = "native")]
+    let managed_named = managed.as_ref().and_then(|m| m.named.clone());
+    let is_managed = config_is_managed(config);
 
-    if policy.credential_policy == CredentialPolicy::OAuth {
+    if policy.credential_policy == CredentialPolicy::OAuth && !is_managed {
         // The stored login owns the provider (AUTH-1): validated now for
         // the typed, re-login-guided error, then re-read per request and
         // refreshed before a request when expired (AUTH-3).
@@ -1666,6 +1765,12 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
     let mut credential: Option<Box<dyn CredentialProvider + Send + Sync>> = config
         .explicit_credential(provider)?
         .map(|c| Box::new(c) as Box<dyn CredentialProvider + Send + Sync>);
+    #[cfg(feature = "native")]
+    if credential.is_none() {
+        if let Some(shared) = managed.as_ref().and_then(|m| m.credential.clone()) {
+            credential = Some(Box::new(shared));
+        }
+    }
 
     #[cfg(feature = "native")]
     if let Some(host) = &policy.host {
@@ -1704,9 +1809,19 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
             endpoint.as_deref(),
         )?;
         builder = builder.settings(settings.clone());
+        let named = managed_named.as_ref().or(config.credentials.get(provider));
+        if credential.is_none() && is_managed && named.is_none() {
+            return Err(crate::errors::AuthOperation::error(
+                format!("{provider}: no credential for this cloud door under a managed Auth"),
+                "login_required",
+                "resolution",
+                "not_committed",
+                "select_connection",
+            ));
+        }
         if credential.is_none() && policy.is_cloud_chain() {
             ctx.settings = settings;
-            credential = Some(match config.credentials.get(provider) {
+            credential = Some(match named {
                 Some(name) => Box::new(ChainProvider::named(policy, ctx, name)?),
                 None => Box::new(ChainProvider::new(policy, ctx)),
             });
@@ -1733,6 +1848,15 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
                 policy.credential_policy.as_str()
             ))));
         }
+    }
+
+    if credential.is_none() && is_managed {
+        // Managed mode never falls through to an environment key, a CLI file
+        // or a placeholder the connection step did not choose (AUTH-15).
+        return Err(crate::errors::AuthOperation::error(
+            format!("{provider}: no saved connection in this scope; sign in with Auth::login or connect()"),
+            "login_required", "resolution", "not_committed", "restart_login",
+        ));
     }
 
     if credential.is_none() && policy.credential_policy == CredentialPolicy::OAuthUnlessExplicit {
@@ -1795,6 +1919,18 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         return Err(missing_credential(policy, "API key"));
     };
     builder.api_key(credential).build()
+}
+
+fn config_is_managed(config: &RouterConfig) -> bool {
+    #[cfg(feature = "native")]
+    {
+        config.auth.is_some()
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = config;
+        false
+    }
 }
 
 #[cfg(test)]

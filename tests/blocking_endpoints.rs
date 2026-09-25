@@ -11,9 +11,11 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+type Script = Arc<Mutex<VecDeque<(String, Vec<u8>)>>>;
+
 #[derive(Clone, Default)]
 struct Replies {
-    replies: Arc<Mutex<VecDeque<(String, Vec<u8>)>>>,
+    replies: Script,
     requests: Arc<Mutex<Vec<TransportRequest>>>,
 }
 impl Replies {

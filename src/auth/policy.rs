@@ -528,6 +528,45 @@ pub const XAI: AccessPolicy = AccessPolicy {
     )
 };
 
+/// Kimi Code subscription over the Anthropic Messages wire: a route a managed
+/// connection declares (lm15-python `lm15/login/declared.py`). Not in
+/// `ACCESS_POLICIES`: no contract wire receipt, so no support claim; a
+/// router routes it only when it carries a managed `Auth`.
+pub const KIMI_CODE: AccessPolicy = AccessPolicy {
+    base_url: Some("https://api.kimi.com/coding"),
+    ..policy(
+        "kimi-code",
+        EndpointSupport::CHAT,
+        Key,
+        &["bearer"],
+        &[],
+        &[Bearer],
+    )
+};
+
+/// GitHub Copilot over the Chat Completions wire; the account's host comes
+/// from the Copilot token. Declared like [`KIMI_CODE`].
+pub const GITHUB_COPILOT: AccessPolicy = AccessPolicy {
+    base_url: Some("https://api.individual.githubcopilot.com"),
+    headers: &[
+        ("User-Agent", "GitHubCopilotChat/0.35.0"),
+        ("Editor-Version", "vscode/1.107.0"),
+        ("Editor-Plugin-Version", "copilot-chat/0.35.0"),
+        ("Copilot-Integration-Id", "vscode-chat"),
+    ],
+    ..policy(
+        "github-copilot",
+        EndpointSupport {
+            models: true,
+            ..EndpointSupport::CHAT
+        },
+        Key,
+        &["bearer"],
+        &[],
+        &[Bearer],
+    )
+};
+
 /// `lm15/access.py:155-164`. The Gemini dialect renders `x-api-key` as
 /// `x-goog-api-key`.
 pub const GEMINI_API: AccessPolicy = policy(

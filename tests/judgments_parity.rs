@@ -1,3 +1,5 @@
+// Lm15Error is the crate's one large error enum; see the crate-level allow in src/lib.rs.
+#![allow(clippy::result_large_err)]
 //! MAP-14 / INV-052 source regressions. Execution is intentionally deferred.
 use lm15::adaptation::collect;
 use lm15::cloud::hosts::HostSettings;

@@ -3,6 +3,9 @@
 //! the protocol line, calls the public functions users call, and
 //! serializes. No network.
 
+#[path = "vet/managed.rs"]
+#[allow(clippy::result_large_err)]
+mod vet_managed;
 use std::io::{self, BufRead, Write};
 
 use serde_json::{json, Map, Value};
@@ -39,6 +42,7 @@ const OPS: &[&str] = &[
     "file_op_parse",
     "capabilities",
     "explain_auth",
+    "managed_run",
     "normalize_error",
     "parse_response",
     "parse_models_response",
@@ -195,6 +199,7 @@ fn op_explain_auth(msg: &Map<String, Value>) -> Result<Value, Failure> {
             .get("base_url")
             .and_then(Value::as_str)
             .map(str::to_string),
+        auth: None,
         callable_providers: msg
             .get("callable_providers")
             .and_then(Value::as_array)
@@ -886,6 +891,7 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "validate" => op_validate(msg),
         "normalize_error" => op_normalize_error(msg),
         "explain_auth" => op_explain_auth(msg),
+        "managed_run" => vet_managed::op_managed_run(msg).map_err(|e| Failure::Lm15(Box::new(e))),
         "resolve_model" => op_resolve_model(msg),
         "build_request" => op_build_request(msg),
         "plan" => op_plan(msg),

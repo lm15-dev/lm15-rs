@@ -320,6 +320,7 @@ impl HttpTransport {
             user_agent: format!("lm15/reqwest {}", env!("CARGO_PKG_VERSION")),
             proxy: None,
             no_proxy: false,
+            no_redirects: false,
         }
     }
 
@@ -503,6 +504,7 @@ pub struct HttpTransportBuilder {
     user_agent: String,
     proxy: Option<String>,
     no_proxy: bool,
+    no_redirects: bool,
 }
 
 #[cfg(feature = "native")]
@@ -559,6 +561,13 @@ impl HttpTransportBuilder {
         self
     }
 
+    /// Answer a 3xx as it is instead of following it (AUTH-20.9: a
+    /// credential-bearing exchange never follows an unexpected redirect).
+    pub fn no_redirects(mut self) -> Self {
+        self.no_redirects = true;
+        self
+    }
+
     pub fn build(self) -> Result<HttpTransport, Lm15Error> {
         for (name, timeout) in [
             ("connect", Some(self.timeouts.connect)),
@@ -596,6 +605,9 @@ impl HttpTransportBuilder {
         }
         if self.no_proxy {
             client = client.no_proxy();
+        }
+        if self.no_redirects {
+            client = client.redirect(reqwest::redirect::Policy::none());
         }
         let client = client.build().map_err(reqwest_error)?;
         Ok(HttpTransport {

@@ -184,6 +184,75 @@ pub(crate) fn clamp_effort(
     Ok(())
 }
 
+pub(crate) fn prepare_openai_cache(
+    request: &mut Request,
+    control: crate::compat::OpenAICacheControl,
+    provider: &str,
+) -> Result<(), Lm15Error> {
+    use crate::compat::OpenAICacheControl;
+    prepare_cache(request, control == OpenAICacheControl::OpenAI, provider)?;
+    if matches!(
+        control,
+        OpenAICacheControl::None | OpenAICacheControl::Anthropic
+    ) {
+        if let Some(cache) = &mut request.config.cache {
+            drop_value(
+                "config.cache.key",
+                &mut cache.key,
+                "this server has no cache affinity field; implicit caching still applies",
+            )?;
+            if cache.retention == Some(crate::types::CacheRetention::Long) {
+                adapt("config.cache.retention",AdaptationAction::Dropped,Some(Value::from("long")),None,"this server has no in-request cache lifetime knob; implicit caching still applies")?;
+                cache.retention = None;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Apply the common, safe request adaptations before a dialect constructs bytes.
+/// Specific dialects complete this preparation under the same collector.
+pub(crate) fn prepare_cache(
+    request: &mut Request,
+    openai_marks: bool,
+    provider: &str,
+) -> Result<(), Lm15Error> {
+    use crate::types::{Part, Role};
+    let Some(cache) = request.config.cache.as_mut() else {
+        return Ok(());
+    };
+    if cache.resource.is_some() {
+        return Err(refusal(
+            provider,
+            "config.cache.resource",
+            "the program depends on a stored cache object absent on this wire",
+        ));
+    }
+    if openai_marks {
+        if let Some(index) = cache.prefix_until_index {
+            let asked = (index as usize).min(request.messages.len().saturating_sub(1));
+            let eligible = (0..=asked).rev().find(|&i| {
+                request.messages.get(i).is_some_and(|m| {
+                    matches!(m.role, Role::User | Role::Developer)
+                        && matches!(m.parts.last(), Some(Part::Text(_)))
+                })
+            });
+            match eligible {
+                Some(i) if i != asked => {
+                    adapt("config.cache.prefix_until_index",AdaptationAction::Substituted,Some(Value::from(index)),Some(Value::from(i)),"cache boundary moved to the nearest earlier user/developer message ending in text")?;
+                    cache.prefix_until_index = Some(i as u64);
+                }
+                None => {
+                    adapt("config.cache.prefix_until_index",AdaptationAction::Dropped,Some(Value::from(index)),None,"no eligible text block before this cache boundary; implicit caching still applies")?;
+                    cache.prefix_until_index = None;
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,73 +343,4 @@ mod tests {
             assert_eq!(records[0].asked, Some(Value::from(i)));
         }
     }
-}
-
-pub(crate) fn prepare_openai_cache(
-    request: &mut Request,
-    control: crate::compat::OpenAICacheControl,
-    provider: &str,
-) -> Result<(), Lm15Error> {
-    use crate::compat::OpenAICacheControl;
-    prepare_cache(request, control == OpenAICacheControl::OpenAI, provider)?;
-    if matches!(
-        control,
-        OpenAICacheControl::None | OpenAICacheControl::Anthropic
-    ) {
-        if let Some(cache) = &mut request.config.cache {
-            drop_value(
-                "config.cache.key",
-                &mut cache.key,
-                "this server has no cache affinity field; implicit caching still applies",
-            )?;
-            if cache.retention == Some(crate::types::CacheRetention::Long) {
-                adapt("config.cache.retention",AdaptationAction::Dropped,Some(Value::from("long")),None,"this server has no in-request cache lifetime knob; implicit caching still applies")?;
-                cache.retention = None;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Apply the common, safe request adaptations before a dialect constructs bytes.
-/// Specific dialects complete this preparation under the same collector.
-pub(crate) fn prepare_cache(
-    request: &mut Request,
-    openai_marks: bool,
-    provider: &str,
-) -> Result<(), Lm15Error> {
-    use crate::types::{Part, Role};
-    let Some(cache) = request.config.cache.as_mut() else {
-        return Ok(());
-    };
-    if cache.resource.is_some() {
-        return Err(refusal(
-            provider,
-            "config.cache.resource",
-            "the program depends on a stored cache object absent on this wire",
-        ));
-    }
-    if openai_marks {
-        if let Some(index) = cache.prefix_until_index {
-            let asked = (index as usize).min(request.messages.len().saturating_sub(1));
-            let eligible = (0..=asked).rev().find(|&i| {
-                request.messages.get(i).is_some_and(|m| {
-                    matches!(m.role, Role::User | Role::Developer)
-                        && matches!(m.parts.last(), Some(Part::Text(_)))
-                })
-            });
-            match eligible {
-                Some(i) if i != asked => {
-                    adapt("config.cache.prefix_until_index",AdaptationAction::Substituted,Some(Value::from(index)),Some(Value::from(i)),"cache boundary moved to the nearest earlier user/developer message ending in text")?;
-                    cache.prefix_until_index = Some(i as u64);
-                }
-                None => {
-                    adapt("config.cache.prefix_until_index",AdaptationAction::Dropped,Some(Value::from(index)),None,"no eligible text block before this cache boundary; implicit caching still applies")?;
-                    cache.prefix_until_index = None;
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
 }

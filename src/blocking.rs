@@ -831,3 +831,114 @@ mod tests {
         assert!(text.contains("inside an async runtime"), "{text}");
     }
 }
+
+/// The managed-authentication mirror: [`crate::login::Auth`] with every
+/// operation blocking (lm15-python's `Auth` is synchronous; this is the
+/// same surface for programs without a runtime). Reads (`status`,
+/// `connections`, `providers`) are already synchronous on the async type.
+#[derive(Clone, Debug)]
+pub struct Auth {
+    inner: crate::login::Auth,
+}
+
+impl Auth {
+    pub fn new(inner: crate::login::Auth) -> Self {
+        Auth { inner }
+    }
+    /// The private file (`$LM15_CREDENTIALS_PATH` or `~/.config/lm15/credentials.json`, or `path`).
+    pub fn local(path: Option<&std::path::Path>) -> Result<Self, Lm15Error> {
+        Ok(Auth::new(crate::login::Auth::local(path)?))
+    }
+    pub fn memory() -> Self {
+        Auth::new(crate::login::Auth::memory())
+    }
+    /// The async manager (the same scope), e.g. for `RouterConfig::auth`.
+    pub fn as_async(&self) -> &crate::login::Auth {
+        &self.inner
+    }
+    pub fn login(
+        &self,
+        provider: &str,
+        options: crate::login::LoginOptions,
+    ) -> Result<crate::login::Connection, crate::login::LoginError> {
+        block_on(self.inner.login(provider, options))
+    }
+    pub fn set_api_key(
+        &self,
+        provider: &str,
+        key: &str,
+        replace: Option<&str>,
+    ) -> Result<crate::login::Connection, Lm15Error> {
+        block_on(self.inner.set_api_key(provider, key, replace))
+    }
+    pub fn configure(
+        &self,
+        provider: &str,
+        method: &str,
+        answers: std::collections::BTreeMap<String, String>,
+        settings: std::collections::BTreeMap<String, String>,
+        replace: Option<&str>,
+    ) -> Result<crate::login::Connection, Lm15Error> {
+        block_on(
+            self.inner
+                .configure(provider, method, answers, settings, replace),
+        )
+    }
+    pub fn logout(
+        &self,
+        provider_or_connection: &str,
+    ) -> Result<crate::login::ForgetResult, Lm15Error> {
+        block_on(self.inner.logout(provider_or_connection))
+    }
+    pub fn cancel_login(&self, provider: &str) -> Result<&'static str, Lm15Error> {
+        block_on(self.inner.cancel_login(provider))
+    }
+    pub fn verify(&self, provider: &str) -> Result<crate::login::Verification, Lm15Error> {
+        block_on(self.inner.verify(provider))
+    }
+    pub fn request_auth(&self, provider: &str) -> Result<crate::login::RequestAuth, Lm15Error> {
+        block_on(self.inner.request_auth(provider, None))
+    }
+}
+
+impl Deref for Auth {
+    type Target = crate::login::Auth;
+    fn deref(&self) -> &crate::login::Auth {
+        &self.inner
+    }
+}
+
+/// `connect()`, blocking: the terminal pickers, then a bound client whose
+/// calls block ([`BoundClient`]).
+pub fn connect(
+    options: crate::login::ConnectOptions,
+) -> Result<BoundClient, crate::login::LoginError> {
+    block_on(crate::login::connect(options)).map(|inner| BoundClient { inner })
+}
+
+/// One connection, one model, blocking.
+#[derive(Debug)]
+pub struct BoundClient {
+    inner: crate::login::BoundClient,
+}
+
+impl BoundClient {
+    pub fn new(
+        auth: crate::login::Auth,
+        selection: crate::login::ModelSelection,
+        config: Option<crate::RouterConfig>,
+    ) -> Result<Self, Lm15Error> {
+        Ok(BoundClient {
+            inner: crate::login::BoundClient::new(auth, selection, config)?,
+        })
+    }
+    pub fn routed(&self) -> String {
+        self.inner.routed()
+    }
+    pub fn complete(&self, request: &Request) -> Result<Response, Lm15Error> {
+        block_on(self.inner.complete(request))
+    }
+    pub fn ask(&self, text: &str) -> Result<Response, Lm15Error> {
+        block_on(self.inner.ask(text))
+    }
+}
