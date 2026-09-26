@@ -8,8 +8,8 @@ use super::cache::cache_payload;
 use super::messages::build_messages;
 use super::text::unsupported;
 use crate::compat::{
-    IncludeOmit, OpenAIChatBuiltinTools, OpenAIChatThinkingFormat, ResolvedOpenAIChatCompat,
-    SendReject,
+    IncludeOmit, OpenAIChatBuiltinTools, OpenAIChatReasoningOff, OpenAIChatThinkingFormat,
+    ResolvedOpenAIChatCompat, SendReject,
 };
 use crate::errors::Lm15Error;
 use crate::types::{
@@ -319,6 +319,24 @@ fn prepare(
             )?;
         }
     } else if let Some(r) = &mut c.reasoning {
+        if r.is_off() && compat.reasoning_off == OpenAIChatReasoningOff::Lowest {
+            // The model cannot stop reasoning and this server accepts the off
+            // word and reasons anyway (compat reasoning_off): send the lowest
+            // level and say so (MAP-13 §4.2, xAI's rule).
+            let lowest = compat
+                .reasoning_efforts
+                .and_then(|levels| levels.first().copied())
+                .unwrap_or(ReasoningEffort::Low);
+            adapt(
+                "config.reasoning.effort",
+                Substituted,
+                Some(json!("off")),
+                Some(json!(lowest.as_str())),
+                "this model cannot stop reasoning and the server accepts 'none' and reasons anyway \
+                 (a paid no-op); the lowest level was sent",
+            )?;
+            r.effort = lowest;
+        }
         drop_value(
             "config.reasoning.thinking_budget",
             &mut r.thinking_budget,

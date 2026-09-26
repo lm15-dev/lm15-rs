@@ -224,8 +224,28 @@ impl Dialect for OpenAIChat {
             meta.provider = Some(cx.provider.to_string());
             Lm15Error::ProviderError(meta)
         })?;
+        // Two catalog shapes are in the wild: OpenAI's {"object": "list",
+        // "data": [...]} and a bare JSON array (Together, live 2026-09-26: 272
+        // entries, no envelope). Anything else is a malformed reply, never an
+        // empty catalog: reading it as zero models would lose every entry
+        // silently.
+        let entries = match &data {
+            Value::Array(_) => Some(&data),
+            Value::Object(object) => object.get("data").filter(|v| v.is_array()),
+            _ => None,
+        };
+        let Some(entries) = entries else {
+            let text = String::from_utf8_lossy(body);
+            let excerpt: String = text.chars().take(200).collect();
+            let mut meta = crate::errors::ErrorMeta::new(format!(
+                "malformed provider reply: a model catalog is {{\"data\": [...]}} or a JSON array of \
+                 entries. Body starts: {excerpt:?}"
+            ));
+            meta.provider = Some(cx.provider.to_string());
+            return Err(Lm15Error::ProviderError(meta));
+        };
         Ok(model_infos_from_entries(
-            data.get("data"),
+            Some(entries),
             cx.provider,
             "openai_chat",
             |entry| entry.get("id").and_then(Value::as_str).map(str::to_string),

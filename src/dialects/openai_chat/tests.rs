@@ -1269,3 +1269,254 @@ fn map14_data_history_is_compact_json_on_text_wire() {
         json!("{\"name\":\"café\",\"value\":1.0}")
     );
 }
+
+// ─── Open-model inference hosts (lm15-contract changes/2026-09-26-inference-hosts-live.md) ───
+
+const INFERENCE_HOSTS: &[(&str, &str, &str, &str)] = &[
+    (
+        "deepinfra",
+        "https://api.deepinfra.com/v1/openai",
+        "DEEPINFRA_API_KEY",
+        "deepinfra",
+    ),
+    (
+        "together",
+        "https://api.together.ai/v1",
+        "TOGETHER_API_KEY",
+        "together_ai",
+    ),
+    (
+        "fireworks",
+        "https://api.fireworks.ai/inference/v1",
+        "FIREWORKS_API_KEY",
+        "fireworks_ai",
+    ),
+    (
+        "parasail",
+        "https://api.parasail.io/v1",
+        "PARASAIL_API_KEY",
+        "parasail",
+    ),
+];
+
+/// The payload a host's preset builds for `model`, with the per-model
+/// overrides applied, and the adaptations it recorded (MAP-13 note).
+fn host_build(
+    host: &str,
+    model: &str,
+    config: Config,
+) -> Result<
+    (
+        serde_json::Map<String, Value>,
+        Vec<crate::types::Adaptation>,
+    ),
+    Lm15Error,
+> {
+    let mut req = request(config);
+    req.model = model.into();
+    let resolved = preset(host).for_model(model).resolve();
+    crate::adaptation::collect(crate::types::AdaptationPolicy::Note, host, || {
+        super::payload::build_payload(&req, false, model, &resolved, host)
+    })
+}
+
+fn required() -> Config {
+    Config {
+        tool_choice: Some(ToolChoice {
+            mode: ToolChoiceMode::Required,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+fn effort(effort: ReasoningEffort) -> Config {
+    Config {
+        reasoning: Some(Reasoning::new(effort)),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn inference_hosts_are_registered_routed_and_keyed() {
+    for (host, base_url, env_key, litellm) in INFERENCE_HOSTS {
+        let entry = crate::registry::lookup(host).expect(host);
+        assert_eq!(entry.dialect, crate::registry::DialectId::OpenaiChat);
+        let policy = ACCESS_POLICIES
+            .iter()
+            .find(|p| p.provider == *host)
+            .expect(host);
+        assert_eq!(policy.base_url, Some(*base_url));
+        assert_eq!(policy.env_keys, &[*env_key]);
+        assert!(crate::router::LITELLM_PROVIDER_PREFIXES.contains(&(*litellm, *host)));
+        assert_eq!(
+            crate::router::openai_chat_model_string(&format!("{litellm}/vendor/m")).unwrap(),
+            format!("{host}:vendor/m")
+        );
+    }
+}
+
+#[test]
+fn inference_hosts_send_effort_the_cap_and_replay_reasoning_as_reasoning_content() {
+    for (host, ..) in INFERENCE_HOSTS {
+        let (body, _) = host_build(
+            host,
+            "vendor/reasoner",
+            Config {
+                max_tokens: Some(50),
+                ..effort(ReasoningEffort::Low)
+            },
+        )
+        .unwrap();
+        assert_eq!(body["reasoning_effort"], json!("low"));
+        assert_eq!(body["max_completion_tokens"], json!(50));
+        assert!(!body.contains_key("reasoning")); // Fireworks answers 400 to the object
+        let resolved = preset(host).resolve();
+        assert_eq!(resolved.thinking_replay, OpenAIChatThinkingReplay::Native);
+    }
+}
+
+#[test]
+fn deepinfra_sends_a_forced_tool_choice_only_to_surveyed_models() {
+    for (model, sent) in [
+        ("meta-llama/Llama-3.3-70B-Instruct-Turbo", false),
+        ("openai/gpt-oss-120b", false),
+        ("zai-org/GLM-4.7", false),
+        ("deepseek-ai/DeepSeek-V4-Pro", false), // untested: refused, never silently ignored
+        ("deepseek-ai/DeepSeek-V4.1-Flash", true),
+        ("zai-org/GLM-5.3-Flash", true),
+        ("anthropic/claude-haiku-4-5", true),
+        ("deepseek-ai/DeepSeek-V4-Flash-0731", true), // a suffixed variant inherits its entry
+    ] {
+        match host_build("deepinfra", model, required()) {
+            Ok((body, _)) => assert!(sent && body["tool_choice"] == json!("required"), "{model}"),
+            Err(err) => assert!(
+                !sent && err.class_name() == "UnsupportedFeatureError",
+                "{model}: {err}"
+            ),
+        }
+    }
+}
+
+#[test]
+fn deepinfra_override_table_matches_the_survey_list() {
+    let preset = OpenAIChatCompat::preset("deepinfra").unwrap();
+    let sent: Vec<&str> = preset
+        .model_overrides
+        .iter()
+        .filter(|(_, knobs)| knobs.forced_tool_choice == Some(Knob::Set(SendReject::Send)))
+        .map(|(prefix, _)| *prefix)
+        .collect();
+    assert_eq!(sent, crate::compat::DEEPINFRA_FORCED_TOOL_CHOICE);
+}
+
+#[test]
+fn together_gpt_oss_refuses_a_forced_tool_choice_and_clamps_effort() {
+    let err = host_build("together", "openai/gpt-oss-120b", required()).unwrap_err();
+    assert_eq!(err.class_name(), "UnsupportedFeatureError");
+    let (body, _) = host_build(
+        "together",
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        required(),
+    )
+    .unwrap();
+    assert_eq!(body["tool_choice"], json!("required"));
+    for (asked, applied) in [
+        (ReasoningEffort::Max, "high"),
+        (ReasoningEffort::Xhigh, "high"),
+        (ReasoningEffort::Minimal, "low"),
+    ] {
+        let (body, records) = host_build("together", "openai/gpt-oss-120b", effort(asked)).unwrap();
+        assert_eq!(body["reasoning_effort"], json!(applied));
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].field, "config.reasoning.effort");
+        assert_eq!(records[0].action, crate::types::AdaptationAction::Clamped);
+        assert_eq!(records[0].applied, Some(json!(applied)));
+    }
+    let (body, _) = host_build(
+        "together",
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        effort(ReasoningEffort::Max),
+    )
+    .unwrap();
+    assert_eq!(body["reasoning_effort"], json!("max"));
+}
+
+#[test]
+fn reasoning_off_is_the_lowest_level_where_the_server_ignores_none() {
+    for (host, model) in [
+        ("together", "openai/gpt-oss-120b"),
+        ("together", "zai-org/GLM-5.3-Flash"),
+        ("deepinfra", "openai/gpt-oss-120b"),
+    ] {
+        let (body, records) = host_build(host, model, effort(ReasoningEffort::Off)).unwrap();
+        assert_eq!(body["reasoning_effort"], json!("low"), "{model}");
+        assert_eq!(records.len(), 1, "{model}");
+        assert_eq!(records[0].field, "config.reasoning.effort");
+        assert_eq!(
+            records[0].action,
+            crate::types::AdaptationAction::Substituted
+        );
+        assert_eq!(records[0].asked, Some(json!("off")));
+        assert_eq!(records[0].applied, Some(json!("low")));
+    }
+    for (host, model) in [
+        ("together", "deepseek-ai/DeepSeek-V4.1-Flash"),
+        ("fireworks", "accounts/fireworks/models/gpt-oss-120b"),
+        ("parasail", "openai/gpt-oss-20b"),
+    ] {
+        let (body, records) = host_build(host, model, effort(ReasoningEffort::Off)).unwrap();
+        assert_eq!(body["reasoning_effort"], json!("none"), "{model}");
+        assert!(records.is_empty(), "{model}");
+    }
+}
+
+#[test]
+fn chat_models_read_a_bare_array_and_refuse_an_unknown_shape() {
+    let policy = ACCESS_POLICIES
+        .iter()
+        .find(|p| p.provider == "together")
+        .unwrap();
+    let settings = HostSettings::new();
+    let compat = Compat::OpenAIChat(preset("together"));
+    let cx = BuildContext {
+        provider: "together",
+        policy,
+        settings: &settings,
+        compat: &compat,
+        base_url: "https://api.together.ai/v1",
+        model: "",
+        account_id: None,
+    };
+    let ids = |body: &str| -> Vec<String> {
+        OPENAI_CHAT
+            .parse_models(&cx, body.as_bytes())
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect()
+    };
+    assert_eq!(ids(r#"[{"id": "a"}, {"id": "b"}]"#), ["a", "b"]);
+    assert_eq!(ids(r#"{"object": "list", "data": [{"id": "c"}]}"#), ["c"]);
+    let err = OPENAI_CHAT
+        .parse_models(&cx, br#"{"models": [{"id": "x"}]}"#)
+        .unwrap_err();
+    assert_eq!(err.class_name(), "ProviderError");
+    assert!(err.message().contains("malformed provider reply"), "{err}");
+}
+
+#[test]
+fn chat_cached_tokens_are_read_nested_first_then_flat() {
+    let usage =
+        |v: Value| super::response::usage_from_chat("together", v.as_object().unwrap()).unwrap();
+    assert_eq!(
+        usage(json!({"prompt_tokens": 9, "cached_tokens": 0})).cache_read_tokens,
+        Some(0)
+    );
+    assert_eq!(
+        usage(json!({"prompt_tokens_details": {"cached_tokens": 3}, "cached_tokens": 9}))
+            .cache_read_tokens,
+        Some(3)
+    );
+    assert_eq!(usage(json!({"prompt_tokens": 9})).cache_read_tokens, None);
+}

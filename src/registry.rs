@@ -233,6 +233,30 @@ pub const PROVIDERS: &[ProviderDefinition] = &[
         "Moonshot AI Kimi over the Anthropic Messages wire (same key as `moonshotai`)",
     ),
     bound(
+        "deepinfra",
+        DialectId::OpenaiChat,
+        "deepinfra",
+        "DeepInfra open-model inference (Chat Completions dialect; models are vendor/name ids)",
+    ),
+    bound(
+        "together",
+        DialectId::OpenaiChat,
+        "together",
+        "Together AI open-model inference (Chat Completions dialect; gpt-oss refuses a forced tool choice client-side — Together answers it with HTTP 500)",
+    ),
+    bound(
+        "fireworks",
+        DialectId::OpenaiChat,
+        "fireworks",
+        "Fireworks AI open-model inference (Chat Completions dialect; models are accounts/fireworks/models/<name> ids)",
+    ),
+    bound(
+        "parasail",
+        DialectId::OpenaiChat,
+        "parasail",
+        "Parasail open-model inference (Chat Completions dialect; serverless models)",
+    ),
+    bound(
         "meta",
         DialectId::OpenaiResponses,
         "meta",
@@ -408,7 +432,7 @@ mod tests {
             DialectId::Anthropic
         );
         assert!(lookup("nope").is_none());
-        assert_eq!(PROVIDERS.len(), 32);
+        assert_eq!(PROVIDERS.len(), 36); // + the four inference hosts (2026-09-26)
     }
 
     /// Every registry entry has a policy of the same id, and the hosted

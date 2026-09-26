@@ -1024,6 +1024,10 @@ pub const LITELLM_PROVIDER_PREFIXES: &[(&str, &str)] = &[
     ("hosted_vllm", "vllm"),
     ("moonshot", "moonshotai"),
     ("azure", "azure-chat"),
+    ("deepinfra", "deepinfra"),
+    ("together_ai", "together"),
+    ("fireworks_ai", "fireworks"),
+    ("parasail", "parasail"),
 ];
 
 /// Keyword arguments of `create()` / `completion()` that configure the

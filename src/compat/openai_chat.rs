@@ -122,6 +122,28 @@ impl OpenAIChatUserField {
     }
 }
 
+/// `lm15/compat.py` `OpenAIChatReasoningOff`: what an explicit
+/// reasoning-off becomes. `Send` puts the dial's off word on the wire
+/// (MAP-5). `Lowest` is for a model that cannot stop reasoning on a server
+/// that accepts the off word and reasons anyway: the lowest level
+/// (`reasoning_efforts[0]`, else `low`) is sent and the substitution
+/// recorded (MAP-13 §4.2). Ratified 2026-09-26
+/// (`changes/2026-09-26-inference-hosts-live.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OpenAIChatReasoningOff {
+    Send,
+    Lowest,
+}
+
+impl OpenAIChatReasoningOff {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OpenAIChatReasoningOff::Send => "send",
+            OpenAIChatReasoningOff::Lowest => "lowest",
+        }
+    }
+}
+
 /// `lm15/compat.py:356` `OpenAIChatForcedToolChoice`.
 pub type OpenAIChatForcedToolChoice = SendReject;
 /// `lm15/compat.py:361` `OpenAIChatJsonSchema`.
@@ -151,6 +173,7 @@ pub struct OpenAIChatCompat {
     pub forced_tool_choice: Option<Knob<OpenAIChatForcedToolChoice>>,
     pub json_schema: Option<Knob<OpenAIChatJsonSchema>>,
     pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
+    pub reasoning_off: Option<Knob<OpenAIChatReasoningOff>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
@@ -173,6 +196,7 @@ pub struct ChatModelOverride {
     pub forced_tool_choice: Option<Knob<OpenAIChatForcedToolChoice>>,
     pub json_schema: Option<Knob<OpenAIChatJsonSchema>>,
     pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
+    pub reasoning_off: Option<Knob<OpenAIChatReasoningOff>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub tool_result_media: Option<Knob<ToolResultMedia>>,
 }
@@ -191,6 +215,7 @@ impl ChatModelOverride {
         forced_tool_choice: None,
         json_schema: None,
         token_scoring: None,
+        reasoning_off: None,
         reasoning_efforts: None,
         tool_result_media: None,
     };
@@ -214,6 +239,7 @@ impl OpenAIChatCompat {
         forced_tool_choice: None,
         json_schema: None,
         token_scoring: None,
+        reasoning_off: None,
         reasoning_efforts: None,
         routing: None,
         extensions: None,
@@ -253,6 +279,7 @@ impl OpenAIChatCompat {
                 forced_tool_choice,
                 json_schema,
                 token_scoring,
+                reasoning_off,
                 reasoning_efforts,
                 tool_result_media
             );
@@ -298,6 +325,7 @@ impl OpenAIChatCompat {
             forced_tool_choice: Knob::resolve(self.forced_tool_choice, SendReject::Send),
             json_schema: Knob::resolve(self.json_schema, SendReject::Send),
             token_scoring: Knob::resolve(self.token_scoring, OpenAIChatTokenScoring::None),
+            reasoning_off: Knob::resolve(self.reasoning_off, OpenAIChatReasoningOff::Send),
             reasoning_efforts: self.reasoning_efforts,
             routing: self.routing.clone(),
             extensions: self.extensions.clone(),
@@ -324,6 +352,7 @@ pub struct ResolvedOpenAIChatCompat {
     pub forced_tool_choice: OpenAIChatForcedToolChoice,
     pub json_schema: OpenAIChatJsonSchema,
     pub token_scoring: OpenAIChatTokenScoring,
+    pub reasoning_off: OpenAIChatReasoningOff,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
@@ -395,6 +424,9 @@ const fn with(
     }
     if knobs.token_scoring.is_some() {
         compat.token_scoring = knobs.token_scoring;
+    }
+    if knobs.reasoning_off.is_some() {
+        compat.reasoning_off = knobs.reasoning_off;
     }
     if knobs.tool_result_media.is_some() {
         compat.tool_result_media = knobs.tool_result_media;
@@ -598,6 +630,153 @@ pub const OPENAI_CHAT_PRESETS: &[(&str, OpenAIChatCompat)] = &[
             &[],
         ),
     ),
+    // ─── Open-model inference hosts (changes/2026-09-26-inference-hosts-live.md) ───
+    // One policy for the four, each knob receipted live 2026-09-26: the
+    // reasoning_effort dial (Fireworks refuses the `reasoning` object);
+    // reasoning replayed as reasoning_content (a planted code word was
+    // recalled through it; Fireworks refuses `reasoning`);
+    // max_completion_tokens and stream usage honoured; caching automatic, so a
+    // key or long retention is dropped with a record.
+    //
+    // DeepInfra: 422 on media in a tool row; a forced tool choice goes only
+    // to the 14 models a survey showed honour it, refused elsewhere (MAP-8,
+    // ratified 2026-09-26).
+    (
+        "deepinfra",
+        with(
+            inference_host(),
+            ChatModelOverride {
+                thinking_replay: Some(Set(OpenAIChatThinkingReplay::Native)),
+                tool_result_media: Some(Set(ToolResultMedia::Reject)),
+                forced_tool_choice: Some(Set(SendReject::Reject)),
+                ..ChatModelOverride::NONE
+            },
+            None,
+            DEEPINFRA_OVERRIDES,
+        ),
+    ),
+    // Together, gpt-oss: a forced tool choice answers 500 (retryable: refused
+    // before the wire); xhigh/max/unknown words run at medium (clamped,
+    // recorded); `none` accepted and reasoning still billed (lowest level
+    // instead). GLM-5.3 ignores `none`. Media in tool rows: open cell.
+    (
+        "together",
+        with(
+            inference_host(),
+            ChatModelOverride {
+                thinking_replay: Some(Set(OpenAIChatThinkingReplay::Native)),
+                tool_result_media: Some(Set(ToolResultMedia::Reject)),
+                ..ChatModelOverride::NONE
+            },
+            None,
+            &[
+                (
+                    "openai/gpt-oss",
+                    ChatModelOverride {
+                        forced_tool_choice: Some(Set(SendReject::Reject)),
+                        reasoning_efforts: Some(&[
+                            ReasoningEffort::Low,
+                            ReasoningEffort::Medium,
+                            ReasoningEffort::High,
+                        ]),
+                        reasoning_off: Some(Set(OpenAIChatReasoningOff::Lowest)),
+                        ..ChatModelOverride::NONE
+                    },
+                ),
+                ("zai-org/GLM-5.3", REASONING_OFF_LOWEST),
+            ],
+        ),
+    ),
+    // MAP-10: images read in a tool result (Fireworks GLM-5.3-Flash, Parasail Qwen3-VL-8B).
+    (
+        "fireworks",
+        with(
+            inference_host(),
+            ChatModelOverride {
+                thinking_replay: Some(Set(OpenAIChatThinkingReplay::Native)),
+                tool_result_media: Some(Set(ToolResultMedia::Images)),
+                ..ChatModelOverride::NONE
+            },
+            None,
+            &[],
+        ),
+    ),
+    (
+        "parasail",
+        with(
+            inference_host(),
+            ChatModelOverride {
+                thinking_replay: Some(Set(OpenAIChatThinkingReplay::Native)),
+                tool_result_media: Some(Set(ToolResultMedia::Images)),
+                ..ChatModelOverride::NONE
+            },
+            None,
+            &[],
+        ),
+    ),
+];
+
+const fn inference_host() -> OpenAIChatCompat {
+    preset(
+        MaxCompletionTokens,
+        Think::ReasoningEffort,
+        OpenAICacheControl::None,
+    )
+}
+
+const REASONING_OFF_LOWEST: ChatModelOverride = ChatModelOverride {
+    reasoning_off: Some(Set(OpenAIChatReasoningOff::Lowest)),
+    ..ChatModelOverride::NONE
+};
+
+const FORCED_TOOL_CHOICE_SEND: ChatModelOverride = ChatModelOverride {
+    forced_tool_choice: Some(Set(SendReject::Send)),
+    ..ChatModelOverride::NONE
+};
+
+/// DeepInfra models measured to honour a forced tool choice (survey of 24,
+/// 2026-09-26, `research/providers/deepinfra/tool_choice_survey.py`); each id
+/// is a prefix, so a suffixed variant (`-0731`, `-Turbo`) inherits its entry.
+pub const DEEPINFRA_FORCED_TOOL_CHOICE: &[&str] = &[
+    "deepseek-ai/DeepSeek-V3.2",
+    "deepseek-ai/DeepSeek-V4-Flash",
+    "deepseek-ai/DeepSeek-V4.1-Flash",
+    "zai-org/GLM-5.3-Flash",
+    "moonshotai/Kimi-K2.6",
+    "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    "Qwen/Qwen3.6-27B",
+    "Qwen/Qwen3-Next-80B-A3B-Instruct",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning",
+    "ibm-granite/granite-4.2-8b",
+    "XiaomiMiMo/MiMo-V2.6-Flash",
+    "tencent/Hy3",
+    "google/gemini-3.1-flash-lite",
+    "anthropic/claude-haiku-4-5",
+];
+
+/// gpt-oss first (reasoning off → lowest), then every surveyed model.
+const DEEPINFRA_OVERRIDES: &[(&str, ChatModelOverride)] = &[
+    ("openai/gpt-oss", REASONING_OFF_LOWEST),
+    ("deepseek-ai/DeepSeek-V3.2", FORCED_TOOL_CHOICE_SEND),
+    ("deepseek-ai/DeepSeek-V4-Flash", FORCED_TOOL_CHOICE_SEND),
+    ("deepseek-ai/DeepSeek-V4.1-Flash", FORCED_TOOL_CHOICE_SEND),
+    ("zai-org/GLM-5.3-Flash", FORCED_TOOL_CHOICE_SEND),
+    ("moonshotai/Kimi-K2.6", FORCED_TOOL_CHOICE_SEND),
+    (
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        FORCED_TOOL_CHOICE_SEND,
+    ),
+    ("Qwen/Qwen3.6-27B", FORCED_TOOL_CHOICE_SEND),
+    ("Qwen/Qwen3-Next-80B-A3B-Instruct", FORCED_TOOL_CHOICE_SEND),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning",
+        FORCED_TOOL_CHOICE_SEND,
+    ),
+    ("ibm-granite/granite-4.2-8b", FORCED_TOOL_CHOICE_SEND),
+    ("XiaomiMiMo/MiMo-V2.6-Flash", FORCED_TOOL_CHOICE_SEND),
+    ("tencent/Hy3", FORCED_TOOL_CHOICE_SEND),
+    ("google/gemini-3.1-flash-lite", FORCED_TOOL_CHOICE_SEND),
+    ("anthropic/claude-haiku-4-5", FORCED_TOOL_CHOICE_SEND),
 ];
 
 /// `lm15/compat.py:725-744` `OPENAI_CHAT_PRESET_BASE_URLS`.
@@ -614,6 +793,12 @@ pub const OPENAI_CHAT_PRESET_BASE_URLS: &[(&str, &str)] = &[
     ("zai", "https://api.z.ai/api/paas/v4"),
     ("meta", "https://api.meta.ai/v1"),
     ("moonshotai", "https://api.moonshot.ai/v1"),
+    // The open-model inference hosts, each its documented OpenAI-compatible
+    // root (DeepInfra: the /v1/openai root, not /v1).
+    ("deepinfra", "https://api.deepinfra.com/v1/openai"),
+    ("together", "https://api.together.ai/v1"),
+    ("fireworks", "https://api.fireworks.ai/inference/v1"),
+    ("parasail", "https://api.parasail.io/v1"),
 ];
 
 #[cfg(test)]
@@ -676,8 +861,8 @@ mod tests {
                 .builtin_tools,
             OpenAIChatBuiltinTools::Groq
         );
-        assert_eq!(OPENAI_CHAT_PRESETS.len(), 15); // + lmstudio (2026-09-11)
-        assert_eq!(OPENAI_CHAT_PRESET_BASE_URLS.len(), 12);
+        assert_eq!(OPENAI_CHAT_PRESETS.len(), 19); // + lmstudio (2026-09-11), + four inference hosts (2026-09-26)
+        assert_eq!(OPENAI_CHAT_PRESET_BASE_URLS.len(), 16);
         assert_eq!(
             OpenAIChatCompat::preset("ollama")
                 .unwrap()

@@ -44,7 +44,14 @@ pub fn usage_from_chat(provider: &str, data: &JsonObject) -> Result<Usage, Lm15E
         input_tokens: c("prompt_tokens", data.get("prompt_tokens"))?,
         output_tokens: c("completion_tokens", data.get("completion_tokens"))?,
         total_tokens: c("total_tokens", data.get("total_tokens"))?,
-        cache_read_tokens: c("cached_tokens", prompt.get("cached_tokens"))?,
+        // Nested (OpenAI) first; some servers report the count flat on usage
+        // instead (Together's non-reasoning models: `usage.cached_tokens`,
+        // live 2026-09-26). Reading one place only turns a reported 0 into
+        // "not reported".
+        cache_read_tokens: match c("cached_tokens", prompt.get("cached_tokens"))? {
+            Some(n) => Some(n),
+            None => c("cached_tokens", data.get("cached_tokens"))?,
+        },
         cache_write_tokens: c("cache_write_tokens", prompt.get("cache_write_tokens"))?,
         reasoning_tokens: c("reasoning_tokens", completion.get("reasoning_tokens"))?,
         input_audio_tokens: c("prompt audio_tokens", prompt.get("audio_tokens"))?,

@@ -106,8 +106,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(dir) = &out {
         std::fs::create_dir_all(dir)?;
     }
-    // One rule-routed string (no prefix) and three prefixed ones: both
-    // rungs go live.
+    // One rule-routed string (no prefix) and the rest prefixed: both rungs
+    // go live.
     let bindings = [
         ("openai", "OPENAI_API_KEY", "gpt-4.1-mini"),
         (
@@ -117,6 +117,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         ("gemini", "GEMINI_API_KEY", "gemini:gemini-2.5-flash"),
         ("groq", "GROQ_API_KEY", "groq:openai/gpt-oss-20b"),
+        // Open-model inference hosts (lm15-contract changes/2026-09-26-inference-hosts-live.md).
+        (
+            "deepinfra",
+            "DEEPINFRA_API_KEY",
+            "deepinfra:deepseek-ai/DeepSeek-V4.1-Flash",
+        ),
+        (
+            "together",
+            "TOGETHER_API_KEY",
+            "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        ),
+        (
+            "fireworks",
+            "FIREWORKS_API_KEY",
+            "fireworks:accounts/fireworks/models/deepseek-v4p1-flash",
+        ),
+        (
+            "parasail",
+            "PARASAIL_API_KEY",
+            "parasail:meta-llama/Llama-3.3-70B-Instruct",
+        ),
     ];
     let log = Arc::new(Mutex::new(Vec::new()));
     let router = LMRouter::with_config(RouterConfig::new().transport(Recording {

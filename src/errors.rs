@@ -1111,6 +1111,12 @@ pub const MODEL_NOT_FOUND_FORMS: &[ModelNotFoundForm] = &[
         "The provided model identifier is invalid",
         "",
     ), // Bedrock Chat
+    form(
+        "invalid_request_error",
+        "Deployment ",
+        "",
+        " doesn't exist or isn't accessible.",
+    ), // Parasail
 ];
 
 /// Whether an error is one of the pinned MAP-15 forms: the code matches

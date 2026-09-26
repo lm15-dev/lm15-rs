@@ -415,7 +415,7 @@ fn response_and_stream_goldens_replay_exactly() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(
         checked,
-        (310, 40),
+        (353, 52),
         "complete/stream goldens at the target CONTRACT_PIN"
     );
 }

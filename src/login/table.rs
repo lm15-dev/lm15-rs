@@ -66,6 +66,10 @@ fn service_label(provider: &str) -> &str {
         "typesafe" => "TypeSafe",
         "ollama" | "vllm" | "sglang" => "Local",
         "github-copilot" => "GitHub",
+        "deepinfra" => "DeepInfra",
+        "together" => "Together AI",
+        "fireworks" => "Fireworks AI",
+        "parasail" => "Parasail",
         other => other,
     }
 }

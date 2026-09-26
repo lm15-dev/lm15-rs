@@ -659,6 +659,62 @@ pub const ZAI: AccessPolicy = AccessPolicy {
     )
 };
 
+// ─── Open-model inference hosts (changes/2026-09-26-inference-hosts-live.md) ───
+// A bearer key each, the provider's own documented variable; batch, files and
+// media endpoints they also sell are not registered.
+
+/// `lm15/access.py` `DEEPINFRA` (open-model inference host, 2026-09-26).
+pub const DEEPINFRA: AccessPolicy = AccessPolicy {
+    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "deepinfra")),
+    ..policy(
+        "deepinfra",
+        EndpointSupport::CHAT_MODELS,
+        Key,
+        &["bearer"],
+        &["DEEPINFRA_API_KEY"],
+        &[Bearer],
+    )
+};
+
+/// `lm15/access.py` `TOGETHER` (open-model inference host, 2026-09-26).
+pub const TOGETHER: AccessPolicy = AccessPolicy {
+    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "together")),
+    ..policy(
+        "together",
+        EndpointSupport::CHAT_MODELS,
+        Key,
+        &["bearer"],
+        &["TOGETHER_API_KEY"],
+        &[Bearer],
+    )
+};
+
+/// `lm15/access.py` `FIREWORKS` (open-model inference host, 2026-09-26).
+pub const FIREWORKS: AccessPolicy = AccessPolicy {
+    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "fireworks")),
+    ..policy(
+        "fireworks",
+        EndpointSupport::CHAT_MODELS,
+        Key,
+        &["bearer"],
+        &["FIREWORKS_API_KEY"],
+        &[Bearer],
+    )
+};
+
+/// `lm15/access.py` `PARASAIL` (open-model inference host, 2026-09-26).
+pub const PARASAIL: AccessPolicy = AccessPolicy {
+    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "parasail")),
+    ..policy(
+        "parasail",
+        EndpointSupport::CHAT_MODELS,
+        Key,
+        &["bearer"],
+        &["PARASAIL_API_KEY"],
+        &[Bearer],
+    )
+};
+
 /// `lm15/access.py:260-266`.
 pub const MOONSHOTAI: AccessPolicy = AccessPolicy {
     base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "moonshotai")),
@@ -1034,6 +1090,10 @@ pub const ACCESS_POLICIES: &[AccessPolicy] = &[
     DEEPSEEK_ANTHROPIC,
     META_ANTHROPIC,
     MOONSHOTAI_ANTHROPIC,
+    DEEPINFRA,
+    TOGETHER,
+    FIREWORKS,
+    PARASAIL,
     AWS_ANTHROPIC,
     BEDROCK_ANTHROPIC,
     BEDROCK_CHAT,
@@ -1124,7 +1184,7 @@ mod tests {
         let mut names = known_providers();
         names.dedup();
         assert_eq!(names.len(), ACCESS_POLICIES.len());
-        assert_eq!(ACCESS_POLICIES.len(), 32);
+        assert_eq!(ACCESS_POLICIES.len(), 36); // + the four inference hosts (2026-09-26)
     }
 
     #[test]
