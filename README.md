@@ -40,11 +40,11 @@ on every page · API reference: [docs.rs/lm15](https://docs.rs/lm15).
 ## Install
 
 ```bash
-cargo add lm15@1.0.0-rc.1
+cargo add lm15@1.0.0-rc.2
 cargo add tokio --features macros,rt-multi-thread
 ```
 
-**1.0.0-rc.1 is a release candidate**: the API intended for 1.0, published
+**1.0.0-rc.2 is a release candidate**: the API intended for 1.0, published
 to be tried first. Pin the exact version. Python's lm15 1.0 is stable;
 TypeScript and Go are release candidates too.
 
@@ -161,8 +161,8 @@ provider's code and message, and rate-limit evidence
 Besides API keys, lm15 can use an account you sign in to (a ChatGPT, Claude,
 xAI, GitHub Copilot, Kimi Code or OpenRouter login), saved in one file every
 lm15 language shares: `lm15::login` (`Auth`, `connect()`,
-`RouterConfig::auth`). It is in this repository's source and ships in the
-next release (it is not in 1.0.0-rc.1). Sign-in is **provisional**. See
+`RouterConfig::auth`). It ships from 1.0.0-rc.2 (it was not in
+1.0.0-rc.1). Sign-in is **provisional**. See
 [docs/managed-login.md](docs/managed-login.md).
 
 ### Azure, AWS and Google Cloud

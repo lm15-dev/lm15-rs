@@ -2487,6 +2487,8 @@ impl LmBuilder {
                 crate::cloud::hosts::endpoint_from_env(host, &env).map(|(_, v)| v.to_string())
             })
         });
+        // Mutated only by the native build's cloud profile lookup.
+        #[allow(unused_mut)]
         let mut given = self.settings.clone();
         // Mutated only by the native build's cloud profile lookup.
         #[allow(unused_mut)]
@@ -2551,6 +2553,8 @@ impl LmBuilder {
             #[cfg(not(feature = "native"))]
             None => crate::transport::default_transport()?,
         };
+        // Replaced only by the native build's named-credential lookup.
+        #[allow(unused_mut)]
         let mut credentials = self.credentials;
         #[cfg(feature = "native")]
         if let Some(name) = &self.credential_name {
