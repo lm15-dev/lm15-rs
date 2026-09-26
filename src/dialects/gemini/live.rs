@@ -61,9 +61,13 @@ pub fn setup_frame(cx: &BuildContext<'_>, config: &LiveConfig) -> Result<Value, 
         .tools
         .iter()
         .filter_map(|t| match t {
-            Tool::Function(f) => Some(
-                json!({"name": f.name, "description": f.description, "parameters": f.parameters}),
-            ),
+            Tool::Function(f) => {
+                let parameters = Value::Object(f.parameters.clone());
+                let mut decl = json!({"name": f.name, "description": f.description});
+                let field = super::config::parameters_field(&parameters);
+                decl[field] = parameters;
+                Some(decl)
+            }
             _ => None,
         })
         .collect();

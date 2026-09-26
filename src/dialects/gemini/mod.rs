@@ -126,7 +126,9 @@ fn tools(request: &Request) -> Option<Value> {
                 if let Some(description) = &f.description {
                     decl.insert("description".into(), Value::String(description.clone()));
                 }
-                decl.insert("parameters".into(), Value::Object(f.parameters.clone()));
+                let parameters = Value::Object(f.parameters.clone());
+                let field = config::parameters_field(&parameters);
+                decl.insert(field.into(), parameters);
                 Some(Value::Object(decl))
             }
             Tool::Builtin(_) => None,

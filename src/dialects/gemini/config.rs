@@ -44,23 +44,85 @@ pub fn gemini_number(value: f64) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// `responseJsonSchema` accepts JSON Schema keywords; `responseSchema` is
-/// the OpenAPI subset and rejects `additionalProperties`
-/// (`lm15/providers/gemini.py:190-205`; pinned by
-/// `cases/gemini/response_schema.json` and `response_json_schema.json`).
+/// The keys of Gemini's Schema object (generate-content#v1beta.Schema):
+/// what its OpenAPI fields (`responseSchema`, `parameters`) parse.
+const GEMINI_SCHEMA_FIELDS: [&str; 22] = [
+    "type",
+    "format",
+    "title",
+    "description",
+    "nullable",
+    "enum",
+    "maxItems",
+    "minItems",
+    "properties",
+    "required",
+    "minProperties",
+    "maxProperties",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "example",
+    "anyOf",
+    "propertyOrdering",
+    "default",
+    "items",
+    "minimum",
+    "maximum",
+];
+
+/// MAP-16: can Gemini's OpenAPI field carry `schema`? No, when a schema
+/// node — the root, a value of `properties`, `items`, an element of
+/// `anyOf` (or `anyOf` itself when it is one object) — is a boolean, has a
+/// key that is not a Schema field, has a list `type`, or has an `enum`
+/// list with an element that is not a string: the OpenAPI field answers
+/// 400 there and the JSON Schema field accepts it (live 2026-09-26,
+/// lm15-contract `mapping/gemini-schema-field.json`). Anything else stays
+/// on the OpenAPI field; `example` and `default` are values, never walked.
+pub fn openapi_schema(schema: &Value) -> bool {
+    let mut stack = vec![schema];
+    while let Some(node) = stack.pop() {
+        let map = match node {
+            Value::Bool(_) => return false,
+            Value::Object(map) => map,
+            _ => continue,
+        };
+        for (key, value) in map {
+            if !GEMINI_SCHEMA_FIELDS.contains(&key.as_str()) {
+                return false;
+            }
+            match (key.as_str(), value) {
+                ("type", Value::Array(_)) => return false,
+                ("enum", Value::Array(items)) if items.iter().any(|v| !v.is_string()) => {
+                    return false
+                }
+                ("properties", Value::Object(props)) => stack.extend(props.values()),
+                ("items", v) => stack.push(v),
+                ("anyOf", Value::Array(items)) => stack.extend(items.iter()),
+                ("anyOf", v) => stack.push(v),
+                _ => {}
+            }
+        }
+    }
+    true
+}
+
+/// MAP-16 for a response format: `responseSchema` or `responseJsonSchema`.
 pub fn schema_field(schema: &Value) -> &'static str {
-    if contains_key(schema, "additionalProperties") {
-        "responseJsonSchema"
-    } else {
+    if openapi_schema(schema) {
         "responseSchema"
+    } else {
+        "responseJsonSchema"
     }
 }
 
-fn contains_key(value: &Value, key: &str) -> bool {
-    match value {
-        Value::Object(map) => map.contains_key(key) || map.values().any(|v| contains_key(v, key)),
-        Value::Array(items) => items.iter().any(|v| contains_key(v, key)),
-        _ => false,
+/// MAP-16 for a function declaration: `parameters` or
+/// `parametersJsonSchema`. The schema is verbatim either way (INV-002).
+pub fn parameters_field(schema: &Value) -> &'static str {
+    if openapi_schema(schema) {
+        "parameters"
+    } else {
+        "parametersJsonSchema"
     }
 }
 
@@ -338,12 +400,40 @@ mod tests {
     }
 
     #[test]
-    fn schema_field_follows_additional_properties() {
+    fn schema_field_follows_map_16() {
         assert_eq!(schema_field(&json!({"type": "object"})), "responseSchema");
         assert_eq!(
             schema_field(&json!({"type": "array", "items": {"additionalProperties": false}})),
             "responseJsonSchema"
         );
+        assert_eq!(
+            parameters_field(&json!({"properties": {"v": {"$ref": "#/$defs/S"}}})),
+            "parametersJsonSchema"
+        );
+        assert_eq!(
+            parameters_field(&json!({"properties": {"$ref": {"type": "string"}}})),
+            "parameters"
+        );
+    }
+
+    /// The contract's vectors (skipped when the sibling checkout is absent;
+    /// the harness's mapping direction grades them through the vet shim).
+    #[test]
+    fn map_16_contract_vectors() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../lm15-contract/mapping/gemini-schema-field.json");
+        let Ok(raw) = std::fs::read(&path) else {
+            return;
+        };
+        let doc: Value = serde_json::from_slice(&raw).unwrap();
+        for case in doc["cases"].as_array().unwrap() {
+            assert_eq!(
+                openapi_schema(&case["schema"]),
+                case["openapi"].as_bool().unwrap(),
+                "{}",
+                case["id"]
+            );
+        }
     }
 
     #[test]
