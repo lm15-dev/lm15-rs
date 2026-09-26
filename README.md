@@ -165,6 +165,40 @@ lm15 language shares: `lm15::login` (`Auth`, `connect()`,
 next release (it is not in 1.0.0-rc.1). Sign-in is **provisional**. See
 [docs/managed-login.md](docs/managed-login.md).
 
+### Azure, AWS and Google Cloud
+
+The cloud doors (`azure:`, `bedrock-anthropic:`, `vertex:` …) find the
+identity your machine already has, the way each cloud's own SDK does. Google
+Cloud, for example:
+
+```rust
+use lm15::router::{LMRouter, RouterConfig};
+
+// Laptop: `gcloud auth application-default login` and
+// `gcloud config set project my-project`, nothing else.
+let router = LMRouter::with_config(RouterConfig::new())?;
+
+// Cloud Run, GKE, a VM: the attached service account and the project both come
+// from the metadata server. Naming it fails fast if it is missing.
+let deployed = LMRouter::with_config(RouterConfig::new().credential("vertex", "platform"))?;
+
+// A Vertex API key, in your project and a region you choose.
+let keyed = LMRouter::with_config(
+    RouterConfig::new()
+        .api_key("vertex", std::env::var("MY_VERTEX_KEY")?)
+        .setting("vertex", "location", "europe-west4"),
+)?;
+```
+
+On Google Cloud the project may come from the metadata server; the adapter
+asks it in its async `prepare` step, before the first `complete` or `stream`,
+so a `build_request` made before then is refused by name.
+`lm15::auth::explain_auth("vertex", &Default::default())` says which identity
+and which project lm15 would use, without a network call. When sign-in fails,
+the error names the fix. The whole path (project setup, workload identity
+federation, Claude on Vertex) is in the
+[cloud hosts guide](https://lm15-dev.github.io/lm15-python/cloud-hosts/#google-cloud-start-to-finish).
+
 ### More
 
 Judgments with probabilities (`lm15::judgments`), reasoning controls,
