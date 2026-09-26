@@ -869,14 +869,15 @@ impl fmt::Display for Lm15Error {
         } else {
             meta.message.as_str()
         };
-        let (base, guidance) =
-            if self.is_a(ErrorClass::AuthError) && meta.credential_source.is_some() {
-                base.split_once("\n\n  To fix:")
-                    .map(|(text, hint)| (text, Some(hint)))
-                    .unwrap_or((base, None))
-            } else {
-                (base, None)
-            };
+        // The guidance goes last, after the provider/status context and the
+        // credential's origin, as in the reference (`ProviderError.__str__`).
+        let (base, guidance) = if self.is_a(ErrorClass::ProviderError) {
+            base.split_once("\n\n  To fix:")
+                .map(|(text, hint)| (text, Some(hint)))
+                .unwrap_or((base, None))
+        } else {
+            (base, None)
+        };
         write!(f, "{}: {base}", self.class_name())?;
         if self.is_a(ErrorClass::ProviderError) {
             let mut context: Vec<String> = Vec::new();
