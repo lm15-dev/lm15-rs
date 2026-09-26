@@ -40,11 +40,11 @@ on every page · API reference: [docs.rs/lm15](https://docs.rs/lm15).
 ## Install
 
 ```bash
-cargo add lm15@1.0.0-rc.2
+cargo add lm15@1.0.0-rc.3
 cargo add tokio --features macros,rt-multi-thread
 ```
 
-**1.0.0-rc.2 is a release candidate**: the API intended for 1.0, published
+**1.0.0-rc.3 is a release candidate**: the API intended for 1.0, published
 to be tried first. Pin the exact version. Python's lm15 1.0 is stable;
 TypeScript and Go are release candidates too.
 

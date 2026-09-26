@@ -744,7 +744,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "lm15"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "aws-lc-rs",
  "bytes",

@@ -1,6 +1,6 @@
 [package]
 name = "lm15"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 edition = "2021"
 description = "One request and response model for every LLM provider (OpenAI, Anthropic, Gemini, xAI, Groq, Bedrock, Azure, Vertex, local servers), with visible adaptations. Implements the lm15 contract."
 license = "MIT"
