@@ -274,7 +274,7 @@ Responses, OpenAI Chat Completions, Gemini.
   `tools`, the body assembly, `GEMINI_BUILTIN_TOOLS`, `gemini_level_class`.
 - `src/dialects/gemini/config.rs` — `generationConfig` (`thinkingConfig`
   per MAP-7, `EFFORT_THINKING_BUDGETS` from `lm15/providers/common.py:386-393`,
-  the `responseSchema`/`responseJsonSchema` rule), `toolConfig` (MAP-8),
+  the MAP-16 schema-field rule), `toolConfig` (MAP-8),
   the MAP-6 cache plan.
 - `src/dialects/gemini/contents.rs` — messages and parts, thought-signature
   replay (MAP-7.8), the text-only slots.
@@ -291,9 +291,14 @@ Responses, OpenAI Chat Completions, Gemini.
   `allowed` → `allowedFunctionNames` with `ANY` or `VALIDATED` (auto);
   builtin names in `allowed` RAISE; `parallel=false` RAISES.
 - Structured output (INV-050): `responseMimeType: application/json`,
-  plus `responseJsonSchema` when the schema contains
-  `additionalProperties` anywhere, else `responseSchema`; `strict`
-  satisfied, `name` dropped (a label).
+  plus the schema in `responseJsonSchema` or `responseSchema` by MAP-16
+  (`config::openapi_schema`: the JSON Schema field when a schema node is
+  a boolean, has a key outside Gemini's Schema object, a list `type` or a
+  non-string `enum` element); `strict` satisfied, `name` dropped (a
+  label).
+- Function tools (MAP-16): the same rule picks `parameters` or
+  `parametersJsonSchema` in every `functionDeclarations` entry
+  (generateContent, cached prefixes, Live); the schema is verbatim.
 - Caching (MAP-6): `off`, `auto`, `prefix`, `prefix_until_index` alone,
   `retention: short` → nothing; `key` and `retention: long` RAISE;
   `resource` → `cachedContent` and only the messages after

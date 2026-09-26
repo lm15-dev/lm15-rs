@@ -52,10 +52,10 @@ another provider. See [Make your first request](https://lm15.dev/docs/first-requ
 
 ## Status
 
-Release candidate, checked 2026-09-25 against the pinned contract
-(`CONTRACT_PIN`): **1,492 of 1,492** contract cases pass
+Release candidate, checked 2026-09-26 against the pinned contract
+(`CONTRACT_PIN`): **1,583 of 1,583** contract checks pass
 (`harness/check.py --shim rust --direction all`; the skips are corpus gaps
-shared with the Python reference), and all 548 of the crate's own tests pass
+shared with the Python reference), and all 539 of the crate's own tests pass
 (`cargo test`, every test target). Provisional surfaces (files, batches,
 media generation, live sessions, stored caches) may change during 1.x, as in
 every lm15 language. The details of the September 20 catch-up are in
