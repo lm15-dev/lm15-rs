@@ -39,8 +39,9 @@ pub(crate) mod stores;
 pub(crate) mod time;
 
 pub use credential::{
-    is_jwt, select_scheme, AuthScheme, Credential, CredentialKind, CredentialProvider,
-    CredentialSource, FnCredential, SourcedCredential, StaticCredential, EXPIRY_SKEW_SECONDS,
+    is_jwt, looks_like_access_token, select_scheme, AuthScheme, Credential, CredentialKind,
+    CredentialProvider, CredentialSource, FnCredential, SourcedCredential, StaticCredential,
+    EXPIRY_SKEW_SECONDS,
 };
 pub use device::{
     login, login_xai, pkce_challenge, poll_device_code, poll_xai_device_login,

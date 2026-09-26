@@ -261,7 +261,7 @@ pub fn select_scheme(
     let found = found.copied();
     if matches!(found, Some(AuthScheme::ApiKey | AuthScheme::XApiKey))
         && policy_schemes.contains(&AuthScheme::Bearer)
-        && matches!(credential, Credential::ApiKey { value } if is_jwt(value))
+        && matches!(credential, Credential::ApiKey { value } if looks_like_access_token(value).is_some())
     {
         return Ok(AuthScheme::Bearer);
     }
@@ -302,6 +302,21 @@ pub fn is_jwt(value: &str) -> bool {
     super::stores::base64url_decode(segments[0])
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .is_some_and(|v| v.as_object().is_some_and(|o| o.contains_key("alg")))
+}
+
+/// The token shape a plain string has, if any (AUTH-2, amended 2026-09-19
+/// and 2026-09-26): `"JWT"` (JWS compact) or `"Google access token"`
+/// (`ya29.`, what every Google token endpoint issues). No key any door
+/// issues has either shape; on a key-first door that also takes bearer
+/// (`vertex`, the Azure doors) such a string travels as bearer.
+pub fn looks_like_access_token(value: &str) -> Option<&'static str> {
+    if value.starts_with("ya29.") {
+        Some("Google access token")
+    } else if is_jwt(value) {
+        Some("JWT")
+    } else {
+        None
+    }
 }
 
 /// Secret-free identity provenance (AUTH-1). This is never credential JSON.

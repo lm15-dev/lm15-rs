@@ -631,6 +631,38 @@ fn expires_from(now: i64, seconds: Option<&Value>) -> Option<i64> {
     Some(now + seconds as i64)
 }
 
+/// AUTH-21 (clarified 2026-09-24): from a failed auth-endpoint exchange
+/// only the status and, when the reply's `error` (or `error.code` /
+/// `error.type`) is one of these fixed words, that word. An error
+/// description can reflect the request (a refresh token, a signed
+/// assertion); a fixed word cannot.
+const OAUTH_ERROR_WORDS: &[&str] = &[
+    "invalid_request",
+    "invalid_client",
+    "invalid_grant",
+    "unauthorized_client",
+    "unsupported_grant_type",
+    "invalid_scope",
+    "access_denied",
+    "server_error",
+    "temporarily_unavailable",
+    "authorization_pending",
+    "slow_down",
+    "expired_token",
+];
+
+fn oauth_error_word(data: &Map<String, Value>) -> Option<&'static str> {
+    let candidates: Vec<Option<&Value>> = match data.get("error") {
+        Some(Value::Object(err)) => vec![err.get("code"), err.get("type")],
+        other => vec![other],
+    };
+    candidates
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .find_map(|w| OAUTH_ERROR_WORDS.iter().copied().find(|known| *known == w))
+}
+
 async fn exchange(
     ctx: &ChainContext,
     method: &str,
@@ -639,11 +671,40 @@ async fn exchange(
     body: Option<Vec<u8>>,
     what: &str,
 ) -> Result<Map<String, Value>, AuthError> {
+    exchange_hint(ctx, method, url, headers, body, what, None).await
+}
+
+/// One token-endpoint round trip. A refusal carries the status, a fixed
+/// OAuth word (AUTH-21, in the message: `AuthError::Rejected` has no code
+/// field) and, when the caller knows it, the one action that fixes it.
+async fn exchange_hint(
+    ctx: &ChainContext,
+    method: &str,
+    url: &str,
+    headers: Vec<(String, String)>,
+    body: Option<Vec<u8>>,
+    what: &str,
+    hint: Option<String>,
+) -> Result<Map<String, Value>, AuthError> {
     let (status, _, raw) = ctx.http(method, url, headers, body, 30).await?;
     if !(200..300).contains(&status) {
-        return Err(rejected(format!("{what}: HTTP {status}")));
+        let word = oauth_error_word(&json_body(&raw))
+            .map(|w| format!(" ({w})"))
+            .unwrap_or_default();
+        return Err(AuthError::Rejected {
+            provider: None,
+            message: format!("{what}: HTTP {status}{word}"),
+            hint,
+        });
     }
     Ok(json_body(&raw))
+}
+
+fn gcp_user_login_hint(where_: &str) -> String {
+    format!(
+        "the saved Google login in {where_} has expired or was revoked; run \
+         `gcloud auth application-default login` (Google ends these sessions on its own schedule)"
+    )
 }
 
 /// `_bearer_from_oauth`: `access_token`, expiry from `expires_on` (Unix
@@ -1980,7 +2041,7 @@ fn gcp_from_info<'a>(
                         value_str(info.get("refresh_token")).unwrap_or_default(),
                     ),
                 ];
-                let data = exchange(
+                let data = exchange_hint(
                     ctx,
                     "POST",
                     &value_str(info.get("token_uri")).unwrap_or_else(|| GCP_TOKEN_URL.into()),
@@ -1989,14 +2050,15 @@ fn gcp_from_info<'a>(
                         "application/x-www-form-urlencoded".into(),
                     )],
                     Some(form(&pairs)),
-                    "Google OAuth refresh",
+                    &format!("Google OAuth refresh ({where_})"),
+                    Some(gcp_user_login_hint(where_)),
                 )
                 .await?;
                 bearer_from_oauth(&data, now, "Google OAuth")
             }
             "service_account" => {
                 let (token_uri, assertion) = gcp_service_account_assertion(ctx, info, GCP_SCOPE)?;
-                let data = exchange(
+                let data = exchange_hint(
                     ctx,
                     "POST",
                     &token_uri,
@@ -2008,7 +2070,12 @@ fn gcp_from_info<'a>(
                         ("grant_type".into(), JWT_BEARER.into()),
                         ("assertion".into(), assertion),
                     ])),
-                    "Google service account",
+                    &format!("Google service account key ({where_})"),
+                    Some(format!(
+                        "the key in {where_} may have been deleted or disabled, or this machine's \
+                         clock is off; create a new key (Cloud console: IAM & Admin > Service \
+                         accounts > Keys) or use another identity"
+                    )),
                 )
                 .await?;
                 bearer_from_oauth(&data, now, "Google service account")
@@ -2025,7 +2092,7 @@ fn gcp_from_info<'a>(
                 let url =
                     value_str(info.get("service_account_impersonation_url")).unwrap_or_default();
                 let delegates = info.get("delegates").cloned().unwrap_or_else(|| json!([]));
-                gcp_impersonate(ctx, &base, &url, delegates).await
+                gcp_impersonate(ctx, &base, &url, delegates, where_).await
             }
             other => Err(not_configured(format!(
                 "{where_}: credential type {other:?} is not supported by lm15 \
@@ -2040,6 +2107,7 @@ async fn gcp_impersonate(
     source: &Credential,
     url: &str,
     delegates: Value,
+    where_: &str,
 ) -> Result<Credential, AuthError> {
     let token = match source {
         Credential::BearerToken { value, .. } | Credential::ApiKey { value } => value.clone(),
@@ -2050,7 +2118,7 @@ async fn gcp_impersonate(
         }
     };
     let body = json!({"delegates": delegates, "scope": [GCP_SCOPE], "lifetime": "3600s"});
-    let data = exchange(
+    let data = exchange_hint(
         ctx,
         "POST",
         url,
@@ -2059,7 +2127,13 @@ async fn gcp_impersonate(
             ("authorization".into(), format!("Bearer {token}")),
         ],
         Some(serde_json::to_vec(&body).expect("serializes")),
-        "generateAccessToken",
+        &format!("service account impersonation ({where_}; generateAccessToken)"),
+        Some(format!(
+            "the service account named in {where_} must exist, and the source identity needs \
+             roles/iam.serviceAccountTokenCreator on it (roles/iam.workloadIdentityUser for a \
+             workload identity pool), and the IAM Credentials API (iamcredentials.googleapis.com) \
+             enabled; a new grant can take several minutes to apply"
+        )),
     )
     .await?;
     let token = value_str(data.get("accessToken"))
@@ -2169,18 +2243,23 @@ async fn gcp_external_account(
         "subjectToken": subject,
         "subjectTokenType": value_str(info.get("subject_token_type")).unwrap_or_default(),
     });
-    let data = exchange(
+    let data = exchange_hint(
         ctx,
         "POST",
         &value_str(info.get("token_url")).unwrap_or_else(|| GCP_STS_URL.into()),
         vec![("content-type".into(), "application/json".into())],
         Some(serde_json::to_vec(&body).expect("serializes")),
-        "Google STS exchange",
+        &format!("Google STS exchange ({where_})"),
+        Some(
+            "the workload identity pool refused the external token: check the provider's \
+             issuer, allowed audience and attribute condition, and that the subject token is fresh"
+                .into(),
+        ),
     )
     .await?;
     let token = bearer_from_oauth(&data, ctx.now, "Google STS")?;
     if let Some(url) = value_str(info.get("service_account_impersonation_url")) {
-        return gcp_impersonate(ctx, &token, &url, json!([])).await;
+        return gcp_impersonate(ctx, &token, &url, json!([]), where_).await;
     }
     Ok(token)
 }
@@ -2220,14 +2299,27 @@ async fn gcloud_acquire(ctx: &ChainContext) -> Result<Option<Credential>, AuthEr
     if !ctx.subprocess || ctx.on_path("gcloud").is_none() {
         return Ok(None);
     }
-    let token = ctx
+    let token = match ctx
         .run(
             vec!["gcloud".into(), "auth".into(), "print-access-token".into()],
             30,
         )
-        .await?
-        .trim()
-        .to_string();
+        .await
+    {
+        Ok(out) => out.trim().to_string(),
+        // gcloud's own words stay unread (AUTH-5: a command's stderr is not shown).
+        Err(AuthError::Rejected { message, .. }) => return Err(AuthError::Rejected {
+            provider: None,
+            message: format!("`gcloud auth print-access-token` failed: {message}"),
+            hint: Some(
+                "run `gcloud auth print-access-token` yourself to see gcloud's reason; usually \
+                     `gcloud auth login` fixes it (or `gcloud auth application-default login`, \
+                     which lm15 reads first)"
+                    .into(),
+            ),
+        }),
+        Err(other) => return Err(other),
+    };
     if token.is_empty() {
         return Ok(None);
     }
@@ -2242,40 +2334,134 @@ fn adc_file_path(ctx: &ChainContext) -> String {
     )
 }
 
-// ─── Settings from the cloud profile (AUTH-10 fallbacks after env) ────
+// ─── Settings from the cloud's own configuration (AUTH-10, after env) ──
 
-/// The setting values the cloud's own config files carry: AWS `region`
-/// from the active profile; GCP `project` from the ADC file's
-/// `quota_project_id` / `project_id`. Nothing for Azure.
-pub fn profile_setting(policy: &AccessPolicy, ctx: &ChainContext, name: &str) -> Option<String> {
+pub use crate::cloud::hosts::ProfileValue;
+
+/// gcloud's own rule for a configuration name (named_configs.py:37); it
+/// also keeps the name inside the configurations directory.
+fn gcloud_config_name_ok(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some('a'..='z'))
+        && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-'))
+}
+
+/// The project `gcloud config get project` prints, read from the files
+/// gcloud reads: `CLOUDSDK_CORE_PROJECT`, then `[core] project` in
+/// `$CLOUDSDK_CONFIG/configurations/config_<name>` (`<name>` from
+/// `CLOUDSDK_ACTIVE_CONFIG_NAME`, else the `active_config` file, else
+/// `default`).
+pub fn gcloud_config_project(ctx: &ChainContext) -> Option<(String, String)> {
+    if let Some(value) = ctx
+        .env("CLOUDSDK_CORE_PROJECT")
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return Some((value.to_string(), "env:CLOUDSDK_CORE_PROJECT".into()));
+    }
+    let base = ctx
+        .env("CLOUDSDK_CONFIG")
+        .unwrap_or("~/.config/gcloud")
+        .trim_end_matches('/')
+        .to_string();
+    let name = ctx
+        .env("CLOUDSDK_ACTIVE_CONFIG_NAME")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            ctx.read(&format!("{base}/active_config"))
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
+        .unwrap_or_else(|| "default".into());
+    if !gcloud_config_name_ok(&name) {
+        return None;
+    }
+    let raw = ctx.read(&format!("{base}/configurations/config_{name}"))?;
+    let ini = Ini::parse(&raw).ok()?;
+    let value = ini
+        .section("core")
+        .and_then(|s| get(s, "project"))?
+        .trim()
+        .to_string();
+    (!value.is_empty()).then(|| (value, "gcloud-config".into()))
+}
+
+/// `project/project-id` from the metadata server: the project a Cloud Run
+/// service, GKE pod or VM runs in (asked before the first request).
+pub async fn metadata_project(ctx: &ChainContext) -> Option<String> {
+    if ctx.is_offline() || no_gce_check(ctx) {
+        return None;
+    }
+    let host = ctx
+        .env("GCE_METADATA_HOST")
+        .or_else(|| ctx.env("GCE_METADATA_ROOT"))
+        .unwrap_or("metadata.google.internal");
+    let (status, _, raw) = ctx
+        .http_probe(
+            "GET",
+            &format!("http://{host}/computeMetadata/v1/project/project-id"),
+            vec![("Metadata-Flavor".into(), "Google".into())],
+            None,
+            1,
+        )
+        .await?;
+    let value = String::from_utf8_lossy(&raw).trim().to_string();
+    (status == 200
+        && !value.is_empty()
+        && !value.contains(|c: char| c.is_whitespace() || "/?#".contains(c)))
+    .then_some(value)
+}
+
+/// The setting values the cloud's own configuration carries. AWS `region`:
+/// the active profile. Google `project` (amended 2026-09-26, the order
+/// google-auth and gcloud give it): the GOOGLE_APPLICATION_CREDENTIALS
+/// file's `project_id` (then `quota_project_id`); gcloud's active
+/// configuration; the ADC file's `quota_project_id` / `project_id`; then
+/// the metadata server ([`ProfileValue::Metadata`]). Nothing for Azure.
+pub fn profile_setting(
+    policy: &AccessPolicy,
+    ctx: &ChainContext,
+    name: &str,
+) -> Option<ProfileValue> {
     match (policy.credential_policy, name) {
         (CredentialPolicy::AwsChain, "region") => {
             let cfg = aws_config(ctx).ok()?;
             let section = aws_profile_section(&cfg.config, &cfg.profile);
-            get(&section, "region").map(str::to_string).or_else(|| {
-                cfg.credentials
-                    .section(&cfg.profile)
-                    .and_then(|s| get(s, "region"))
-                    .map(str::to_string)
-            })
+            get(&section, "region")
+                .map(str::to_string)
+                .or_else(|| {
+                    cfg.credentials
+                        .section(&cfg.profile)
+                        .and_then(|s| get(s, "region"))
+                        .map(str::to_string)
+                })
+                .map(|v| ProfileValue::Found(v, "aws-profile".into()))
         }
         (CredentialPolicy::GcpChain, "project") => {
-            let paths = [
-                ctx.env("GOOGLE_APPLICATION_CREDENTIALS")
-                    .map(str::to_string),
-                Some(adc_file_path(ctx)),
-            ];
-            for path in paths.into_iter().flatten() {
+            if let Some(path) = ctx
+                .env("GOOGLE_APPLICATION_CREDENTIALS")
+                .map(str::to_string)
+            {
                 if let Ok(Some(info)) = gcp_credential_file(ctx, &path) {
-                    if let Some(value) = value_str(
-                        info.get("quota_project_id")
-                            .or_else(|| info.get("project_id")),
-                    ) {
-                        return Some(value);
+                    if let Some(value) = value_str(info.get("project_id"))
+                        .or_else(|| value_str(info.get("quota_project_id")))
+                    {
+                        return Some(ProfileValue::Found(value, "adc-env".into()));
                     }
                 }
             }
-            None
+            if let Some((value, from)) = gcloud_config_project(ctx) {
+                return Some(ProfileValue::Found(value, from));
+            }
+            if let Ok(Some(info)) = gcp_credential_file(ctx, &adc_file_path(ctx)) {
+                if let Some(value) = value_str(info.get("quota_project_id"))
+                    .or_else(|| value_str(info.get("project_id")))
+                {
+                    return Some(ProfileValue::Found(value, "adc-file".into()));
+                }
+            }
+            (!no_gce_check(ctx)).then_some(ProfileValue::Metadata)
         }
         _ => None,
     }
@@ -2979,18 +3165,76 @@ pub async fn resolve_sourced(
             hint: Some("configure this identity, or omit the named credential to walk the chain".into()),
         });
     }
+    let probed = rungs
+        .iter()
+        .map(|rung| {
+            let detail = probe(policy, rung, ctx)
+                .map(|(_, detail)| detail)
+                .unwrap_or_else(|err| err.to_string());
+            format!("{}: {detail}", rung.source)
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
     Err(AuthError::NotConfigured {
         provider: Some(policy.provider.to_string()),
         message: format!(
-            "no credential found in the {} chain{}",
-            policy.credential_policy.as_str(),
-            match policy.env_keys.first() {
-                Some(key) => format!("; set {key} or configure the cloud SDK"),
-                None => "; configure the cloud SDK".into(),
-            }
+            "no credential found in the {} chain ({probed})",
+            policy.credential_policy.as_str()
         ),
-        hint: None,
+        hint: nothing_found_hint(policy),
     })
+}
+
+/// What to do when a whole chain answers nothing: the command that creates
+/// a credential the chain reads, then the deployed alternatives.
+fn nothing_found_hint(policy: &AccessPolicy) -> Option<String> {
+    let hint = match policy.credential_policy {
+        CredentialPolicy::GcpChain => "on a laptop: `gcloud auth application-default login`; elsewhere: set \
+            GOOGLE_APPLICATION_CREDENTIALS to a service-account or workload-identity file, run on Google \
+            Cloud with an attached service account, or pass an explicit credential for <provider> (a token, \
+            a key, or a CredentialProvider)",
+        CredentialPolicy::AzureChain => "on a laptop: `az login`; elsewhere: a managed identity, \
+            AZURE_TENANT_ID + AZURE_CLIENT_ID with a secret or certificate, or an explicit credential \
+            for <provider> (a token provider)",
+        CredentialPolicy::AwsChain => "on a laptop: `aws sso login` or `aws configure`; elsewhere: the \
+            instance or container role, AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or an explicit \
+            credential for <provider> (a credentials provider)",
+        _ => return None,
+    };
+    let hint = hint.replace("<provider>", policy.provider);
+    Some(match policy.env_keys.first() {
+        Some(key) => format!("set {key}, or {hint}"),
+        None => hint,
+    })
+}
+
+/// How a cloud door's wire refusal (HTTP 401/403 after a credential was
+/// obtained) is fixed; replaces the generic API-key guidance. `sent` is
+/// what the adapter knows it sent: `Some("key")`, `Some("token")`, or
+/// `None` (a provider decides per request).
+pub fn wire_auth_hint(
+    policy: &AccessPolicy,
+    status: Option<u16>,
+    sent: Option<&str>,
+) -> Option<String> {
+    if policy.credential_policy != CredentialPolicy::GcpChain {
+        return None;
+    }
+    match (status, sent) {
+        (Some(403), _) => Some("give the identity named above the Vertex AI User role \
+            (roles/aiplatform.user) on the project and enable the Vertex AI API \
+            (aiplatform.googleapis.com); a new project or a new grant can take a few minutes to \
+            apply. To use another identity: `gcloud auth application-default login`, or \
+            GOOGLE_APPLICATION_CREDENTIALS=<file>".into()),
+        (Some(401), Some("key")) => Some("Google refused this API key: use a Vertex AI key (Cloud \
+            console > APIs & Services > Credentials, restricted to the Vertex AI API or bound to a \
+            service account); Claude on Vertex takes no keys. If the value is an access token that \
+            does not start with `ya29.`, pass Credential::bearer_token(value, None)".into()),
+        (Some(401), _) => Some("Google refused this access token: it expired (they last an hour; \
+            pass a CredentialProvider, or let lm15's chain refresh it) or it is not an OAuth token. \
+            Sign in again with `gcloud auth application-default login`".into()),
+        _ => None,
+    }
 }
 
 fn with_provider(err: AuthError, provider: &str) -> AuthError {

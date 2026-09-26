@@ -98,6 +98,27 @@ pub struct Report {
     pub base_url: Option<String>,
     /// `base_urls`, `env $VARIABLE`, or `template`.
     pub endpoint_source: Option<String>,
+    /// Where each setting came from (AUTH-10 `from`, amended 2026-09-26):
+    /// `explicit`, `env:<VAR>`, `adc-env`, `gcloud-config`, `adc-file`,
+    /// `metadata`, `aws-profile`, `default`; `unprobed:metadata` when only
+    /// the metadata server could answer; `missing`.
+    pub setting_sources: Vec<(String, String)>,
+}
+
+fn setting_from(origin: &str) -> String {
+    if let Some(var) = origin.strip_prefix("env:") {
+        return format!("env ${var}");
+    }
+    match origin {
+        "explicit" => "settings",
+        "adc-env" => "the GOOGLE_APPLICATION_CREDENTIALS file",
+        "gcloud-config" => "gcloud's active configuration",
+        "adc-file" => "the gcloud application default credentials file",
+        "metadata" | "unprobed:metadata" => "the Google Cloud metadata server",
+        "aws-profile" => "the active AWS profile",
+        other => other,
+    }
+    .to_string()
 }
 
 impl Report {
@@ -148,7 +169,27 @@ impl Report {
             None => lines.push("  configured: no".into()),
         }
         for (name, value) in &self.settings {
-            lines.push(format!("  setting {name}: {value}"));
+            let origin = self
+                .setting_sources
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, o)| o.as_str())
+                .filter(|o| *o != "missing");
+            match origin {
+                Some(origin) => lines.push(format!(
+                    "  setting {name}: {value} (from {})",
+                    setting_from(origin)
+                )),
+                None => lines.push(format!("  setting {name}: {value}")),
+            }
+        }
+        for (name, origin) in &self.setting_sources {
+            if origin.starts_with("unprobed:") {
+                lines.push(format!(
+                    "  setting {name}: not found offline; {} is asked at request time",
+                    setting_from(origin)
+                ));
+            }
         }
         if let Some(url) = &self.base_url {
             let source = self.endpoint_source.as_deref().unwrap_or("template");
@@ -341,6 +382,7 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
             named_credential: None,
             base_url: None,
             endpoint_source: None,
+            setting_sources: Vec::new(),
         });
     }
 
@@ -447,7 +489,7 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
         selected = true;
     }
 
-    let (settings, base_url, endpoint_source) =
+    let (settings, base_url, endpoint_source, setting_sources) =
         host_report(policy, options, &options.environment(), |_| None);
     let mut report = Report {
         provider: canonical,
@@ -457,6 +499,7 @@ pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, 
         named_credential: None,
         base_url,
         endpoint_source,
+        setting_sources,
     };
     annotate_jwt(&mut report, policy, options);
     Ok(report)
@@ -473,11 +516,11 @@ fn annotate_jwt(report: &mut Report, policy: &super::AccessPolicy, options: &Exp
     }
     for step in &mut report.steps {
         if let Some(key) = step.kind.strip_prefix("env:") {
-            if options
+            if let Some(shape) = options
                 .env_value(key)
-                .is_some_and(|value| super::is_jwt(&value))
+                .and_then(|value| super::looks_like_access_token(&value))
             {
-                step.detail.push_str("; sent as bearer (JWT)");
+                step.detail.push_str(&format!("; sent as bearer ({shape})"));
             }
         }
     }
@@ -511,19 +554,28 @@ fn validate_explicit_entries(options: &ExplainOptions) -> Result<(), AuthError> 
     Ok(())
 }
 
+/// The host half of a report: settings by name and value, the door URL and
+/// where it came from, and where each setting came from (AUTH-10 `from`).
+type HostReport = (
+    Vec<(String, String)>,
+    Option<String>,
+    Option<String>,
+    Vec<(String, String)>,
+);
+
 /// Resolve endpoints without retaining raw endpoint input on an error: an
 /// invalid URL may contain userinfo, a query token, or other secret material.
 fn host_report(
     policy: &crate::auth::AccessPolicy,
     options: &ExplainOptions,
     env: &std::collections::BTreeMap<String, String>,
-    profile: impl Fn(&str) -> Option<String>,
-) -> (Vec<(String, String)>, Option<String>, Option<String>) {
+    profile: impl Fn(&str) -> Option<crate::cloud::hosts::ProfileValue>,
+) -> HostReport {
     use crate::cloud::hosts::{
-        endpoint_from_env, resolve_base_url, resolve_settings_with_endpoint,
+        endpoint_from_env, resolve_base_url, resolve_settings_traced, ProfileValue, SettingsTrace,
     };
     let Some(host) = &policy.host else {
-        return (Vec::new(), None, None);
+        return (Vec::new(), None, None, Vec::new());
     };
     let (endpoint, source) = if let Some(endpoint) = options.base_url.as_deref() {
         (Some(endpoint), "base_urls".to_string())
@@ -533,6 +585,10 @@ fn host_report(
         (None, "template".to_string())
     };
     let mut given = options.settings.clone().unwrap_or_default();
+    let mut trace = SettingsTrace {
+        collect: true,
+        ..SettingsTrace::default()
+    };
     for setting in host.settings {
         if given.get(setting.name).is_none_or(String::is_empty)
             && !setting
@@ -540,17 +596,25 @@ fn host_report(
                 .iter()
                 .any(|key| env.get(*key).is_some_and(|v| !v.is_empty()))
         {
-            if let Some(value) = profile(setting.name) {
-                given.insert(setting.name.to_string(), value);
+            match profile(setting.name) {
+                Some(ProfileValue::Found(value, from)) => {
+                    given.insert(setting.name.to_string(), value);
+                    trace.injected.insert(setting.name.to_string(), from);
+                }
+                Some(ProfileValue::Metadata) if setting.default.is_none() => {
+                    trace.pending.insert(setting.name.to_string());
+                }
+                _ => {}
             }
         }
     }
-    let resolved = match resolve_settings_with_endpoint(
+    let resolved = match resolve_settings_traced(
         Some(host),
         &given,
         Some(env),
         policy.provider,
         endpoint,
+        &mut trace,
     ) {
         Ok(settings) => settings,
         Err(error) => {
@@ -567,16 +631,24 @@ fn host_report(
                 )],
                 None,
                 None,
+                Vec::new(),
             );
         }
     };
-    let url = resolve_base_url(host, &resolved, endpoint);
-    let mut settings: Vec<_> = resolved.into_iter().collect();
-    match url {
-        Ok(url) => (settings, Some(url), Some(source)),
+    let sources: Vec<(String, String)> = trace.sources.clone().into_iter().collect();
+    let mut settings: Vec<_> = resolved.clone().into_iter().collect();
+    if let Some(problem) = trace.problems.first() {
+        settings.push(("error".into(), problem.message().replace('"', "'")));
+        return (settings, None, None, sources);
+    }
+    if !trace.pending.is_empty() {
+        return (settings, None, None, sources);
+    }
+    match resolve_base_url(host, &resolved, endpoint) {
+        Ok(url) => (settings, Some(url), Some(source), sources),
         Err(error) => {
             settings.push(("error".into(), error.message().to_string()));
-            (settings, None, None)
+            (settings, None, None, sources)
         }
     }
 }
@@ -594,7 +666,7 @@ fn explain_cloud(
     // walk. The report says so, rung by rung absent, as the router refuses.
     let entry = options.explicit_source(canonical)?;
     let explicit = entry.is_some();
-    let (settings, base_url, endpoint_source) =
+    let (settings, base_url, endpoint_source, setting_sources) =
         host_report(policy, options, &options.environment(), |_| None);
     let steps = vec![
         Step {
@@ -635,6 +707,7 @@ fn explain_cloud(
         named_credential: options.credential.clone(),
         base_url,
         endpoint_source,
+        setting_sources,
     })
 }
 
@@ -657,9 +730,10 @@ fn explain_cloud(
     }
     let entry = options.explicit_source(canonical)?;
     let explicit = entry.is_some();
-    let (settings, base_url, endpoint_source) = host_report(policy, options, &env, |name| {
-        chains::profile_setting(policy, &ctx, name)
-    });
+    let (settings, base_url, endpoint_source, setting_sources) =
+        host_report(policy, options, &env, |name| {
+            chains::profile_setting(policy, &ctx, name)
+        });
     ctx.settings = settings
         .iter()
         .filter(|(name, _)| name != "error")
@@ -696,6 +770,7 @@ fn explain_cloud(
         named_credential: options.credential.clone(),
         base_url,
         endpoint_source,
+        setting_sources,
     })
 }
 
@@ -891,6 +966,7 @@ fn explain_managed(
         named_credential: None,
         base_url: None,
         endpoint_source: None,
+        setting_sources: Vec::new(),
     })
 }
 

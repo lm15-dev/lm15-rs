@@ -891,13 +891,18 @@ pub const VERTEX: AccessPolicy = AccessPolicy {
             "https://{location_host}/v1/projects/{project}/locations/{location}/publishers/google",
         )
     }),
+    // API keys (amended 2026-09-26): a Vertex API key in `x-goog-api-key`
+    // on the project-scoped hosts; key first, a token-shaped string still
+    // bearer (`select_scheme`). No env key: GOOGLE_API_KEY belongs to the
+    // Gemini API and vertex-express, and reading it here would silently
+    // replace the ADC identity.
     ..policy(
         "vertex",
         EndpointSupport::CHAT,
         GcpChain,
-        &["google-oauth"],
+        &["x-goog-api-key", "google-oauth"],
         &[],
-        &[Bearer],
+        &[XApiKey, Bearer],
     )
 };
 

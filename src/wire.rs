@@ -840,10 +840,15 @@ pub fn emit_wire_with_source(
             .auth_scheme
             .iter()
             .any(|s| matches!(s, AuthScheme::ApiKey | AuthScheme::XApiKey))
-        && matches!(&credential, Credential::ApiKey { value } if crate::auth::is_jwt(value))
     {
-        if let Some(source) = &mut source {
-            source.label.push_str("; sent as bearer (JWT)");
+        if let Credential::ApiKey { value } = &credential {
+            if let (Some(shape), Some(source)) =
+                (crate::auth::looks_like_access_token(value), &mut source)
+            {
+                source
+                    .label
+                    .push_str(&format!("; sent as bearer ({shape})"));
+            }
         }
     }
     let mut headers = wire.headers;

@@ -24,7 +24,7 @@ use std::task::{Context, Poll};
 use futures_core::Stream;
 
 use crate::auth::{AccessPolicy, CredentialProvider};
-use crate::cloud::hosts::{resolve_base_url, resolve_settings_with_endpoint, HostSettings};
+use crate::cloud::hosts::{resolve_base_url, HostSettings};
 use crate::compat::{
     preset_base_url, preset_key, AnthropicCompat, Compat, OpenAIChatCompat, OpenAIResponsesCompat,
     ANTHROPIC_PRESET_BASE_URLS, OPENAI_CHAT_PRESET_BASE_URLS, OPENAI_RESPONSES_PRESET_BASE_URLS,
@@ -77,9 +77,90 @@ struct Binding {
     settings: HostSettings,
     account_id: Option<String>,
     adaptations: crate::adaptation::AdaptationPolicy,
+    /// Settings only a network source can supply (the Google project from
+    /// the metadata server, AUTH-10 amended 2026-09-26), asked in the async
+    /// `prepare` step before the first request.
+    pending: Option<Arc<PendingHost>>,
+}
+
+/// Asks a network source for one host setting (`None`: it did not answer).
+pub(crate) type SettingResolver =
+    Arc<dyn Fn(String) -> crate::transport::BoxFuture<'static, Option<String>> + Send + Sync>;
+
+/// The settings a door asks before its first request, and the answer once
+/// known. Until then the binding's base URL carries a placeholder no real
+/// value can equal (`{project}`) and a hand-built request is refused.
+pub(crate) struct PendingHost {
+    names: Vec<String>,
+    resolvers: Vec<SettingResolver>,
+    endpoint: Option<String>,
+    resolved: std::sync::OnceLock<(String, HostSettings)>,
 }
 
 impl Binding {
+    /// The base URL and settings in effect: the resolved ones once the
+    /// pending settings have answered.
+    fn host_view(&self) -> (&str, &HostSettings) {
+        if let Some((url, settings)) = self.pending.as_ref().and_then(|p| p.resolved.get()) {
+            return (url, settings);
+        }
+        (&self.base_url, &self.settings)
+    }
+
+    /// A synchronous build cannot ask the network: refuse while a setting
+    /// is still pending, naming the two ways out.
+    fn host_ready(&self) -> Result<(), Lm15Error> {
+        match &self.pending {
+            Some(p) if p.resolved.get().is_none() => {
+                let mut meta = ErrorMeta::new(format!(
+                    "{}: setting {:?} comes from the metadata server, asked before the first request; \
+                     send through complete() or stream(), or set it (GOOGLE_CLOUD_PROJECT, \
+                     `gcloud config set project <id>`, or settings)",
+                    self.provider,
+                    p.names.join(", ")
+                ));
+                meta.provider = Some(self.provider.clone());
+                Err(Lm15Error::NotConfiguredError(meta))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Ask the pending settings once (a concurrent first request may ask
+    /// too; the first answer is kept), then render the real base URL.
+    async fn prepare_host(&self) -> Result<(), Lm15Error> {
+        let Some(pending) = &self.pending else {
+            return Ok(());
+        };
+        if pending.resolved.get().is_some() {
+            return Ok(());
+        }
+        let mut settings = self.settings.clone();
+        for (name, resolver) in pending.names.iter().zip(&pending.resolvers) {
+            let Some(value) = resolver(name.clone()).await else {
+                let hint = if name == "project" {
+                    "set GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT, run `gcloud config set project <id>`, or pass settings={\"project\": ...}".to_string()
+                } else {
+                    format!("pass settings={{\"{name}\": ...}}")
+                };
+                let mut meta = ErrorMeta::new(format!(
+                    "{}: setting {name:?} is required and has no default; the metadata server did not answer (not on Google Cloud?); {hint}",
+                    self.provider
+                ));
+                meta.provider = Some(self.provider.clone());
+                return Err(Lm15Error::NotConfiguredError(meta));
+            };
+            settings.insert(name.clone(), value);
+        }
+        let host = self
+            .policy
+            .host
+            .as_ref()
+            .expect("a pending setting belongs to a host");
+        let url = resolve_base_url(host, &settings, pending.endpoint.as_deref())?;
+        let _ = pending.resolved.set((url, settings));
+        Ok(())
+    }
     /// The model string the dialect sends (see `ProviderLM::wire_model`).
     fn wire_model<'a>(&self, model: &'a str) -> &'a str {
         match model.split_once(':') {
@@ -97,12 +178,13 @@ impl Binding {
     }
 
     fn context<'a>(&'a self, request: &'a Request) -> BuildContext<'a> {
+        let (base_url, settings) = self.host_view();
         BuildContext {
             provider: &self.provider,
             policy: self.policy,
-            settings: &self.settings,
+            settings,
             compat: &self.compat,
-            base_url: &self.base_url,
+            base_url,
             model: self.wire_model(&request.model),
             account_id: self.account_id.as_deref(),
         }
@@ -110,12 +192,13 @@ impl Binding {
 
     /// The context of a surface request that names no model.
     fn surface_context(&self) -> BuildContext<'_> {
+        let (base_url, settings) = self.host_view();
         BuildContext {
             provider: &self.provider,
             policy: self.policy,
-            settings: &self.settings,
+            settings,
             compat: &self.compat,
-            base_url: &self.base_url,
+            base_url,
             model: "",
             account_id: self.account_id.as_deref(),
         }
@@ -141,12 +224,12 @@ impl ProviderLM {
     }
 
     pub fn base_url(&self) -> &str {
-        &self.binding.base_url
+        self.binding.host_view().0
     }
 
     /// The resolved host settings (AUTH-10; empty for a public API).
     pub fn settings(&self) -> &HostSettings {
-        &self.binding.settings
+        self.binding.host_view().1
     }
 
     /// The model string the dialect sends: `provider:model` loses its
@@ -179,6 +262,7 @@ impl ProviderLM {
             meta.provider = Some(self.provider().to_string());
             Lm15Error::InvalidRequestError(meta)
         })?;
+        self.binding.host_ready()?;
         let cx = self.binding.context(request);
         let (wire, _) =
             crate::adaptation::collect(self.binding.adaptations, self.provider(), || {
@@ -1415,6 +1499,7 @@ impl ProviderLM {
     /// chain resolving or refreshing its token) runs it here, before any
     /// request is built. Static credentials and stored logins have none.
     async fn ready(&self) -> Result<(), Lm15Error> {
+        self.binding.prepare_host().await?;
         if let Some(prepare) = self.credentials.prepare() {
             prepare.await.map_err(Lm15Error::from)?;
         }
@@ -1576,6 +1661,7 @@ impl ProviderLM {
                     'static,
                     Result<(TransportResponse, Option<crate::auth::CredentialSource>), Lm15Error>,
                 > = Box::pin(async move {
+                    binding.prepare_host().await?;
                     if let Some(prepare) = credentials.prepare() {
                         prepare.await.map_err(Lm15Error::from)?;
                     }
@@ -1627,6 +1713,34 @@ impl ProviderLM {
         error.meta_mut().provider = Some(self.provider().into());
         if error.code() == crate::errors::ErrorCode::Auth {
             error.meta_mut().credential_source = self.credentials.source();
+            // A cloud door refusing an identity is an IAM or token question,
+            // not a mistyped key: say which role, or which kind of credential.
+            #[cfg(feature = "native")]
+            if self.binding.policy.is_cloud_chain() {
+                let sent = match self.credentials.credential() {
+                    Ok(crate::auth::Credential::BearerToken { .. }) => Some("token"),
+                    Ok(crate::auth::Credential::ApiKey { value }) => {
+                        Some(if crate::auth::looks_like_access_token(&value).is_some() {
+                            "token"
+                        } else {
+                            "key"
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(hint) =
+                    crate::cloud::chains::wire_auth_hint(self.binding.policy, Some(status), sent)
+                {
+                    let meta = error.meta_mut();
+                    let base = meta
+                        .message
+                        .split("\n\n  To fix:")
+                        .next()
+                        .unwrap_or_default()
+                        .to_string();
+                    meta.message = format!("{base}\n\n  To fix:\n    - {hint}\n");
+                }
+            }
         }
         error
     }
@@ -2119,6 +2233,9 @@ pub struct LmBuilder {
     timeouts: crate::transport::Timeouts,
     max_connections: usize,
     budget_explicit: bool,
+    /// Settings the router could not resolve offline and that a network
+    /// source supplies before the first request (AUTH-10).
+    deferred: Vec<(String, SettingResolver)>,
 }
 
 impl LmBuilder {
@@ -2136,6 +2253,7 @@ impl LmBuilder {
             env: None,
             base_url: None,
             settings: HostSettings::new(),
+            deferred: Vec::new(),
             clock: None,
             transport: None,
             account_id: None,
@@ -2211,6 +2329,18 @@ impl LmBuilder {
     /// `location`, `resource`, `authority_host`, `scope`.
     pub fn settings(mut self, settings: HostSettings) -> Self {
         self.settings = settings;
+        self
+    }
+
+    /// A setting a network source supplies before the first request (the
+    /// Google project from the metadata server; AUTH-10, amended 2026-09-26).
+    #[cfg_attr(not(feature = "native"), allow(dead_code))]
+    pub(crate) fn deferred_setting(
+        mut self,
+        name: impl Into<String>,
+        resolver: SettingResolver,
+    ) -> Self {
+        self.deferred.push((name.into(), resolver));
         self
     }
 
@@ -2328,7 +2458,7 @@ impl LmBuilder {
         Ok(records)
     }
 
-    pub fn build(self) -> Result<ProviderLM, Lm15Error> {
+    pub fn build(mut self) -> Result<ProviderLM, Lm15Error> {
         let provider = self.provider;
         let policy = self.policy;
         if self.transport.is_some() && self.budget_explicit {
@@ -2358,6 +2488,11 @@ impl LmBuilder {
             })
         });
         let mut given = self.settings.clone();
+        // Mutated only by the native build's cloud profile lookup.
+        #[allow(unused_mut)]
+        let mut trace = crate::cloud::hosts::SettingsTrace::default();
+        #[allow(unused_mut)]
+        let mut deferred: Vec<(String, SettingResolver)> = std::mem::take(&mut self.deferred);
         #[cfg(feature = "native")]
         if self.credential_name.is_some() {
             let profile_transport = match &self.transport {
@@ -2374,22 +2509,36 @@ impl LmBuilder {
                     if !given.contains_key(setting.name)
                         && !setting.env.iter().any(|v| env.contains_key(*v))
                     {
-                        if let Some(value) =
-                            crate::cloud::chains::profile_setting(policy, &ctx, setting.name)
-                        {
-                            given.insert(setting.name.into(), value);
+                        match crate::cloud::chains::profile_setting(policy, &ctx, setting.name) {
+                            Some(crate::cloud::chains::ProfileValue::Found(value, from)) => {
+                                given.insert(setting.name.into(), value);
+                                trace.injected.insert(setting.name.into(), from);
+                            }
+                            Some(crate::cloud::chains::ProfileValue::Metadata)
+                                if setting.default.is_none() =>
+                            {
+                                deferred
+                                    .push((setting.name.into(), metadata_resolver(ctx.clone())));
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
         }
-        let settings = resolve_settings_with_endpoint(
+        trace.pending = deferred.iter().map(|(name, _)| name.clone()).collect();
+        let settings = crate::cloud::hosts::resolve_settings_traced(
             policy.host.as_ref(),
             &given,
             Some(&env),
             &provider,
             endpoint.as_deref(),
+            &mut trace,
         )?;
+        let deferred: Vec<(String, SettingResolver)> = deferred
+            .into_iter()
+            .filter(|(name, _)| !settings.contains_key(name))
+            .collect();
         let transport = match self.transport {
             Some(transport) => transport,
             #[cfg(feature = "native")]
@@ -2454,13 +2603,31 @@ impl LmBuilder {
         // a named server is never sent to the OpenAI cloud with whatever
         // key is around. Only the dialect's own default name resolves to
         // the cloud default.
+        // A pending setting renders as a placeholder no real value can equal
+        // (braces); `prepare_host` renders the real URL before a request.
+        let mut rendered_settings = settings.clone();
+        for (name, _) in &deferred {
+            rendered_settings.insert(name.clone(), format!("{{{name}}}"));
+        }
+        let pending = match (deferred.is_empty(), &policy.host) {
+            (false, Some(_)) => Some(Arc::new(PendingHost {
+                names: deferred.iter().map(|(name, _)| name.clone()).collect(),
+                resolvers: deferred
+                    .iter()
+                    .map(|(_, resolver)| Arc::clone(resolver))
+                    .collect(),
+                endpoint: endpoint.clone(),
+                resolved: std::sync::OnceLock::new(),
+            })),
+            _ => None,
+        };
         let base_url = match endpoint {
             Some(explicit) => match &policy.host {
-                Some(host) => resolve_base_url(host, &settings, Some(&explicit))?,
+                Some(host) => resolve_base_url(host, &rendered_settings, Some(&explicit))?,
                 None => crate::cloud::hosts::join_endpoint(&explicit, "")?,
             },
             None => match (&policy.host, policy.base_url) {
-                (Some(host), _) => resolve_base_url(host, &settings, None)?,
+                (Some(host), _) => resolve_base_url(host, &rendered_settings, None)?,
                 (None, Some(url)) => url.to_string(),
                 (None, None) => match self.compat_name.as_deref() {
                     None => self.dialect.default_base_url().to_string(),
@@ -2495,6 +2662,7 @@ impl LmBuilder {
                 settings,
                 account_id: self.account_id,
                 adaptations: self.adaptations,
+                pending,
             }),
             credentials,
             clock: match self.clock {
@@ -2504,6 +2672,23 @@ impl LmBuilder {
             transport,
         })
     }
+}
+
+/// Ask the metadata server for the Google project (AUTH-10, amended
+/// 2026-09-26) through an online chain context.
+#[cfg(feature = "native")]
+pub(crate) fn metadata_resolver(ctx: crate::cloud::chains::ChainContext) -> SettingResolver {
+    let ctx = Arc::new(ctx);
+    Arc::new(move |name: String| {
+        let ctx = Arc::clone(&ctx);
+        Box::pin(async move {
+            if name == "project" {
+                crate::cloud::chains::metadata_project(&ctx).await
+            } else {
+                None
+            }
+        })
+    })
 }
 
 impl fmt::Debug for LmBuilder {

@@ -218,9 +218,31 @@ fn op_explain_auth(msg: &Map<String, Value>) -> Result<Value, Failure> {
         .map(|s| json!({ "kind": s.kind, "state": s.state.as_str() }))
         .collect();
     let report_text = format!("{}\n{}\n{:?}", report.describe(), report, report);
+    // PROTOCOL.md explain_auth `settings` (2026-09-26): value and origin per
+    // host setting; unprobed and missing ones have a null value.
+    let values: Map<String, Value> = report
+        .settings
+        .iter()
+        .filter(|(k, _)| k != "error")
+        .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+        .collect();
+    let settings: Map<String, Value> = report
+        .setting_sources
+        .iter()
+        .map(|(name, origin)| {
+            let entry = if origin == "missing" {
+                json!({"value": null, "from": null})
+            } else if let Some(from) = origin.strip_prefix("unprobed:") {
+                json!({"value": null, "from": from, "state": "unprobed"})
+            } else {
+                json!({"value": values.get(name).cloned().unwrap_or(Value::Null), "from": origin})
+            };
+            (name.clone(), entry)
+        })
+        .collect();
     Ok(
         json!({ "configured": report.configured, "steps": steps, "report_text": report_text,
-        "base_url":report.base_url,"settings":report.settings.into_iter().map(|(k,v)|(k,Value::String(v))).collect::<Map<String,Value>>(),
+        "base_url":report.base_url,"settings":settings,
         "named_credential":report.named_credential,"endpoint_source":report.endpoint_source }),
     )
 }

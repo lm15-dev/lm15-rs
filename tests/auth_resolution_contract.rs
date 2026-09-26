@@ -11,7 +11,7 @@
 //! AUTH-19's companion named-credential corpus pins closed rung subsets,
 //! endpoint roots, required settings and configuration conflicts.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use lm15::auth::{explain_auth, ExplainOptions};
@@ -46,7 +46,7 @@ const CLOUD_RUNG_KINDS: &[&str] = &[
 /// The split pinned by the contract at `CONTRACT_PIN` (43 cases; the six
 /// AUTH-1 shared-explicit-key cases of 2026-09-09 are core).
 const EXPECTED_CORE_CASES: usize = 32;
-const EXPECTED_CLOUD_CASES: usize = 11;
+const EXPECTED_CLOUD_CASES: usize = 24; // 13 added 2026-09-26: where the Google project comes from (AUTH-10)
 
 fn contract_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("LM15_CONTRACT_DIR")
@@ -316,6 +316,31 @@ fn cloud_cases_replay_the_chain_offline() {
             })
             .collect();
         assert_eq!(actual, expected, "{id}: steps (kind, state) in chain order");
+        if let Some(settings) = expect["settings"].as_object() {
+            // PROTOCOL.md explain_auth `settings` (2026-09-26): each host
+            // setting's value and origin (AUTH-10 `from`).
+            let values: BTreeMap<&str, &str> = report
+                .settings
+                .iter()
+                .filter(|(k, _)| k != "error")
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let actual: serde_json::Map<String, Value> = report
+                .setting_sources
+                .iter()
+                .map(|(name, origin)| {
+                    let entry = if origin == "missing" {
+                        serde_json::json!({"value": null, "from": null})
+                    } else if let Some(from) = origin.strip_prefix("unprobed:") {
+                        serde_json::json!({"value": null, "from": from, "state": "unprobed"})
+                    } else {
+                        serde_json::json!({"value": values.get(name.as_str()), "from": origin})
+                    };
+                    (name.clone(), entry)
+                })
+                .collect();
+            assert_eq!(&actual, settings, "{id}: settings and where each came from");
+        }
         for rendering in [report.describe(), format!("{report:?}")] {
             assert!(
                 !rendering.contains(sentinel),

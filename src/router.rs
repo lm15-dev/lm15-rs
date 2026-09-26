@@ -46,7 +46,7 @@ use crate::auth::{
 };
 #[cfg(feature = "native")]
 use crate::cloud::chains::{profile_setting, ChainContext, ChainProvider};
-use crate::cloud::hosts::{resolve_settings_with_endpoint, HostSettings};
+use crate::cloud::hosts::HostSettings;
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::registry::{lookup, DialectId, EntryKind, ProviderDefinition, PROVIDERS};
 use crate::transport::Transport;
@@ -947,6 +947,7 @@ impl LMRouter {
                 named_credential: None,
                 base_url: resolution.base_url,
                 endpoint_source: Some("RouterConfig declaration".into()),
+                setting_sources: Vec::new(),
             });
         }
         let options = crate::auth::ExplainOptions {
@@ -1787,6 +1788,7 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         };
         let mut ctx = ChainContext::online(env_map.clone(), transport, now);
         let mut given = config.settings.get(provider).cloned().unwrap_or_default();
+        let mut trace = crate::cloud::hosts::SettingsTrace::default();
         if policy.is_cloud_chain() {
             for setting in host.settings {
                 let from_config = given.get(setting.name).is_some_and(|v| !v.is_empty());
@@ -1795,18 +1797,34 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
                     .iter()
                     .any(|var| env_map.get(*var).is_some_and(|v| !v.is_empty()));
                 if !from_config && !from_env {
-                    if let Some(value) = profile_setting(policy, &ctx, setting.name) {
-                        given.insert(setting.name.to_string(), value);
+                    match profile_setting(policy, &ctx, setting.name) {
+                        Some(crate::cloud::chains::ProfileValue::Found(value, from)) => {
+                            given.insert(setting.name.to_string(), value);
+                            trace.injected.insert(setting.name.to_string(), from);
+                        }
+                        // AUTH-10: only the metadata server can answer; the
+                        // door asks it before the first request.
+                        Some(crate::cloud::chains::ProfileValue::Metadata)
+                            if setting.default.is_none() =>
+                        {
+                            trace.pending.insert(setting.name.to_string());
+                            builder = builder.deferred_setting(
+                                setting.name,
+                                crate::adapter::metadata_resolver(ctx.clone()),
+                            );
+                        }
+                        _ => {}
                     }
                 }
             }
         }
-        let settings = resolve_settings_with_endpoint(
+        let settings = crate::cloud::hosts::resolve_settings_traced(
             Some(host),
             &given,
             Some(&env_map),
             provider,
             endpoint.as_deref(),
+            &mut trace,
         )?;
         builder = builder.settings(settings.clone());
         let named = managed_named.as_ref().or(config.credentials.get(provider));
@@ -1834,7 +1852,7 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
         // be explicit (a cloud chain cannot run here).
         let env_map = config.env_map();
         let given = config.settings.get(provider).cloned().unwrap_or_default();
-        let settings = resolve_settings_with_endpoint(
+        let settings = crate::cloud::hosts::resolve_settings_with_endpoint(
             Some(host),
             &given,
             Some(&env_map),

@@ -46,6 +46,20 @@ pub fn resolve_settings(
     resolve_settings_with_endpoint(host, given, env, provider, None)
 }
 
+/// A setting the cloud's own configuration supplies (AUTH-10, amended
+/// 2026-09-26).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileValue {
+    /// The value and its origin in the AUTH-10 `from` vocabulary
+    /// (`aws-profile`, `adc-env`, `env:CLOUDSDK_CORE_PROJECT`,
+    /// `gcloud-config`, `adc-file`).
+    Found(String, String),
+    /// Only the metadata server could answer: the adapter asks it in its
+    /// async `prepare` step, before the first request; the offline doctor
+    /// reports it unprobed.
+    Metadata,
+}
+
 /// Resolve settings while allowing an endpoint to replace root-only settings.
 pub fn resolve_settings_with_endpoint(
     host: Option<&HostSpec>,
@@ -53,6 +67,40 @@ pub fn resolve_settings_with_endpoint(
     env: Option<&BTreeMap<String, String>>,
     provider: &str,
     endpoint: Option<&str>,
+) -> Result<HostSettings, Lm15Error> {
+    let mut trace = SettingsTrace::default();
+    resolve_settings_traced(host, given, env, provider, endpoint, &mut trace)
+}
+
+/// Where each setting came from, and what could not be resolved yet
+/// (AUTH-10, amended 2026-09-26).
+#[derive(Debug, Clone, Default)]
+pub struct SettingsTrace {
+    /// In: the origin of values the caller injected into `given` from the
+    /// cloud's own configuration (`adc-env`, `gcloud-config`, …); any
+    /// other `given` value is `explicit`.
+    pub injected: BTreeMap<String, String>,
+    /// In: names the caller will supply later (the metadata server, asked
+    /// in `prepare`); not required now, recorded `unprobed:metadata`.
+    pub pending: std::collections::BTreeSet<String>,
+    /// In: collect missing-setting errors in `problems` instead of
+    /// returning the first (the doctor), and return what did resolve.
+    pub collect: bool,
+    /// Out: each setting's origin — `explicit`, `env:<VAR>`, an injected
+    /// origin, `default`, `unprobed:metadata`, `missing`.
+    pub sources: BTreeMap<String, String>,
+    /// Out (with `collect`): the missing-setting errors.
+    pub problems: Vec<Lm15Error>,
+}
+
+/// [`resolve_settings_with_endpoint`] that records each setting's origin.
+pub fn resolve_settings_traced(
+    host: Option<&HostSpec>,
+    given: &HostSettings,
+    env: Option<&BTreeMap<String, String>>,
+    provider: &str,
+    endpoint: Option<&str>,
+    trace: &mut SettingsTrace,
 ) -> Result<HostSettings, Lm15Error> {
     if let Some(endpoint) = endpoint {
         join_endpoint(endpoint, "")?;
@@ -62,18 +110,39 @@ pub fn resolve_settings_with_endpoint(
     };
     let mut remaining = given.clone();
     let mut out = HostSettings::new();
+    let mut missing: Option<Lm15Error> = None;
     for setting in host.settings {
         let mut value = remaining.remove(setting.name).filter(|v| !v.is_empty());
+        let mut origin = value.as_ref().map(|_| {
+            trace
+                .injected
+                .get(setting.name)
+                .cloned()
+                .unwrap_or_else(|| "explicit".into())
+        });
         if value.is_none() {
             if let Some(env) = env {
-                value = setting
-                    .env
-                    .iter()
-                    .find_map(|var| env.get(*var).filter(|v| !v.is_empty()).cloned());
+                if let Some((var, v)) = setting.env.iter().find_map(|var| {
+                    env.get(*var)
+                        .filter(|v| !v.is_empty())
+                        .map(|v| (*var, v.clone()))
+                }) {
+                    value = Some(v);
+                    origin = Some(format!("env:{var}"));
+                }
             }
         }
         if value.is_none() {
-            value = setting.default.map(str::to_string);
+            if let Some(default) = setting.default {
+                value = Some(default.to_string());
+                origin = Some("default".into());
+            }
+        }
+        if value.is_none() && trace.pending.contains(setting.name) {
+            trace
+                .sources
+                .insert(setting.name.into(), "unprobed:metadata".into());
+            continue;
         }
         let Some(value) = value else {
             let placeholder = format!("{{{}}}", setting.name);
@@ -88,19 +157,34 @@ pub fn resolve_settings_with_endpoint(
             if endpoint.is_some() && root_only {
                 continue;
             }
-            let hint = if setting.env.is_empty() {
+            let mut hint = if setting.env.is_empty() {
                 format!("pass settings={{\"{}\": ...}}", setting.name)
             } else {
                 format!("set {}", setting.env.join(" or "))
             };
-            return Err(not_configured(
-                provider,
-                format!(
-                    "{provider}: setting {:?} is required and has no default; {hint}",
-                    setting.name
-                ),
-            ));
+            if setting.name == "project" {
+                // The Google project also comes from gcloud, the credential
+                // files and the metadata server; those said nothing (AUTH-10).
+                hint.push_str(
+                    ", run `gcloud config set project <id>`, or pass settings={\"project\": ...}",
+                );
+            }
+            trace.sources.insert(setting.name.into(), "missing".into());
+            if missing.is_none() {
+                missing = Some(not_configured(
+                    provider,
+                    format!(
+                        "{provider}: setting {:?} is required and has no default; {hint}",
+                        setting.name
+                    ),
+                ));
+            }
+            continue;
         };
+        trace.sources.insert(
+            setting.name.into(),
+            origin.unwrap_or_else(|| "explicit".into()),
+        );
         out.insert(setting.name.to_string(), value);
     }
     if !remaining.is_empty() {
@@ -111,6 +195,12 @@ pub fn resolve_settings_with_endpoint(
         ));
         meta.provider = Some(provider.to_string());
         return Err(Lm15Error::ConfigurationError(meta));
+    }
+    if let Some(err) = missing {
+        if !trace.collect {
+            return Err(err);
+        }
+        trace.problems.push(err);
     }
     Ok(out)
 }
