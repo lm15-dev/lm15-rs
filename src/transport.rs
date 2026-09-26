@@ -450,8 +450,18 @@ impl HttpTransport {
         let method = reqwest::Method::from_bytes(request.method.as_bytes())
             .map_err(|_| invalid(format!("invalid HTTP method {:?}", request.method)))?;
         let url = full_url(&request.url, &request.params);
+        let authority = url_authority(&url);
         let mut builder = self.client.request(method, &url);
         for (name, value) in &request.headers {
+            // The client derives `Host` (HTTP/1.1) or `:authority` (HTTP/2)
+            // from the URL. A SigV4 request carries the same value as a
+            // `host` header because the signature covers it; sent as well,
+            // HTTP/2 transmits it beside `:authority`, and bedrock-mantle
+            // then signs "host:a,a" and refuses the signature (live
+            // 2026-09-26). Dropped only when it says what the URL says.
+            if name.eq_ignore_ascii_case("host") && authority.eq_ignore_ascii_case(value) {
+                continue;
+            }
             let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
                 .map_err(|_| invalid(format!("invalid header name {name:?}")))?;
             let value = reqwest::header::HeaderValue::from_str(value)
@@ -1081,9 +1091,61 @@ impl Stream for DecodedBody {
     }
 }
 
+/// The `host[:port]` part of an absolute URL, as written (the SigV4 signer
+/// takes the same span, `cloud::sigv4::split_url`).
+#[cfg(feature = "native")]
+fn url_authority(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "native")]
+    #[tokio::test]
+    async fn the_client_owns_host_so_http2_sends_it_once() {
+        let transport = HttpTransport::builder().build().unwrap();
+        let request = TransportRequest {
+            method: "POST".into(),
+            url: "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions".into(),
+            headers: vec![
+                ("host".into(), "bedrock-mantle.us-east-1.api.aws".into()),
+                ("x-amz-date".into(), "20260926T175638Z".into()),
+            ],
+            params: vec![],
+            body: None,
+            raw: None,
+            read_timeout: None,
+            credential_source: None,
+        };
+        let progress = || {
+            Arc::new(std::sync::Mutex::new(UploadProgress {
+                last: tokio::time::Instant::now(),
+                done: false,
+                waker: None,
+            }))
+        };
+        let built = transport.build(&request, progress()).unwrap();
+        assert!(built.headers().get("host").is_none());
+        assert_eq!(built.headers()["x-amz-date"], "20260926T175638Z");
+        // A host that differs from the URL is the caller's decision; kept.
+        let request = TransportRequest {
+            headers: vec![("host".into(), "gateway.internal".into())],
+            ..request
+        };
+        let built = transport.build(&request, progress()).unwrap();
+        assert_eq!(built.headers()["host"], "gateway.internal");
+        assert_eq!(
+            url_authority("https://u@h.example:8443/p?q"),
+            "h.example:8443"
+        );
+    }
 
     #[test]
     fn retry_after_delta_seconds_and_http_date() {
