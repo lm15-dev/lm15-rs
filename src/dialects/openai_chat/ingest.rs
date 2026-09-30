@@ -98,7 +98,21 @@ const GROQ_BUILTIN_INVERSE: &[(&str, &str)] = &[
     ("code_interpreter", "code_execution"),
 ];
 
-const AUDIO_MEDIA_TYPES: &[(&str, &str)] = &[("wav", "audio/wav"), ("mp3", "audio/mpeg")];
+/// MAP-12 rule 4 (amended 2026-09-29): OpenAI's server takes wav and mp3,
+/// Gemini's any audio type, and DSPy writes the MIME subtype (`mpeg` for
+/// .mp3). Each format reads as its true media type; a builder with no audio
+/// slot raises at send (MAP-10).
+const AUDIO_MEDIA_TYPES: &[(&str, &str)] = &[
+    ("wav", "audio/wav"),
+    ("mp3", "audio/mpeg"),
+    ("mpeg", "audio/mpeg"),
+    ("ogg", "audio/ogg"),
+    ("opus", "audio/opus"),
+    ("flac", "audio/flac"),
+    ("aac", "audio/aac"),
+    ("aiff", "audio/aiff"),
+    ("webm", "audio/webm"),
+];
 
 // ─── errors and small readers ────────────────────────────────────────
 
@@ -439,9 +453,9 @@ fn content_blocks(
                     .find(|(f, _)| *f == fmt)
                     .map(|(_, m)| *m)
                     .ok_or_else(|| {
-                        malformed(format!(
-                            "{block_where}.input_audio.format must be one of [\"mp3\", \"wav\"]"
-                        ))
+                        let mut known: Vec<&str> = AUDIO_MEDIA_TYPES.iter().map(|(f, _)| *f).collect();
+                        known.sort_unstable();
+                        malformed(format!("{block_where}.input_audio.format must be one of {known:?}"))
                     })?;
                 let data = as_str(present(spec, "data"), &format!("{block_where}.input_audio.data"))?;
                 parts.push(Part::Audio(AudioPart::from_data(media_type, data).map_err(invalid)?));

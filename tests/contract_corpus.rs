@@ -47,7 +47,7 @@ fn serde_vectors_round_trip_exactly() {
     let cases = corpus["cases"].as_array().unwrap();
     assert_eq!(
         cases.len(),
-        129,
+        136,
         "all canonical vectors at the target CONTRACT_PIN"
     );
     let mut failures = Vec::new();
