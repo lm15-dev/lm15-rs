@@ -183,6 +183,7 @@ impl Dialect for Anthropic {
         let body = body::payload(request, stream, cx, &compat)?;
         let mut wire = WireRequest::post(format!("/{ENDPOINT}"), Value::Object(body));
         wire.headers = headers(request, cx.policy);
+        claude_code_user_agent(&mut wire.headers, cx);
         wire.endpoint = Some(ENDPOINT);
         wire.model = Some(cx.model.to_string());
         Ok(wire)
@@ -195,6 +196,7 @@ impl Dialect for Anthropic {
         let mut wire = WireRequest::get("/models");
         wire.params.push(("limit".into(), "1000".into()));
         wire.headers = surface_headers(cx.policy);
+        claude_code_user_agent(&mut wire.headers, cx);
         wire.headers
             .push(("content-type".into(), "application/json".into()));
         Ok(wire)
@@ -256,6 +258,23 @@ fn resolved_compat(cx: &BuildContext<'_>) -> ResolvedAnthropicCompat {
 /// `content-type` and the credential are `emit`'s.
 pub fn headers(request: &Request, policy: &AccessPolicy) -> Vec<(String, String)> {
     headers_with_betas(policy, dialect_betas(request))
+}
+
+/// `client_version` on the `claude-code` backend is the version the
+/// `user-agent` header claims (`claude-cli/<client_version>`; AUTH-10 backend
+/// settings, amended 2026-09-30): the binding's resolved value replaces the
+/// table's in place.
+fn claude_code_user_agent(headers: &mut [(String, String)], cx: &BuildContext<'_>) {
+    if cx.policy.backend != "claude-code" {
+        return;
+    }
+    if let Some(version) = cx.backend_option("client_version") {
+        for (name, value) in headers.iter_mut() {
+            if name.eq_ignore_ascii_case("user-agent") {
+                *value = format!("claude-cli/{version}");
+            }
+        }
+    }
 }
 
 /// The headers of a request that offers no tools (the models listing):

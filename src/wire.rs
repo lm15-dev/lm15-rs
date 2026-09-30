@@ -640,6 +640,18 @@ pub fn wire_model<'m>(provider: &str, model: &'m str) -> &'m str {
 }
 
 impl<'a> BuildContext<'a> {
+    /// A backend option of this binding: the resolved backend setting
+    /// (AUTH-10, amended 2026-09-30; on a door without a host `settings`
+    /// holds them), else the policy's table value.
+    pub fn backend_option(&self, name: &str) -> Option<&str> {
+        if self.policy.host.is_none() {
+            if let Some(value) = self.settings.get(name) {
+                return Some(value.as_str());
+            }
+        }
+        self.policy.backend_option(name)
+    }
+
     /// This context for a nested request (a batch entry): the same
     /// binding, that request's wire model.
     pub fn for_model(&self, model: &'a str) -> BuildContext<'a> {

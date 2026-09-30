@@ -24,11 +24,38 @@ pub const BUILTIN_TOOL_TYPES: &[(&str, &str)] = &[
 /// needs (pinned by `cases/anthropic/container.json`).
 pub const CODE_EXECUTION_BETA: &str = "code-execution-2025-05-22";
 
-/// `lm15/providers/anthropic.py:86` `_DEFAULT_ANTHROPIC_VISIBLE_TOKENS`: the
-/// `max_tokens` sent when `Config.max_tokens` is absent (the wire field is
-/// required; pinned by `cases/anthropic/reasoning_off.json`). On the manual
-/// thinking class it is the visible share added to the budget (MAP-7 rule 6).
+/// `lm15/providers/anthropic.py` `_DEFAULT_MAX_TOKENS`: the visible
+/// `max_tokens` sent when `Config.max_tokens` is absent and the model is not
+/// a Claude model (a DeepSeek, Kimi or Muse model on an Anthropic-dialect
+/// server publishes its own ceiling; MAP-7 rule 6, amended 2026-09-30).
 pub const DEFAULT_VISIBLE_TOKENS: u64 = 16384;
+
+/// `lm15/providers/anthropic.py` `_CLAUDE_OUTPUT_CEILINGS` (MAP-7 rule 6,
+/// amended 2026-09-30): a Claude model's own output ceiling, the default
+/// `max_tokens` when the caller set none — 128000 for the 4.6 generation and
+/// every later or unknown Claude name, 64000 for the 4.5 generation, the
+/// retired 3.x values. First match wins; `"claude"` is the catch-all. From
+/// Anthropic's Models API `max_tokens` (receipts 2026-09-30).
+pub const CLAUDE_OUTPUT_CEILINGS: &[(&str, u64)] = &[
+    ("claude-3-haiku", 4096),
+    ("claude-3-opus", 4096),
+    ("claude-3-sonnet", 4096),
+    ("claude-3-5-", 8192),
+    ("claude-3.5-", 8192),
+    ("claude-haiku-4-5", 64000),
+    ("claude-sonnet-4-5", 64000),
+    ("claude-opus-4-5", 64000),
+    ("claude", 128000),
+];
+
+/// The output ceiling of a Claude model, by name; `None` for any other.
+pub fn claude_output_ceiling(model: &str) -> Option<u64> {
+    let lowered = model.to_ascii_lowercase();
+    CLAUDE_OUTPUT_CEILINGS
+        .iter()
+        .find(|(marker, _)| lowered.contains(marker))
+        .map(|(_, ceiling)| *ceiling)
+}
 
 /// `lm15/providers/anthropic.py:135` `_ADAPTIVE_CLASS_MARKERS`: substrings
 /// of a lower-cased model id that select the adaptive class (`thinking:

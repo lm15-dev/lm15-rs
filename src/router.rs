@@ -1725,6 +1725,18 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
     if let Some(transport) = &config.transport {
         builder = builder.transport_shared(Arc::clone(transport));
     }
+    if policy.host.is_none() {
+        // A door without a host: its backend settings (AUTH-10, amended
+        // 2026-09-30) from the config's entry, then the environment, then the
+        // table — `client_version` on the subscription doors. A settings entry
+        // for a door that reads none raises: nothing would read it.
+        let given = config.settings.get(provider).cloned().unwrap_or_default();
+        if !given.is_empty() || !policy.backend_settings.is_empty() {
+            let env_map = config.env_map();
+            builder =
+                builder.settings(policy.resolve_backend_settings(&given, Some(&env_map), None)?);
+        }
+    }
     #[cfg(feature = "native")]
     if let Some(route) = &managed {
         if let Some(account_id) = &route.account_id {

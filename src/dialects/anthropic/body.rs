@@ -22,7 +22,8 @@ use crate::wire::BuildContext;
 
 use super::parts::{self, text_block, PartContext};
 use super::tables::{
-    anthropic_adaptive_class, builtin_tool_type, effort_thinking_budget, DEFAULT_VISIBLE_TOKENS,
+    anthropic_adaptive_class, builtin_tool_type, claude_output_ceiling, effort_thinking_budget,
+    DEFAULT_VISIBLE_TOKENS,
 };
 use super::Refuse;
 
@@ -215,30 +216,6 @@ fn prepare(
     let mut out = request.clone();
     prepare_cache(&mut out, false, provider)?;
     let c = &mut out.config;
-    if c.max_tokens.is_none() {
-        let lower = model.to_ascii_lowercase();
-        let visible = if ["claude-3-haiku", "claude-3-opus", "claude-3-sonnet"]
-            .iter()
-            .any(|s| lower.contains(*s))
-        {
-            4096
-        } else if ["claude-3-5-", "claude-3.5-"]
-            .iter()
-            .any(|s| lower.contains(*s))
-        {
-            8192
-        } else {
-            DEFAULT_VISIBLE_TOKENS
-        };
-        adapt(
-            "config.max_tokens",
-            Defaulted,
-            None,
-            Some(json!(visible)),
-            "the Messages API requires a bounded max_tokens; the class default was used",
-        )?;
-        c.max_tokens = Some(visible);
-    }
     if compat.sampling_params == SendReject::Reject {
         drop_value(
             "config.temperature",
@@ -293,7 +270,9 @@ fn prepare(
                 drop_value(
                     "config.reasoning.thinking_budget",
                     &mut r.thinking_budget,
-                    "this model class has no thinking budget; effort carries the intent",
+                    "this model class has no thinking budget; effort carries the intent. Thinking is \
+                     bounded only by max_tokens, which covers thinking and answer together: lower \
+                     the effort or raise max_tokens",
                 )?;
                 if compat.thinking_format == AnthropicThinkingFormat::Anthropic
                     && r.effort == ReasoningEffort::Minimal
@@ -311,6 +290,44 @@ fn prepare(
                 }
             }
         }
+    }
+    if c.max_tokens.is_none() {
+        // MAP-13 `defaulted`; MAP-7 rule 6 (amended 2026-09-30): a Claude
+        // model is sent its own output ceiling as the WIRE value — on the
+        // manual class the visible part is what the thinking budget leaves
+        // (a budget at or above the ceiling keeps 16384 visible, and the
+        // server's 400 names the limit); any other model 16384 visible.
+        let manual_budget = c
+            .reasoning
+            .as_ref()
+            .filter(|r| !r.is_off())
+            .filter(|_| {
+                compat.thinking_format == AnthropicThinkingFormat::Anthropic
+                    && !anthropic_adaptive_class(model)
+            })
+            .and_then(|r| {
+                r.thinking_budget
+                    .or_else(|| effort_thinking_budget(r.effort))
+            });
+        let ceiling = claude_output_ceiling(model);
+        let visible = match (ceiling, manual_budget) {
+            (None, _) => DEFAULT_VISIBLE_TOKENS,
+            (Some(ceiling), None) => ceiling,
+            (Some(ceiling), Some(budget)) if budget < ceiling => ceiling - budget,
+            (Some(_), Some(_)) => DEFAULT_VISIBLE_TOKENS,
+        };
+        adapt(
+            "config.max_tokens",
+            Defaulted,
+            None,
+            Some(json!(visible)),
+            if ceiling.is_some() {
+                "the Messages API requires max_tokens and none was set; the model's output ceiling was used"
+            } else {
+                "the Messages API requires max_tokens and none was set; 16384 was used (this server's ceiling is its own)"
+            },
+        )?;
+        c.max_tokens = Some(visible);
     }
     if let Some(cache) = &mut c.cache {
         drop_value(

@@ -2529,14 +2529,22 @@ impl LmBuilder {
             }
         }
         trace.pending = deferred.iter().map(|(name, _)| name.clone()).collect();
-        let settings = crate::cloud::hosts::resolve_settings_traced(
-            policy.host.as_ref(),
-            &given,
-            Some(&env),
-            &provider,
-            endpoint.as_deref(),
-            &mut trace,
-        )?;
+        let settings = if policy.host.is_none() {
+            // A door without a host: its settings are its backend settings
+            // (AUTH-10, amended 2026-09-30), explicit values and the table's
+            // defaults only — the router fills env fallbacks. A name the door
+            // does not declare raises instead of being dropped.
+            policy.resolve_backend_settings(&given, None, None)?
+        } else {
+            crate::cloud::hosts::resolve_settings_traced(
+                policy.host.as_ref(),
+                &given,
+                Some(&env),
+                &provider,
+                endpoint.as_deref(),
+                &mut trace,
+            )?
+        };
         let deferred: Vec<(String, SettingResolver)> = deferred
             .into_iter()
             .filter(|(name, _)| !settings.contains_key(name))

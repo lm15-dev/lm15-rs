@@ -109,8 +109,13 @@ fn error_cases_normalize_to_pinned_class_and_code() {
             if let Some(request_id) = expected.get("request_id").and_then(Value::as_str) {
                 assert_eq!(err.request_id(), Some(request_id), "{id}");
             }
+            // A pinned message compares whole (claude-code's minimum-version
+            // guidance, AUTH-10 backend settings, 2026-09-30).
+            if let Some(message) = expected.get("message").and_then(Value::as_str) {
+                assert_eq!(err.message(), message, "{id}");
+            }
         }
     }
-    assert_eq!(total, 104, "all error vectors at the target CONTRACT_PIN");
+    assert_eq!(total, 105, "all error vectors at the target CONTRACT_PIN");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

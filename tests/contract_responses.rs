@@ -415,7 +415,7 @@ fn response_and_stream_goldens_replay_exactly() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(
         checked,
-        (353, 52),
+        (355, 52), // +2 2026-09-30: claude-code.client_version_setting, claude-code.max_tokens_defaulted
         "complete/stream goldens at the target CONTRACT_PIN"
     );
 }

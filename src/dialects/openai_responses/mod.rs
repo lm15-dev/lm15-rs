@@ -314,7 +314,7 @@ impl Dialect for OpenAIResponses {
     fn models_request(&self, cx: &BuildContext<'_>) -> Result<WireRequest, Lm15Error> {
         let mut wire = WireRequest::get("/models");
         if cx.policy.backend == CODEX_BACKEND {
-            let version = cx.policy.backend_option("client_version").unwrap_or("");
+            let version = cx.backend_option("client_version").unwrap_or("");
             wire.params
                 .push(("client_version".into(), version.to_string()));
         }

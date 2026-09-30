@@ -75,7 +75,8 @@ fn map5_reasoning_off_omits_thinking_on_the_public_api() {
         .unwrap();
     let body = out.body.unwrap();
     assert!(body.get("thinking").is_none());
-    assert_eq!(body["max_tokens"], json!(16384));
+    // MAP-7 rule 6 (amended 2026-09-30): the 4.5 generation's ceiling.
+    assert_eq!(body["max_tokens"], json!(64000));
 }
 
 #[test]
@@ -99,7 +100,8 @@ fn map7_thinking_budget_raises_on_the_adaptive_class() {
         body["thinking"],
         json!({"type": "enabled", "budget_tokens": 4096})
     );
-    assert_eq!(body["max_tokens"], json!(4096 + 16384));
+    // The ceiling on the wire; the budget comes out of it (MAP-7 rule 6).
+    assert_eq!(body["max_tokens"], json!(64000));
 }
 
 #[test]

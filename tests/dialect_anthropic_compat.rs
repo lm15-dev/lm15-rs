@@ -72,7 +72,8 @@ fn thinking_format_anthropic_is_the_model_class_table() {
         manual["thinking"],
         json!({"type": "enabled", "budget_tokens": 2048})
     );
-    assert_eq!(manual["max_tokens"], json!(2048 + 16384));
+    // MAP-7 rule 6 (amended 2026-09-30): the 4.5 ceiling covers the budget.
+    assert_eq!(manual["max_tokens"], json!(64000));
     assert!(manual.get("output_config").is_none());
     let adaptive = body(
         &lm,
@@ -80,7 +81,7 @@ fn thinking_format_anthropic_is_the_model_class_table() {
     );
     assert_eq!(adaptive["thinking"], json!({"type": "adaptive"}));
     assert_eq!(adaptive["output_config"], json!({"effort": "low"}));
-    assert_eq!(adaptive["max_tokens"], json!(16384));
+    assert_eq!(adaptive["max_tokens"], json!(128000));
     let off = body(
         &lm,
         &request("claude-sonnet-5", reasoning(ReasoningEffort::Off)),
@@ -414,7 +415,10 @@ fn claude_code_binding_puts_the_prefix_first_and_joins_betas() {
         Some("claude-code-20250219,oauth-2025-04-20")
     );
     assert_eq!(out.header("x-app"), Some("cli"));
-    assert_eq!(out.header("user-agent"), Some("claude-cli/2.1.170"));
+    assert_eq!(
+        out.header("user-agent"),
+        Some(concat!("claude-cli/", "2.1.285"))
+    );
     assert_eq!(
         out.header("anthropic-dangerous-direct-browser-access"),
         Some("true")

@@ -325,6 +325,35 @@ impl ExplainOptions {
 /// Unknown providers, duplicate explicit entries, and invalid or conflicting
 /// named credentials return typed configuration errors before any file walk.
 pub fn explain_auth(provider: &str, options: &ExplainOptions) -> Result<Report, AuthError> {
+    let mut report = explain_chain(provider, options)?;
+    let policy = access_policy(provider).ok_or_else(|| AuthError::UnknownProvider {
+        provider: provider.to_string(),
+    })?;
+    // A door without a host prints its backend settings the way a cloud
+    // door prints its host settings (AUTH-7; AUTH-10 amended 2026-09-30):
+    // the Claude Code release the claude-code door claims, and its origin.
+    if policy.host.is_none() && (!policy.backend_settings.is_empty() || options.settings.is_some())
+    {
+        let env: std::collections::BTreeMap<String, String> = match &options.env {
+            Some(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            None => std::env::vars().collect(),
+        };
+        let given = options.settings.clone().unwrap_or_default();
+        let mut sources = std::collections::BTreeMap::new();
+        let values = policy
+            .resolve_backend_settings(&given, Some(&env), Some(&mut sources))
+            .map_err(|error| AuthError::NotConfigured {
+                provider: Some(policy.provider.to_string()),
+                message: error.to_string(),
+                hint: None,
+            })?;
+        report.settings = values.into_iter().collect();
+        report.setting_sources = sources.into_iter().collect();
+    }
+    Ok(report)
+}
+
+fn explain_chain(provider: &str, options: &ExplainOptions) -> Result<Report, AuthError> {
     let policy = access_policy(provider).ok_or_else(|| AuthError::UnknownProvider {
         provider: provider.to_string(),
     })?;

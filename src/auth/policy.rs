@@ -255,6 +255,12 @@ pub struct AccessPolicy {
     /// Local-server presets only: the key sent when nothing is configured
     /// (AUTH-1 rung 3).
     pub placeholder_key: Option<&'static str>,
+    /// The `backend_options` a caller may set on a door without a host
+    /// (AUTH-10, amended 2026-09-30): each names a `backend_options` key and
+    /// the env variables the router consults for it; its default is the
+    /// table's `backend_options` value (`default` stays `None`). The
+    /// subscription doors declare `client_version`.
+    pub backend_settings: &'static [HostSetting],
 }
 
 impl AccessPolicy {
@@ -282,6 +288,106 @@ impl AccessPolicy {
             .iter()
             .find(|(key, _)| *key == name)
             .map(|(_, value)| *value)
+    }
+
+    /// The door's backend settings (AUTH-10, amended 2026-09-30): the
+    /// caller's value, then `env` (when given — the router passes the
+    /// environment, an adapter built by hand does not), then the table's
+    /// `backend_options` value. `sources` receives each origin (`explicit`,
+    /// `env:<VAR>`, `default`). A name the door does not declare is a
+    /// configuration error that lists the names it does: a setting nothing
+    /// reads would otherwise be dropped with nothing said.
+    pub fn resolve_backend_settings(
+        &self,
+        given: &crate::cloud::hosts::HostSettings,
+        env: Option<&std::collections::BTreeMap<String, String>>,
+        mut sources: Option<&mut std::collections::BTreeMap<String, String>>,
+    ) -> Result<crate::cloud::hosts::HostSettings, crate::errors::Lm15Error> {
+        let known: Vec<&str> = self.backend_settings.iter().map(|s| s.name).collect();
+        let mut unknown: Vec<&String> = given
+            .keys()
+            .filter(|k| !known.contains(&k.as_str()))
+            .collect();
+        unknown.sort();
+        if !unknown.is_empty() {
+            let names: Vec<String> = unknown.iter().map(|n| format!("'{n}'")).collect();
+            let (hint, fix) = if known.is_empty() {
+                (
+                    "this door takes no settings".to_string(),
+                    format!("Remove the settings entry for {}", self.provider),
+                )
+            } else {
+                (
+                    format!("known: {}", known.join(", ")),
+                    format!("Pass only {} for {}", known.join(", "), self.provider),
+                )
+            };
+            let mut meta = crate::errors::ErrorMeta::new(format!(
+                "{}: unknown setting(s) {}; {hint}\n\n  To fix:\n    - {fix}\n",
+                self.provider,
+                names.join(", ")
+            ));
+            meta.provider = Some(self.provider.to_string());
+            return Err(crate::errors::Lm15Error::NotConfiguredError(meta));
+        }
+        let mut out = crate::cloud::hosts::HostSettings::new();
+        for setting in self.backend_settings {
+            let mut value = given.get(setting.name).filter(|v| !v.is_empty()).cloned();
+            let mut origin = value.as_ref().map(|_| "explicit".to_string());
+            if value.is_none() {
+                if let Some(env) = env {
+                    if let Some(var) = setting
+                        .env
+                        .iter()
+                        .find(|var| env.get(**var).is_some_and(|v| !v.is_empty()))
+                    {
+                        value = env.get(*var).cloned();
+                        origin = Some(format!("env:{var}"));
+                    }
+                }
+            }
+            let value = value.unwrap_or_else(|| {
+                self.backend_option(setting.name)
+                    .unwrap_or_default()
+                    .to_string()
+            });
+            if let Some(sources) = sources.as_deref_mut() {
+                sources.insert(
+                    setting.name.to_string(),
+                    origin.unwrap_or_else(|| "default".into()),
+                );
+            }
+            out.insert(setting.name.to_string(), value);
+        }
+        Ok(out)
+    }
+}
+
+/// `lm15/access.py` `claude_code_version_guidance`: the claude-code door's
+/// minimum-version refusal, with what an lm15 caller changes (AUTH-10
+/// backend settings). The server says "run 'claude update'", which does not
+/// move the version lm15 claims. Any other message is returned unchanged.
+pub fn claude_code_version_guidance(message: &str) -> String {
+    const HEAD: &str = "Claude Code ";
+    const MIDDLE: &str = " does not support this model; version ";
+    const TAIL: &str = " or newer is required";
+    if message.contains("\n\n  To fix:") {
+        return message.to_string();
+    }
+    let required = message.find(HEAD).and_then(|start| {
+        let rest = &message[start + HEAD.len()..];
+        let sent_end = rest.find(char::is_whitespace)?;
+        let rest = rest[sent_end..].strip_prefix(MIDDLE)?;
+        let required_end = rest.find(char::is_whitespace)?;
+        let required = &rest[..required_end];
+        (!required.is_empty() && rest[required_end..].starts_with(TAIL) && sent_end > 0)
+            .then_some(required)
+    });
+    match required {
+        None => message.to_string(),
+        Some(required) => format!(
+            "{message}\n\n  To fix:\n    - lm15 sends this version itself; updating Claude Code does not change it\n    - Set the claude-code setting client_version to {required} or newer (or {CLAUDE_CODE_VERSION_ENV}={required})\n"
+        ),
     }
 }
 
@@ -312,13 +418,31 @@ const fn policy(
         system_prefix: None,
         base_url: None,
         placeholder_key: None,
+        backend_settings: &[],
     }
 }
 
 // ─── Constants the table cites (`lm15/access.py`) ────────────────────
 
-/// `lm15/access.py:79`.
-pub const DEFAULT_CLAUDE_CODE_VERSION: &str = "2.1.170";
+/// One authority for the release, used by the constant and the header.
+macro_rules! claude_code_version {
+    () => {
+        "2.1.285"
+    };
+}
+
+/// `lm15/access.py` `DEFAULT_CLAUDE_CODE_VERSION`: the Claude Code release
+/// this door says it is (`user-agent: claude-cli/<version>`). Anthropic's
+/// server reads it: a model can require a newer release (claude-opus-5-5
+/// refuses anything before 2.1.280, live 2026-09-23 and 2026-09-30). The
+/// latest release when last receipted (lm15-contract
+/// changes/2026-09-30-claude-code-client-version.md); callers move it without
+/// a release through the `client_version` setting or LM15_CLAUDE_CODE_VERSION.
+pub const DEFAULT_CLAUDE_CODE_VERSION: &str = claude_code_version!();
+/// The router's env fallback for claude-code's `client_version`.
+pub const CLAUDE_CODE_VERSION_ENV: &str = "LM15_CLAUDE_CODE_VERSION";
+/// The router's env fallback for openai-codex's `client_version`.
+pub const CODEX_CLIENT_VERSION_ENV: &str = "LM15_CODEX_CLIENT_VERSION";
 /// `lm15/access.py:80`.
 pub const DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT: &str =
     "You are Claude Code, Anthropic's official CLI for Claude.";
@@ -440,10 +564,16 @@ pub const CLAUDE_CODE: AccessPolicy = AccessPolicy {
         ("anthropic-dangerous-direct-browser-access", "true"),
         ("anthropic-beta", "claude-code-20250219,oauth-2025-04-20"),
         ("x-app", "cli"),
-        ("user-agent", "claude-cli/2.1.170"),
+        ("user-agent", concat!("claude-cli/", claude_code_version!())),
     ],
     login_hint: Some(CLAUDE_CODE_LOGIN_HINT),
     backend: "claude-code",
+    backend_options: &[("client_version", DEFAULT_CLAUDE_CODE_VERSION)],
+    backend_settings: &[HostSetting {
+        name: "client_version",
+        env: &[CLAUDE_CODE_VERSION_ENV],
+        default: None,
+    }],
     system_prefix: Some(DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT),
     ..policy(
         "claude-code",
@@ -487,6 +617,11 @@ pub const OPENAI_CODEX: AccessPolicy = AccessPolicy {
     login_hint: Some(OPENAI_CODEX_LOGIN_HINT),
     backend: "chatgpt-codex",
     backend_options: &[("client_version", DEFAULT_CODEX_CLIENT_VERSION)],
+    backend_settings: &[HostSetting {
+        name: "client_version",
+        env: &[CODEX_CLIENT_VERSION_ENV],
+        default: None,
+    }],
     system_prefix: Some(DEFAULT_CODEX_INSTRUCTIONS),
     base_url: Some(DEFAULT_CODEX_BASE_URL),
     ..policy(

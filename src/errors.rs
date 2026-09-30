@@ -1315,6 +1315,12 @@ fn normalize_anthropic(ctx: &Context, status: u16, body: &str) -> Lm15Error {
     };
     let request_id = Some(scalar_text(data.get("request_id")));
     let provider_code = Some(err_type.clone());
+    if ctx.provider == "claude-code" {
+        // AUTH-10 backend settings: the minimum-version refusal names the
+        // setting to change (the claude-code door is the only one on the
+        // `claude-code` backend).
+        msg = crate::auth::policy::claude_code_version_guidance(&msg);
+    }
     if anthropic_is_context_length(&msg) {
         return ctx.error(
             ErrorClass::ContextLengthError,
