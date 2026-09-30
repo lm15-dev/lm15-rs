@@ -139,7 +139,7 @@ fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
     }
     assert_eq!(
         (round_trips, lossy, foreign, refusals),
-        (174, 37, 33, 9),
+        (174, 37, 34, 9),
         "case counts moved; move CONTRACT_PIN and these constants together"
     );
 }
@@ -279,6 +279,7 @@ fn malformed_input_is_invalid_request_not_a_refusal() {
         json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}], "user": "a", "safety_identifier": "b"}),
         json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}], "top_logprobs": 3}),
         json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}], "tool_choice": {"type": "function", "function": {"name": "ghost"}}}),
+        json!({"model": "m", "messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": "QUJD", "format": "midi"}}]}]}),
         json!([]),
     ] {
         let err = request_from_openai_chat(&bad, None)
@@ -294,6 +295,53 @@ fn a_non_chat_binding_refuses() {
     let body = json!({"model": "m", "messages": [{"role": "user", "content": "Hi"}]});
     assert_eq!(
         lm.request_from_openai_chat(&body).unwrap_err().class_name(),
+        "UnsupportedFeatureError"
+    );
+}
+
+// ─── input_audio formats (MAP-12 rule 4, amended 2026-09-29) ─────────
+
+fn audio_body(format: &str) -> Value {
+    json!({"model": "gemini-3.8-flash", "messages": [{"role": "user", "content": [
+        {"type": "text", "text": "Transcribe."},
+        {"type": "input_audio", "input_audio": {"data": "T2dnUw==", "format": format}},
+    ]}]})
+}
+
+#[test]
+fn input_audio_reads_its_true_media_type() {
+    for (format, media_type) in [
+        ("wav", "audio/wav"),
+        ("mp3", "audio/mpeg"),
+        ("mpeg", "audio/mpeg"),
+        ("ogg", "audio/ogg"),
+        ("opus", "audio/opus"),
+        ("flac", "audio/flac"),
+        ("aac", "audio/aac"),
+        ("aiff", "audio/aiff"),
+        ("webm", "audio/webm"),
+    ] {
+        let req = request_from_openai_chat(&audio_body(format), None).unwrap();
+        assert_eq!(
+            req.to_json()["messages"][0]["parts"][1],
+            json!({"type": "audio", "media_type": media_type, "data": "T2dnUw=="}),
+            "{format}"
+        );
+    }
+}
+
+#[test]
+fn an_ogg_clip_reaches_gemini_inline_and_the_chat_wire_refuses_it() {
+    let req = request_from_openai_chat(&audio_body("ogg"), None).unwrap();
+    let gemini = adapter_for("gemini", "k", None, None, None).unwrap();
+    let sent = gemini.build_request(&req, false).unwrap();
+    assert_eq!(
+        sent.body.as_ref().unwrap()["contents"][0]["parts"][1],
+        json!({"inlineData": {"mimeType": "audio/ogg", "data": "T2dnUw=="}})
+    );
+    let chat = adapter_for("openai-chat", "k", None, None, None).unwrap();
+    assert_eq!(
+        chat.build_request(&req, false).unwrap_err().class_name(),
         "UnsupportedFeatureError"
     );
 }
