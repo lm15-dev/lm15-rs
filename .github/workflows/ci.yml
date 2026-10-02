@@ -39,6 +39,9 @@ jobs:
       - name: Formatting
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --check
+      - name: Generated provider tables are current for the pinned contract
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 tools/gen_tables.py --check
       # --no-fail-fast: every failing target is reported, not only the first.
       - run: cargo test --locked --no-fail-fast
       - name: Blocking API

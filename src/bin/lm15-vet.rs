@@ -49,6 +49,7 @@ const OPS: &[&str] = &[
     "replay_live",
     "replay_stream",
     "resolve_model",
+    "resolve_openai_chat_model",
     "serde_roundtrip",
     "sigv4_sign",
     "token_exchange_build",
@@ -133,6 +134,27 @@ fn op_resolve_model(msg: &Map<String, Value>) -> Result<Value, Failure> {
         config = config.catalog(catalog);
     }
     let resolution = lm15::router::LMRouter::with_config(config)?.resolve(&model)?;
+    Ok(json!({
+        "provider": resolution.provider,
+        "model": resolution.model,
+        "source": resolution.source.as_str(),
+    }))
+}
+
+fn op_resolve_openai_chat_model(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    // PROTOCOL.md resolve_openai_chat_model: the router's OpenAI-SDK /
+    // litellm door over harness-supplied inputs only.
+    let model = field_str(msg, "model")?;
+    let mut env: Vec<(String, String)> = Vec::new();
+    if let Some(map) = msg.get("env").and_then(Value::as_object) {
+        for (k, v) in map {
+            if let Some(s) = v.as_str() {
+                env.push((k.clone(), s.to_string()));
+            }
+        }
+    }
+    let config = lm15::router::RouterConfig::new().env(env);
+    let resolution = lm15::router::LMRouter::with_config(config)?.resolve_openai_chat(&model)?;
     Ok(json!({
         "provider": resolution.provider,
         "model": resolution.model,
@@ -915,6 +937,7 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
         "explain_auth" => op_explain_auth(msg),
         "managed_run" => vet_managed::op_managed_run(msg).map_err(|e| Failure::Lm15(Box::new(e))),
         "resolve_model" => op_resolve_model(msg),
+        "resolve_openai_chat_model" => op_resolve_openai_chat_model(msg),
         "build_request" => op_build_request(msg),
         "plan" => op_plan(msg),
         "surface_dump" => Ok(lm15::tooling::surface_dump()),

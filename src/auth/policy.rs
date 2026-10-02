@@ -19,7 +19,7 @@
 //! stated branches.
 
 use super::credential::AuthScheme;
-use super::stores::{CLAUDE_CODE_LOGIN_HINT, OPENAI_CODEX_LOGIN_HINT, XAI_LOGIN_HINT};
+use super::stores::XAI_LOGIN_HINT;
 
 /// spec/vocabularies.md `CredentialPolicy`; spec/auth.md AUTH-1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -391,139 +391,69 @@ pub fn claude_code_version_guidance(message: &str) -> String {
     }
 }
 
-use AuthScheme::{Bearer, QueryKey, SigV4, XApiKey};
-use CredentialPolicy::{AwsChain, AzureChain, GcpChain, Key, OAuth, OAuthUnlessExplicit};
+// ─── The table (`lm15/access.py`) ───────────────────────────────────
+//
+// Generated from lm15-contract tables/providers.json into
+// `src/generated/tables.rs` (playbooks/port.md rule 2: tables are data,
+// copied). The names below are this crate's public `auth::*` names; a provider
+// added to the table needs none (the registry and `ACCESS_POLICIES` iterate
+// the rows). `KIMI_CODE` and `GITHUB_COPILOT` are the managed-login declared
+// routes: not in `ACCESS_POLICIES`, no contract wire receipt, no support claim.
 
-const fn policy(
-    provider: &'static str,
-    supports: EndpointSupport,
-    credential_policy: CredentialPolicy,
-    auth_modes: &'static [&'static str],
-    env_keys: &'static [&'static str],
-    auth_scheme: &'static [AuthScheme],
-) -> AccessPolicy {
-    AccessPolicy {
-        provider,
-        supports,
-        credential_policy,
-        auth_modes,
-        enterprise_variants: &[],
-        env_keys,
-        auth_scheme,
-        headers: &[],
-        host: None,
-        login_hint: None,
-        backend: "api",
-        backend_options: &[],
-        system_prefix: None,
-        base_url: None,
-        placeholder_key: None,
-        backend_settings: &[],
-    }
-}
+use crate::generated::tables;
 
-// ─── Constants the table cites (`lm15/access.py`) ────────────────────
+pub const ANTHROPIC_API: AccessPolicy = tables::ANTHROPIC;
+pub const CLAUDE_CODE: AccessPolicy = tables::CLAUDE_CODE;
+pub const OPENAI_API: AccessPolicy = tables::OPENAI;
+pub const OPENAI_CODEX: AccessPolicy = tables::OPENAI_CODEX;
+pub const OPENAI_CHAT_API: AccessPolicy = tables::OPENAI_CHAT;
+/// xAI, with this crate's login hint: the table's names the reference's
+/// Python function (`lm15.auth.login_xai()`); a Rust caller runs
+/// `lm15::auth::login("xai")` (AUTH-9), so the hint names that.
+pub const XAI: AccessPolicy = AccessPolicy {
+    login_hint: Some(XAI_LOGIN_HINT),
+    ..tables::XAI
+};
+pub const KIMI_CODE: AccessPolicy = tables::KIMI_CODE;
+pub const GITHUB_COPILOT: AccessPolicy = tables::GITHUB_COPILOT;
+pub const GEMINI_API: AccessPolicy = tables::GEMINI;
+pub const META: AccessPolicy = tables::META;
+pub const GROQ: AccessPolicy = tables::GROQ;
+pub const OPENROUTER: AccessPolicy = tables::OPENROUTER;
+pub const DEEPSEEK: AccessPolicy = tables::DEEPSEEK;
+pub const ZAI: AccessPolicy = tables::ZAI;
+pub const DEEPINFRA: AccessPolicy = tables::DEEPINFRA;
+pub const TOGETHER: AccessPolicy = tables::TOGETHER;
+pub const FIREWORKS: AccessPolicy = tables::FIREWORKS;
+pub const PARASAIL: AccessPolicy = tables::PARASAIL;
+pub const MOONSHOTAI: AccessPolicy = tables::MOONSHOTAI;
+pub const MOONSHOTAI_RESPONSES: AccessPolicy = tables::MOONSHOTAI_RESPONSES;
+pub const META_CHAT: AccessPolicy = tables::META_CHAT;
+pub const DEEPSEEK_ANTHROPIC: AccessPolicy = tables::DEEPSEEK_ANTHROPIC;
+pub const META_ANTHROPIC: AccessPolicy = tables::META_ANTHROPIC;
+pub const MOONSHOTAI_ANTHROPIC: AccessPolicy = tables::MOONSHOTAI_ANTHROPIC;
+pub const AWS_ANTHROPIC: AccessPolicy = tables::AWS_ANTHROPIC;
+pub const BEDROCK_ANTHROPIC: AccessPolicy = tables::BEDROCK_ANTHROPIC;
+pub const BEDROCK_CHAT: AccessPolicy = tables::BEDROCK_CHAT;
+pub const BEDROCK_MANTLE_CHAT: AccessPolicy = tables::BEDROCK_MANTLE_CHAT;
+pub const AZURE: AccessPolicy = tables::AZURE;
+pub const AZURE_CHAT: AccessPolicy = tables::AZURE_CHAT;
+pub const AZURE_ANTHROPIC: AccessPolicy = tables::AZURE_ANTHROPIC;
+pub const VERTEX: AccessPolicy = tables::VERTEX;
+pub const VERTEX_EXPRESS: AccessPolicy = tables::VERTEX_EXPRESS;
+pub const VERTEX_ANTHROPIC: AccessPolicy = tables::VERTEX_ANTHROPIC;
+pub const OLLAMA: AccessPolicy = tables::OLLAMA;
+pub const VLLM: AccessPolicy = tables::VLLM;
+pub const SGLANG: AccessPolicy = tables::SGLANG;
+pub const TYPESAFE: AccessPolicy = tables::TYPESAFE;
 
-/// One authority for the release, used by the constant and the header.
-macro_rules! claude_code_version {
-    () => {
-        "2.1.285"
-    };
-}
+/// The table, in the reference's registry order.
+pub const ACCESS_POLICIES: &[AccessPolicy] = tables::ACCESS_POLICIES;
 
-/// `lm15/access.py` `DEFAULT_CLAUDE_CODE_VERSION`: the Claude Code release
-/// this door says it is (`user-agent: claude-cli/<version>`). Anthropic's
-/// server reads it: a model can require a newer release (claude-opus-5-5
-/// refuses anything before 2.1.280, live 2026-09-23 and 2026-09-30). The
-/// latest release when last receipted (lm15-contract
-/// changes/2026-09-30-claude-code-client-version.md); callers move it without
-/// a release through the `client_version` setting or LM15_CLAUDE_CODE_VERSION.
-pub const DEFAULT_CLAUDE_CODE_VERSION: &str = claude_code_version!();
-/// The router's env fallback for claude-code's `client_version`.
-pub const CLAUDE_CODE_VERSION_ENV: &str = "LM15_CLAUDE_CODE_VERSION";
-/// The router's env fallback for openai-codex's `client_version`.
-pub const CODEX_CLIENT_VERSION_ENV: &str = "LM15_CODEX_CLIENT_VERSION";
-/// `lm15/access.py:80`.
-pub const DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT: &str =
-    "You are Claude Code, Anthropic's official CLI for Claude.";
-/// `lm15/access.py:113`.
-pub const DEFAULT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
-/// `lm15/access.py:114`.
-pub const DEFAULT_CODEX_ORIGINATOR: &str = "lm15";
-/// `lm15/access.py:115`.
-pub const DEFAULT_CODEX_INSTRUCTIONS: &str = "You are a helpful assistant.";
-/// `lm15/access.py:118`.
-pub const DEFAULT_CODEX_CLIENT_VERSION: &str = "0.147.0";
-/// `lm15/access.py:143`.
-pub const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
-
-const META_ENV_KEYS: &[&str] = &["META_API_KEY"];
-const MOONSHOTAI_ENV_KEYS: &[&str] = &["MOONSHOTAI_API_KEY", "MOONSHOT_API_KEY"];
-
-// Host settings (`lm15/access.py:343-350`; AUTH-10 env fallbacks in order).
-// `region` and `resource` have no default on purpose: a wrong-region
-// default is a residency bug.
-const AWS_REGION: HostSetting = HostSetting {
-    name: "region",
-    env: &["AWS_REGION", "AWS_DEFAULT_REGION"],
-    default: None,
-};
-const AWS_WORKSPACE: HostSetting = HostSetting {
-    name: "workspace",
-    env: &["ANTHROPIC_AWS_WORKSPACE_ID"],
-    default: None,
-};
-const GCP_PROJECT: HostSetting = HostSetting {
-    name: "project",
-    env: &["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"],
-    default: None,
-};
-// Stated trade-off (spec/auth.md AUTH-10): availability first; the doctor prints it.
-const GCP_LOCATION: HostSetting = HostSetting {
-    name: "location",
-    env: &["GOOGLE_CLOUD_LOCATION"],
-    default: Some("global"),
-};
-const AZURE_OPENAI_RESOURCE: HostSetting = HostSetting {
-    name: "resource",
-    env: &["AZURE_OPENAI_RESOURCE"],
-    default: None,
-};
-const AZURE_FOUNDRY_RESOURCE: HostSetting = HostSetting {
-    name: "resource",
-    env: &["ANTHROPIC_FOUNDRY_RESOURCE"],
-    default: None,
-};
-const AZURE_AUTHORITY: HostSetting = HostSetting {
-    name: "authority_host",
-    env: &["AZURE_AUTHORITY_HOST"],
-    default: Some("https://login.microsoftonline.com"),
-};
-const AZURE_SCOPE: HostSetting = HostSetting {
-    name: "scope",
-    env: &[],
-    default: Some("https://ai.azure.com/.default"),
-};
-
-/// `lm15/access.py:502`.
-const VERTEX_BASE: &str = "https://{location_host}/v1/projects/{project}/locations/{location}";
-
-// Preset base URLs (`lm15/compat.py`), referenced by the bound policies so
-// each URL has one copy in the compat tables and one citation here.
-use crate::compat::{
-    ANTHROPIC_PRESET_BASE_URLS, OPENAI_CHAT_PRESET_BASE_URLS, OPENAI_RESPONSES_PRESET_BASE_URLS,
-};
-
-const fn preset_url(table: &'static [(&'static str, &'static str)], name: &str) -> &'static str {
-    let mut i = 0;
-    while i < table.len() {
-        if str_eq(table[i].0, name) {
-            return table[i].1;
-        }
-        i += 1;
-    }
-    panic!("preset base URL missing from the compat table")
-}
+// ─── Values the table carries, by their historic names ──────────────
+//
+// Computed from the table at compile time, so each is the table's value and
+// never a second copy.
 
 const fn str_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
@@ -540,710 +470,61 @@ const fn str_eq(a: &str, b: &str) -> bool {
     true
 }
 
-// ─── The table (`lm15/access.py`, declaration order) ────────────────
+const fn entry(table: &'static [(&'static str, &'static str)], key: &str) -> &'static str {
+    let mut i = 0;
+    while i < table.len() {
+        if str_eq(table[i].0, key) {
+            return table[i].1;
+        }
+        i += 1;
+    }
+    panic!("a table value this crate names is missing from src/generated/tables.rs")
+}
 
-/// `lm15/access.py:71-77`.
-pub const ANTHROPIC_API: AccessPolicy = policy(
-    "anthropic",
-    EndpointSupport {
-        files: true,
-        batches: true,
-        models: true,
-        ..EndpointSupport::CHAT
-    },
-    Key,
-    &["x-api-key"],
-    &["ANTHROPIC_API_KEY"],
-    &[XApiKey],
-);
+const fn some(value: Option<&'static str>) -> &'static str {
+    match value {
+        Some(v) => v,
+        None => panic!("a table value this crate names is missing from src/generated/tables.rs"),
+    }
+}
 
-/// `lm15/access.py:85-100`. models=true: the /v1/models endpoint answers
-/// to the OAuth headers; files and batch are API-key surfaces.
-pub const CLAUDE_CODE: AccessPolicy = AccessPolicy {
-    headers: &[
-        ("anthropic-dangerous-direct-browser-access", "true"),
-        ("anthropic-beta", "claude-code-20250219,oauth-2025-04-20"),
-        ("x-app", "cli"),
-        ("user-agent", concat!("claude-cli/", claude_code_version!())),
-    ],
-    login_hint: Some(CLAUDE_CODE_LOGIN_HINT),
-    backend: "claude-code",
-    backend_options: &[("client_version", DEFAULT_CLAUDE_CODE_VERSION)],
-    backend_settings: &[HostSetting {
-        name: "client_version",
-        env: &[CLAUDE_CODE_VERSION_ENV],
-        default: None,
-    }],
-    system_prefix: Some(DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT),
-    ..policy(
-        "claude-code",
-        EndpointSupport::CHAT_MODELS,
-        OAuth,
-        &["claude-code-oauth", "bearer-oauth"],
-        &[],
-        &[Bearer],
-    )
-};
+const fn setting_env(settings: &'static [HostSetting], name: &str) -> &'static str {
+    let mut i = 0;
+    while i < settings.len() {
+        if str_eq(settings[i].name, name) && !settings[i].env.is_empty() {
+            return settings[i].env[0];
+        }
+        i += 1;
+    }
+    panic!("a backend setting this crate names is missing from src/generated/tables.rs")
+}
 
-/// `lm15/access.py:102-111`.
-pub const OPENAI_API: AccessPolicy = AccessPolicy {
-    enterprise_variants: &["azure-openai"],
-    ..policy(
-        "openai",
-        EndpointSupport {
-            live: true,
-            files: true,
-            batches: true,
-            images: true,
-            speech: true,
-            video: true,
-            responses_api: true,
-            models: true,
-            ..EndpointSupport::CHAT
-        },
-        Key,
-        &["bearer"],
-        &["OPENAI_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:120-134`.
-pub const OPENAI_CODEX: AccessPolicy = AccessPolicy {
-    headers: &[
-        ("OpenAI-Beta", "responses=experimental"),
-        ("originator", DEFAULT_CODEX_ORIGINATOR),
-    ],
-    login_hint: Some(OPENAI_CODEX_LOGIN_HINT),
-    backend: "chatgpt-codex",
-    backend_options: &[("client_version", DEFAULT_CODEX_CLIENT_VERSION)],
-    backend_settings: &[HostSetting {
-        name: "client_version",
-        env: &[CODEX_CLIENT_VERSION_ENV],
-        default: None,
-    }],
-    system_prefix: Some(DEFAULT_CODEX_INSTRUCTIONS),
-    base_url: Some(DEFAULT_CODEX_BASE_URL),
-    ..policy(
-        "openai-codex",
-        EndpointSupport::CHAT_MODELS,
-        OAuth,
-        &["chatgpt-oauth", "bearer-oauth"],
-        &[],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:136-141` (`openai_chat` in the reference spelling).
-pub const OPENAI_CHAT_API: AccessPolicy = policy(
-    "openai-chat",
-    EndpointSupport::CHAT_MODELS,
-    Key,
-    &["bearer"],
-    &["OPENAI_API_KEY"],
-    &[Bearer],
-);
-
-/// `lm15/access.py:145-153`.
-pub const XAI: AccessPolicy = AccessPolicy {
-    login_hint: Some(XAI_LOGIN_HINT),
-    base_url: Some(DEFAULT_XAI_BASE_URL),
-    ..policy(
-        "xai",
-        EndpointSupport {
-            models: true,
-            images: true,
-            video: true,
-            ..EndpointSupport::CHAT
-        },
-        OAuthUnlessExplicit,
-        &["bearer", "xai-oauth"],
-        &["XAI_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// Kimi Code subscription over the Anthropic Messages wire: a route a managed
-/// connection declares (lm15-python `lm15/login/declared.py`). Not in
-/// `ACCESS_POLICIES`: no contract wire receipt, so no support claim; a
-/// router routes it only when it carries a managed `Auth`.
-pub const KIMI_CODE: AccessPolicy = AccessPolicy {
-    base_url: Some("https://api.kimi.com/coding"),
-    ..policy(
-        "kimi-code",
-        EndpointSupport::CHAT,
-        Key,
-        &["bearer"],
-        &[],
-        &[Bearer],
-    )
-};
-
-/// GitHub Copilot over the Chat Completions wire; the account's host comes
-/// from the Copilot token. Declared like [`KIMI_CODE`].
-pub const GITHUB_COPILOT: AccessPolicy = AccessPolicy {
-    base_url: Some("https://api.individual.githubcopilot.com"),
-    headers: &[
-        ("User-Agent", "GitHubCopilotChat/0.35.0"),
-        ("Editor-Version", "vscode/1.107.0"),
-        ("Editor-Plugin-Version", "copilot-chat/0.35.0"),
-        ("Copilot-Integration-Id", "vscode-chat"),
-    ],
-    ..policy(
-        "github-copilot",
-        EndpointSupport {
-            models: true,
-            ..EndpointSupport::CHAT
-        },
-        Key,
-        &["bearer"],
-        &[],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:155-164`. The Gemini dialect renders `x-api-key` as
-/// `x-goog-api-key`.
-pub const GEMINI_API: AccessPolicy = policy(
-    "gemini",
-    EndpointSupport {
-        live: true,
-        files: true,
-        batches: true,
-        images: true,
-        speech: true,
-        video: true,
-        models: true,
-        caches: true,
-        ..EndpointSupport::CHAT
-    },
-    Key,
-    &["query-api-key", "x-goog-api-key"],
-    &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    &[XApiKey],
-);
-
-/// `lm15/access.py:186-192`.
-pub const META: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_RESPONSES_PRESET_BASE_URLS, "meta")),
-    ..policy(
-        "meta",
-        EndpointSupport {
-            files: true,
-            images: true,
-            responses_api: true,
-            models: true,
-            ..EndpointSupport::CHAT
-        },
-        Key,
-        &["bearer"],
-        META_ENV_KEYS,
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:202-208`.
-pub const GROQ: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "groq")),
-    ..policy(
-        "groq",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["GROQ_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:210-216`.
-pub const OPENROUTER: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "openrouter")),
-    ..policy(
-        "openrouter",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["OPENROUTER_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:224-230`.
-pub const DEEPSEEK: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "deepseek")),
-    ..policy(
-        "deepseek",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["DEEPSEEK_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:235-241`.
-pub const ZAI: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "zai")),
-    ..policy(
-        "zai",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["ZAI_API_KEY"],
-        &[Bearer],
-    )
-};
-
-// ─── Open-model inference hosts (changes/2026-09-26-inference-hosts-live.md) ───
-// A bearer key each, the provider's own documented variable; batch, files and
-// media endpoints they also sell are not registered.
-
-/// `lm15/access.py` `DEEPINFRA` (open-model inference host, 2026-09-26).
-pub const DEEPINFRA: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "deepinfra")),
-    ..policy(
-        "deepinfra",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["DEEPINFRA_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py` `TOGETHER` (open-model inference host, 2026-09-26).
-pub const TOGETHER: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "together")),
-    ..policy(
-        "together",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["TOGETHER_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py` `FIREWORKS` (open-model inference host, 2026-09-26).
-pub const FIREWORKS: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "fireworks")),
-    ..policy(
-        "fireworks",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["FIREWORKS_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py` `PARASAIL` (open-model inference host, 2026-09-26).
-pub const PARASAIL: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "parasail")),
-    ..policy(
-        "parasail",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &["PARASAIL_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:260-266`.
-pub const MOONSHOTAI: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "moonshotai")),
-    ..policy(
-        "moonshotai",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        MOONSHOTAI_ENV_KEYS,
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:272-278`.
-pub const MOONSHOTAI_RESPONSES: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_RESPONSES_PRESET_BASE_URLS, "moonshotai")),
-    ..policy(
-        "moonshotai-responses",
-        EndpointSupport {
-            responses_api: true,
-            ..EndpointSupport::CHAT_MODELS
-        },
-        Key,
-        &["bearer"],
-        MOONSHOTAI_ENV_KEYS,
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:284-290`.
-pub const META_CHAT: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "meta")),
-    ..policy(
-        "meta-chat",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        META_ENV_KEYS,
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:299-306`.
-pub const DEEPSEEK_ANTHROPIC: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(ANTHROPIC_PRESET_BASE_URLS, "deepseek")),
-    ..policy(
-        "deepseek-anthropic",
-        EndpointSupport::CHAT,
-        Key,
-        &["x-api-key"],
-        &["DEEPSEEK_API_KEY"],
-        &[XApiKey],
-    )
-};
-
-/// `lm15/access.py:313-320`.
-pub const META_ANTHROPIC: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(ANTHROPIC_PRESET_BASE_URLS, "meta")),
-    ..policy(
-        "meta-anthropic",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        META_ENV_KEYS,
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:326-333`.
-pub const MOONSHOTAI_ANTHROPIC: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(ANTHROPIC_PRESET_BASE_URLS, "moonshotai")),
-    ..policy(
-        "moonshotai-anthropic",
-        EndpointSupport::CHAT,
-        Key,
-        &["bearer"],
-        MOONSHOTAI_ENV_KEYS,
-        &[Bearer],
-    )
-};
-
-// Cloud hosts (`lm15/access.py:335-554`; spec/auth.md AUTH-10 host policies).
-
-/// `lm15/access.py:356-370`.
-pub const AWS_ANTHROPIC: AccessPolicy = AccessPolicy {
-    backend: "aws-external-anthropic",
-    host: Some(HostSpec {
-        settings: &[AWS_REGION, AWS_WORKSPACE],
-        required_headers: &[("anthropic-workspace-id", "workspace")],
-        sigv4_service: Some("aws-external-anthropic"),
-        endpoint_env: &[
-            "AWS_ENDPOINT_URL_AWS_EXTERNAL_ANTHROPIC",
-            "AWS_ENDPOINT_URL",
-        ],
-        ..HostSpec::new("https://aws-external-anthropic.{region}.api.aws/v1")
-    }),
-    ..policy(
-        "aws-anthropic",
-        EndpointSupport::CHAT,
-        AwsChain,
-        &["sigv4", "x-api-key"],
-        &["ANTHROPIC_AWS_API_KEY"],
-        &[SigV4, XApiKey],
-    )
-};
-
-/// `lm15/access.py:377-390`.
-pub const BEDROCK_ANTHROPIC: AccessPolicy = AccessPolicy {
-    backend: "bedrock-mantle",
-    host: Some(HostSpec {
-        settings: &[AWS_REGION],
-        sigv4_service: Some("bedrock-mantle"),
-        endpoint_env: &["AWS_ENDPOINT_URL_BEDROCK_MANTLE", "AWS_ENDPOINT_URL"],
-        ..HostSpec::new("https://bedrock-mantle.{region}.api.aws/anthropic/v1")
-    }),
-    ..policy(
-        "bedrock-anthropic",
-        EndpointSupport::CHAT,
-        AwsChain,
-        &["sigv4", "x-api-key"],
-        &["AWS_BEARER_TOKEN_BEDROCK"],
-        &[SigV4, XApiKey],
-    )
-};
-
-/// `lm15/access.py:401-414`. models=false: GET /openai/v1/models is 404.
-pub const BEDROCK_CHAT: AccessPolicy = AccessPolicy {
-    backend: "bedrock-runtime",
-    host: Some(HostSpec {
-        settings: &[AWS_REGION],
-        sigv4_service: Some("bedrock"),
-        endpoint_env: &["AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "AWS_ENDPOINT_URL"],
-        ..HostSpec::new("https://bedrock-runtime.{region}.amazonaws.com/openai/v1")
-    }),
-    ..policy(
-        "bedrock-chat",
-        EndpointSupport::CHAT,
-        AwsChain,
-        &["sigv4", "bearer"],
-        &["AWS_BEARER_TOKEN_BEDROCK"],
-        &[SigV4, Bearer],
-    )
-};
-
-/// `lm15/access.py:424-437`.
-pub const BEDROCK_MANTLE_CHAT: AccessPolicy = AccessPolicy {
-    backend: "bedrock-mantle",
-    host: Some(HostSpec {
-        settings: &[AWS_REGION],
-        sigv4_service: Some("bedrock-mantle"),
-        endpoint_env: &["AWS_ENDPOINT_URL_BEDROCK_MANTLE", "AWS_ENDPOINT_URL"],
-        ..HostSpec::new("https://bedrock-mantle.{region}.api.aws/v1")
-    }),
-    ..policy(
-        "bedrock-mantle-chat",
-        EndpointSupport::CHAT_MODELS,
-        AwsChain,
-        &["sigv4", "bearer"],
-        &["AWS_BEARER_TOKEN_BEDROCK"],
-        &[SigV4, Bearer],
-    )
-};
-
-const AZURE_OPENAI_HOST: HostSpec = HostSpec {
-    endpoint_env: &["AZURE_OPENAI_ENDPOINT"],
-    settings: &[AZURE_OPENAI_RESOURCE, AZURE_AUTHORITY, AZURE_SCOPE],
-    ..HostSpec::new("https://{resource}.openai.azure.com/openai/v1")
-};
-
-/// `lm15/access.py:446-462`.
-pub const AZURE: AccessPolicy = AccessPolicy {
-    backend: "azure-openai",
-    host: Some(AZURE_OPENAI_HOST),
-    ..policy(
-        "azure",
-        EndpointSupport {
-            live: true,
-            files: true,
-            batches: true,
-            speech: true,
-            responses_api: true,
-            models: true,
-            ..EndpointSupport::CHAT
-        },
-        AzureChain,
-        &["api-key", "entra-oauth"],
-        &["AZURE_OPENAI_API_KEY"],
-        &[AuthScheme::ApiKey, Bearer],
-    )
-};
-
-/// `lm15/access.py:464-476`.
-pub const AZURE_CHAT: AccessPolicy = AccessPolicy {
-    backend: "azure-openai",
-    host: Some(AZURE_OPENAI_HOST),
-    ..policy(
-        "azure-chat",
-        EndpointSupport::CHAT_MODELS,
-        AzureChain,
-        &["api-key", "entra-oauth"],
-        &["AZURE_OPENAI_API_KEY"],
-        &[AuthScheme::ApiKey, Bearer],
-    )
-};
-
-/// `lm15/access.py:484-496`.
-pub const AZURE_ANTHROPIC: AccessPolicy = AccessPolicy {
-    backend: "azure-foundry",
-    host: Some(HostSpec {
-        settings: &[AZURE_FOUNDRY_RESOURCE, AZURE_AUTHORITY, AZURE_SCOPE],
-        endpoint_env: &["ANTHROPIC_FOUNDRY_BASE_URL"],
-        ..HostSpec::new("https://{resource}.services.ai.azure.com/anthropic/v1")
-    }),
-    ..policy(
-        "azure-anthropic",
-        EndpointSupport::CHAT,
-        AzureChain,
-        &["x-api-key", "entra-oauth"],
-        &["ANTHROPIC_FOUNDRY_API_KEY"],
-        &[XApiKey, Bearer],
-    )
-};
-
-/// `lm15/access.py:504-513`.
-pub const VERTEX: AccessPolicy = AccessPolicy {
-    backend: "vertex",
-    host: Some(HostSpec {
-        settings: &[GCP_PROJECT, GCP_LOCATION],
-        ..HostSpec::new(
-            "https://{location_host}/v1/projects/{project}/locations/{location}/publishers/google",
-        )
-    }),
-    // API keys (amended 2026-09-26): a Vertex API key in `x-goog-api-key`
-    // on the project-scoped hosts; key first, a token-shaped string still
-    // bearer (`select_scheme`). No env key: GOOGLE_API_KEY belongs to the
-    // Gemini API and vertex-express, and reading it here would silently
-    // replace the ADC identity.
-    ..policy(
-        "vertex",
-        EndpointSupport::CHAT,
-        GcpChain,
-        &["x-goog-api-key", "google-oauth"],
-        &[],
-        &[XApiKey, Bearer],
-    )
-};
-
-/// `lm15/access.py:516-525`.
-pub const VERTEX_EXPRESS: AccessPolicy = AccessPolicy {
-    backend: "vertex-express",
-    host: Some(HostSpec::new(
-        "https://aiplatform.googleapis.com/v1/publishers/google",
-    )),
-    ..policy(
-        "vertex-express",
-        EndpointSupport::CHAT,
-        Key,
-        &["query-api-key"],
-        &["GOOGLE_API_KEY"],
-        &[QueryKey],
-    )
-};
-
-/// `lm15/access.py:530-548`.
-pub const VERTEX_ANTHROPIC: AccessPolicy = AccessPolicy {
-    backend: "vertex",
-    host: Some(HostSpec {
-        settings: &[GCP_PROJECT, GCP_LOCATION],
-        paths: &[
-            (
-                "messages",
-                "/publishers/anthropic/models/{model}:rawPredict",
-            ),
-            (
-                "messages/stream",
-                "/publishers/anthropic/models/{model}:streamRawPredict",
-            ),
-        ],
-        model_in: ModelPlacement::Path,
-        anthropic_version_in: AnthropicVersionIn::Body("vertex-2023-10-16"),
-        ..HostSpec::new(VERTEX_BASE)
-    }),
-    ..policy(
-        "vertex-anthropic",
-        EndpointSupport::CHAT,
-        GcpChain,
-        &["google-oauth"],
-        &[],
-        &[Bearer],
-    )
-};
-
-// Keyless local servers (`lm15/access.py:558-577`; placeholder keys from
-// `lm15/registry.py`).
-
-/// `lm15/access.py:558-563`.
-pub const OLLAMA: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "ollama")),
-    placeholder_key: Some("ollama"),
-    ..policy(
-        "ollama",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &[],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:565-570`.
-pub const VLLM: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "vllm")),
-    placeholder_key: Some("EMPTY"),
-    ..policy(
-        "vllm",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &[],
-        &[Bearer],
-    )
-};
-
-/// `lm15/access.py:572-577`.
-pub const SGLANG: AccessPolicy = AccessPolicy {
-    base_url: Some(preset_url(OPENAI_CHAT_PRESET_BASE_URLS, "sglang")),
-    placeholder_key: Some("EMPTY"),
-    ..policy(
-        "sglang",
-        EndpointSupport::CHAT_MODELS,
-        Key,
-        &["bearer"],
-        &[],
-        &[Bearer],
-    )
-};
-
-/// TypeSafe System One (Jev): judgments and models, no streaming.
-pub const TYPESAFE: AccessPolicy = AccessPolicy {
-    base_url: Some("https://api.typesafe.ai"),
-    ..policy(
-        "typesafe",
-        EndpointSupport {
-            complete: true,
-            models: true,
-            stream: false,
-            ..EndpointSupport::CHAT
-        },
-        Key,
-        &["bearer"],
-        &["TYPESAFE_API_KEY"],
-        &[Bearer],
-    )
-};
-
-/// The table, in the reference's declaration order (`lm15/access.py`).
-pub const ACCESS_POLICIES: &[AccessPolicy] = &[
-    ANTHROPIC_API,
-    CLAUDE_CODE,
-    OPENAI_API,
-    OPENAI_CODEX,
-    OPENAI_CHAT_API,
-    XAI,
-    GEMINI_API,
-    META,
-    GROQ,
-    OPENROUTER,
-    DEEPSEEK,
-    ZAI,
-    MOONSHOTAI,
-    MOONSHOTAI_RESPONSES,
-    META_CHAT,
-    DEEPSEEK_ANTHROPIC,
-    META_ANTHROPIC,
-    MOONSHOTAI_ANTHROPIC,
-    DEEPINFRA,
-    TOGETHER,
-    FIREWORKS,
-    PARASAIL,
-    AWS_ANTHROPIC,
-    BEDROCK_ANTHROPIC,
-    BEDROCK_CHAT,
-    BEDROCK_MANTLE_CHAT,
-    AZURE,
-    AZURE_CHAT,
-    AZURE_ANTHROPIC,
-    VERTEX,
-    VERTEX_EXPRESS,
-    VERTEX_ANTHROPIC,
-    OLLAMA,
-    VLLM,
-    SGLANG,
-    TYPESAFE,
-];
+/// `lm15/access.py` `DEFAULT_CLAUDE_CODE_VERSION`: the Claude Code release
+/// this door says it is (`user-agent: claude-cli/<version>`). Anthropic's
+/// server reads it: a model can require a newer release (claude-opus-5-5
+/// refuses anything before 2.1.280, live 2026-09-23 and 2026-09-30); callers
+/// move it without a release through the `client_version` setting or
+/// LM15_CLAUDE_CODE_VERSION.
+pub const DEFAULT_CLAUDE_CODE_VERSION: &str = entry(CLAUDE_CODE.backend_options, "client_version");
+/// The router's env fallback for claude-code's `client_version`.
+pub const CLAUDE_CODE_VERSION_ENV: &str =
+    setting_env(CLAUDE_CODE.backend_settings, "client_version");
+/// The router's env fallback for openai-codex's `client_version`.
+pub const CODEX_CLIENT_VERSION_ENV: &str =
+    setting_env(OPENAI_CODEX.backend_settings, "client_version");
+/// `lm15/access.py` `DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT`.
+pub const DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT: &str = some(CLAUDE_CODE.system_prefix);
+/// `lm15/access.py` `DEFAULT_CODEX_BASE_URL`.
+pub const DEFAULT_CODEX_BASE_URL: &str = some(OPENAI_CODEX.base_url);
+/// `lm15/access.py` `DEFAULT_CODEX_ORIGINATOR`.
+pub const DEFAULT_CODEX_ORIGINATOR: &str = entry(OPENAI_CODEX.headers, "originator");
+/// `lm15/access.py` `DEFAULT_CODEX_INSTRUCTIONS`.
+pub const DEFAULT_CODEX_INSTRUCTIONS: &str = some(OPENAI_CODEX.system_prefix);
+/// `lm15/access.py` `DEFAULT_CODEX_CLIENT_VERSION`.
+pub const DEFAULT_CODEX_CLIENT_VERSION: &str =
+    entry(OPENAI_CODEX.backend_options, "client_version");
+/// `lm15/access.py` `DEFAULT_XAI_BASE_URL`.
+pub const DEFAULT_XAI_BASE_URL: &str = some(XAI.base_url);
 
 pub use crate::registry::canonical_provider;
 
@@ -1313,6 +594,8 @@ pub fn shared_api_key_source<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use AuthScheme::{Bearer, SigV4, XApiKey};
+    use CredentialPolicy::OAuth;
 
     #[test]
     fn provider_strings_are_unique() {

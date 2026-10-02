@@ -34,6 +34,14 @@ pub mod cloud;
 pub mod compat;
 pub mod dialects;
 pub mod errors;
+/// The reference's provider tables as `const` data, generated from
+/// lm15-contract tables/providers.json by `tools/gen_tables.py`. A feature
+/// build that leaves out a module (the `wasm` codec has no managed login)
+/// reads a subset, so unused tables are not a finding here.
+#[allow(dead_code)]
+pub(crate) mod generated {
+    pub(crate) mod tables;
+}
 pub mod jobs;
 pub mod judgments;
 #[cfg(feature = "native")]

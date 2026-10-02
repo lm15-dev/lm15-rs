@@ -193,8 +193,9 @@ impl Compat {
 }
 
 /// Preset-name normalization and the permanent spelling aliases
-/// (`lm15/compat.py:472-489`). One map serves all three tables: a name
-/// means the same server in each.
+/// (`lm15/compat.py` `_OPENAI_CHAT_PRESET_ALIASES`, generated into
+/// `src/generated/tables.rs`). One map serves all three tables: a name means
+/// the same server in each.
 pub fn preset_key(name: &str) -> String {
     let key: String = name
         .to_ascii_lowercase()
@@ -204,15 +205,10 @@ pub fn preset_key(name: &str) -> String {
             other => other,
         })
         .collect();
-    match key.as_str() {
-        "openai_chat" | "chat" | "chat_completions" | "responses" | "openai_responses" => {
-            "openai".into()
-        }
-        "lm_studio" => "lmstudio".into(),
-        "dashscope_qwen" => "qwen".into(),
-        "z_ai" => "zai".into(),
-        _ => key,
-    }
+    crate::generated::tables::PRESET_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == key)
+        .map_or(key.clone(), |(_, preset)| (*preset).to_string())
 }
 
 fn find<'a, T>(table: &'a [(&'static str, T)], name: &str) -> Option<&'a T> {

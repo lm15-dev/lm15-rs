@@ -85,259 +85,18 @@ pub struct ProviderDefinition {
     pub dialect: DialectId,
     pub kind: EntryKind,
     /// Compat preset name for bound/hosted chat, responses and anthropic
-    /// entries, and for `xai` (its constructor binds the `xai` preset,
-    /// `lm15/providers/xai.py:70`).
+    /// entries (the registry's own value; see [`ProviderDefinition::preset`]
+    /// for the one an adapter-owned class binds itself).
     pub compat: Option<&'static str>,
     /// The key a keyless local server accepts (AUTH-1 last rung).
     pub placeholder_key: Option<&'static str>,
     pub note: &'static str,
 }
 
-const fn owned(id: &'static str, dialect: DialectId, note: &'static str) -> ProviderDefinition {
-    ProviderDefinition {
-        id,
-        dialect,
-        kind: EntryKind::AdapterOwned,
-        compat: None,
-        placeholder_key: None,
-        note,
-    }
-}
-
-const fn bound(
-    id: &'static str,
-    dialect: DialectId,
-    compat: &'static str,
-    note: &'static str,
-) -> ProviderDefinition {
-    ProviderDefinition {
-        id,
-        dialect,
-        kind: EntryKind::Bound,
-        compat: Some(compat),
-        placeholder_key: None,
-        note,
-    }
-}
-
-const fn local(
-    id: &'static str,
-    placeholder_key: &'static str,
-    note: &'static str,
-) -> ProviderDefinition {
-    ProviderDefinition {
-        id,
-        dialect: DialectId::OpenaiChat,
-        kind: EntryKind::Bound,
-        compat: Some(id),
-        placeholder_key: Some(placeholder_key),
-        note,
-    }
-}
-
-const fn hosted(
-    id: &'static str,
-    dialect: DialectId,
-    compat: Option<&'static str>,
-    note: &'static str,
-) -> ProviderDefinition {
-    ProviderDefinition {
-        id,
-        dialect,
-        kind: EntryKind::Hosted,
-        compat,
-        placeholder_key: None,
-        note,
-    }
-}
-
-/// Declaration order is presentation order, as in the reference.
-pub const PROVIDERS: &[ProviderDefinition] = &[
-    owned("openai", DialectId::OpenaiResponses, "OpenAI Responses API"),
-    owned(
-        "openai-chat",
-        DialectId::OpenaiChat,
-        "OpenAI Chat Completions dialect (the de-facto standard other servers speak)",
-    ),
-    owned("anthropic", DialectId::Anthropic, "Anthropic Messages API"),
-    owned("gemini", DialectId::Gemini, "Google Gemini API"),
-    owned(
-        "typesafe",
-        DialectId::Typesafe,
-        "TypeSafe System One (Jev) judgments",
-    ),
-    ProviderDefinition {
-        compat: Some("xai"),
-        ..owned(
-            "xai",
-            DialectId::OpenaiChat,
-            "xAI Grok (Chat Completions dialect; XAI_API_KEY or subscription OAuth)",
-        )
-    },
-    owned(
-        "claude-code",
-        DialectId::Anthropic,
-        "Claude subscription through the local `claude` CLI login",
-    ),
-    owned(
-        "openai-codex",
-        DialectId::OpenaiResponses,
-        "ChatGPT subscription through the local `codex` CLI login",
-    ),
-    bound(
-        "groq",
-        DialectId::OpenaiChat,
-        "groq",
-        "Groq Cloud (Chat Completions dialect)",
-    ),
-    bound(
-        "openrouter",
-        DialectId::OpenaiChat,
-        "openrouter",
-        "OpenRouter (Chat Completions dialect)",
-    ),
-    bound(
-        "deepseek",
-        DialectId::OpenaiChat,
-        "deepseek",
-        "DeepSeek (Chat Completions dialect; thinking mode on by default)",
-    ),
-    bound(
-        "deepseek-anthropic",
-        DialectId::Anthropic,
-        "deepseek",
-        "DeepSeek over the Anthropic Messages wire (same key as `deepseek`; no model listing)",
-    ),
-    bound(
-        "zai",
-        DialectId::OpenaiChat,
-        "zai",
-        "Z.AI GLM (Chat Completions dialect; general endpoint, not the Coding Plan)",
-    ),
-    bound(
-        "moonshotai",
-        DialectId::OpenaiChat,
-        "moonshotai",
-        "Moonshot AI Kimi (Chat Completions dialect)",
-    ),
-    bound(
-        "moonshotai-responses",
-        DialectId::OpenaiResponses,
-        "moonshotai",
-        "Moonshot AI Kimi over the Responses wire (same key as `moonshotai`)",
-    ),
-    bound(
-        "moonshotai-anthropic",
-        DialectId::Anthropic,
-        "moonshotai",
-        "Moonshot AI Kimi over the Anthropic Messages wire (same key as `moonshotai`)",
-    ),
-    bound(
-        "deepinfra",
-        DialectId::OpenaiChat,
-        "deepinfra",
-        "DeepInfra open-model inference (Chat Completions dialect; models are vendor/name ids)",
-    ),
-    bound(
-        "together",
-        DialectId::OpenaiChat,
-        "together",
-        "Together AI open-model inference (Chat Completions dialect; gpt-oss refuses a forced tool choice client-side — Together answers it with HTTP 500)",
-    ),
-    bound(
-        "fireworks",
-        DialectId::OpenaiChat,
-        "fireworks",
-        "Fireworks AI open-model inference (Chat Completions dialect; models are accounts/fireworks/models/<name> ids)",
-    ),
-    bound(
-        "parasail",
-        DialectId::OpenaiChat,
-        "parasail",
-        "Parasail open-model inference (Chat Completions dialect; serverless models)",
-    ),
-    bound(
-        "meta",
-        DialectId::OpenaiResponses,
-        "meta",
-        "Meta Model API over the Responses wire",
-    ),
-    bound(
-        "meta-chat",
-        DialectId::OpenaiChat,
-        "meta",
-        "Meta Model API over the Chat Completions wire (same key as `meta`)",
-    ),
-    bound(
-        "meta-anthropic",
-        DialectId::Anthropic,
-        "meta",
-        "Meta Model API over the Anthropic Messages wire (same key as `meta`)",
-    ),
-    hosted(
-        "azure",
-        DialectId::OpenaiResponses,
-        None,
-        "Azure OpenAI v1 Responses wire ({resource}.openai.azure.com)",
-    ),
-    hosted(
-        "azure-chat",
-        DialectId::OpenaiChat,
-        Some("openai"),
-        "Azure OpenAI v1 Chat Completions wire (same resource)",
-    ),
-    hosted(
-        "azure-anthropic",
-        DialectId::Anthropic,
-        None,
-        "Claude in Microsoft Foundry ({resource}.services.ai.azure.com/anthropic)",
-    ),
-    hosted(
-        "aws-anthropic",
-        DialectId::Anthropic,
-        None,
-        "Claude Platform on AWS (Anthropic-operated; SigV4 or ANTHROPIC_AWS_API_KEY)",
-    ),
-    hosted(
-        "bedrock-anthropic",
-        DialectId::Anthropic,
-        None,
-        "Claude in Amazon Bedrock (bedrock-mantle; SigV4 or AWS_BEARER_TOKEN_BEDROCK)",
-    ),
-    hosted(
-        "bedrock-chat",
-        DialectId::OpenaiChat,
-        Some("bedrock"),
-        "Amazon Bedrock over the OpenAI Chat Completions wire (bedrock-runtime /openai/v1)",
-    ),
-    hosted(
-        "bedrock-mantle-chat",
-        DialectId::OpenaiChat,
-        Some("bedrock-mantle"),
-        "Amazon Bedrock Chat Completions on bedrock-mantle (un-versioned ids)",
-    ),
-    hosted(
-        "vertex",
-        DialectId::Gemini,
-        None,
-        "Gemini on Google Cloud (Agent Platform); ADC chain",
-    ),
-    hosted(
-        "vertex-express",
-        DialectId::Gemini,
-        None,
-        "Agent Platform express mode: GOOGLE_API_KEY as ?key=",
-    ),
-    hosted(
-        "vertex-anthropic",
-        DialectId::Anthropic,
-        None,
-        "Claude on Google Cloud (rawPredict; model in the path)",
-    ),
-    local("ollama", "ollama", "local ollama server (keyless)"),
-    local("vllm", "EMPTY", "local vLLM server (keyless)"),
-    local("sglang", "EMPTY", "local SGLang server (keyless)"),
-];
+/// Declaration order is presentation order, as in the reference: the
+/// reference's rows (lm15-contract tables/providers.json, generated into
+/// `src/generated/tables.rs`). A provider is added there, never here.
+pub const PROVIDERS: &[ProviderDefinition] = crate::generated::tables::PROVIDERS;
 
 /// Provider strings are hyphenated; the underscore spelling is a permanent
 /// alias (`openai_chat` → `openai-chat`).
@@ -354,6 +113,19 @@ pub fn lookup(name: &str) -> Option<&'static ProviderDefinition> {
 impl ProviderDefinition {
     /// The access policy this entry binds (`lm15/registry.py`
     /// `ProviderDefinition.access`); every entry has one.
+    /// The compat preset the adapter is built with: the row's own, or the
+    /// one an adapter-owned class binds in its constructor. Only `xai` does:
+    /// the reference's `XaiLM` passes `compat="xai"` (lm15-python
+    /// `lm15/providers/xai.py`), adapter code, not a registry value, so it is
+    /// written here and not in the generated table.
+    pub fn preset(&self) -> Option<&'static str> {
+        match (self.compat, self.kind, self.id) {
+            (Some(name), _, _) => Some(name),
+            (None, EntryKind::AdapterOwned, "xai") => Some("xai"),
+            _ => None,
+        }
+    }
+
     pub fn access(&self) -> &'static AccessPolicy {
         access_policy(self.id).expect("every registry entry has an access policy")
     }

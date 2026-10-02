@@ -46,32 +46,13 @@ pub const EXTERNAL_SOURCES: &[(&str, &str, &str)] = &[
 
 pub const NAMED_CREDENTIALS: &[&str] = &["platform", "workload", "environment", "cli"];
 
+/// The AUTH-12 service label (generated from the reference's table), or the
+/// provider id itself.
 fn service_label(provider: &str) -> &str {
-    match provider {
-        "anthropic" | "claude-code" => "Anthropic",
-        "openai" | "openai-chat" | "openai-codex" => "OpenAI",
-        "gemini" => "Google",
-        "vertex" | "vertex-anthropic" | "vertex-express" => "Google Cloud",
-        "azure" | "azure-chat" | "azure-anthropic" => "Microsoft Azure",
-        "aws-anthropic" | "bedrock-anthropic" | "bedrock-chat" | "bedrock-mantle-chat" => "AWS",
-        "meta" | "meta-chat" | "meta-anthropic" => "Meta",
-        "moonshotai" | "moonshotai-anthropic" | "moonshotai-responses" | "kimi-code" => {
-            "Moonshot AI"
-        }
-        "deepseek" | "deepseek-anthropic" => "DeepSeek",
-        "groq" => "Groq",
-        "openrouter" => "OpenRouter",
-        "xai" => "xAI",
-        "zai" => "Z.AI",
-        "typesafe" => "TypeSafe",
-        "ollama" | "vllm" | "sglang" => "Local",
-        "github-copilot" => "GitHub",
-        "deepinfra" => "DeepInfra",
-        "together" => "Together AI",
-        "fireworks" => "Fireworks AI",
-        "parasail" => "Parasail",
-        other => other,
-    }
+    crate::generated::tables::SERVICE_LABELS
+        .iter()
+        .find(|(id, _)| *id == provider)
+        .map_or(provider, |(_, label)| label)
 }
 
 fn recipe(

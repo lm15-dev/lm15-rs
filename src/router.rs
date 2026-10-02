@@ -64,53 +64,12 @@ pub struct RouteRule {
     pub note: &'static str,
 }
 
-const fn rule(prefix: &'static str, provider: &'static str, note: &'static str) -> RouteRule {
-    RouteRule {
-        prefix,
-        provider,
-        note,
-    }
-}
-
 /// The complete built-in knowledge of the router (`lm15/router.py`
-/// `DEFAULT_RULES`, copied as data — port.md rule 2). First match wins.
+/// `DEFAULT_RULES`, generated from lm15-contract tables/providers.json —
+/// port.md rule 2; pinned by router/resolution.json). First match wins.
 /// A convenience, not a registry of truth: a new model family needs a
 /// release, a catalog, or the `provider:` prefix.
-pub const DEFAULT_RULES: &[RouteRule] = &[
-    rule("jev", "typesafe", "TypeSafe System One judgment models"),
-    rule("claude-", "anthropic", "Anthropic Claude family"),
-    rule(
-        "gpt-",
-        "openai",
-        "OpenAI GPT family (Responses API; use openai-chat: for Chat Completions)",
-    ),
-    rule("o1", "openai", "OpenAI o1 reasoning family"),
-    rule("o3", "openai", "OpenAI o3 reasoning family"),
-    rule("o4", "openai", "OpenAI o4 reasoning family"),
-    rule("gemini-", "gemini", "Google Gemini family"),
-    rule(
-        "gemma-",
-        "gemini",
-        "Google Gemma open models, served by the Gemini API (live /models listing 2026-09-01)",
-    ),
-    rule(
-        "nano-banana",
-        "gemini",
-        "Google image models on the Gemini API (live /models listing 2026-09-01)",
-    ),
-    rule(
-        "grok-",
-        "xai",
-        "xAI Grok family (XAI_API_KEY or subscription OAuth)",
-    ),
-    rule("sora-", "openai", "OpenAI Sora video generation"),
-    rule("veo-", "gemini", "Google Veo video generation"),
-    rule(
-        "chat-latest",
-        "openai",
-        "OpenAI rolling chat alias (live /models listing 2026-09-01)",
-    ),
-];
+pub const DEFAULT_RULES: &[RouteRule] = crate::generated::tables::DEFAULT_RULES;
 
 // ─── resolution ──────────────────────────────────────────────────────
 
@@ -1011,24 +970,8 @@ impl LMRouter {
 /// name is the provider", and an unknown one is an error there too. Where
 /// litellm's name covers two lm15 doors (bedrock, vertex_ai: Anthropic or
 /// not, by model) it is left out: choosing would be a guess.
-pub const LITELLM_PROVIDER_PREFIXES: &[(&str, &str)] = &[
-    ("openai", "openai-chat"),
-    ("anthropic", "anthropic"),
-    ("gemini", "gemini"),
-    ("groq", "groq"),
-    ("openrouter", "openrouter"),
-    ("deepseek", "deepseek"),
-    ("xai", "xai"),
-    ("ollama", "ollama"),
-    ("ollama_chat", "ollama"),
-    ("hosted_vllm", "vllm"),
-    ("moonshot", "moonshotai"),
-    ("azure", "azure-chat"),
-    ("deepinfra", "deepinfra"),
-    ("together_ai", "together"),
-    ("fireworks_ai", "fireworks"),
-    ("parasail", "parasail"),
-];
+pub const LITELLM_PROVIDER_PREFIXES: &[(&str, &str)] =
+    crate::generated::tables::LITELLM_PROVIDER_PREFIXES;
 
 /// Keyword arguments of `create()` / `completion()` that configure the
 /// CLIENT, not the request: refused with the lm15 place they belong.

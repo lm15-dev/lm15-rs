@@ -3,7 +3,6 @@
 //! named points.
 
 use super::{JsonObject, Knob, ReasoningEfforts, SendReject, ToolResultMedia};
-use crate::types::ReasoningEffort;
 
 /// `lm15/compat.py:839-853` `AnthropicThinkingFormat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -123,66 +122,15 @@ impl Default for ResolvedAnthropicCompat {
     }
 }
 
-use Knob::Set;
+/// The server presets (`lm15/compat.py`), generated from lm15-contract
+/// tables/providers.json into `src/generated/tables.rs`; the receipt behind
+/// each knob is cited at the reference table.
+pub const ANTHROPIC_PRESETS: &[(&str, AnthropicCompat)] =
+    crate::generated::tables::ANTHROPIC_PRESETS;
 
-/// `lm15/compat.py:934-984` `ANTHROPIC_PRESETS`.
-pub const ANTHROPIC_PRESETS: &[(&str, AnthropicCompat)] = &[
-    ("anthropic", AnthropicCompat::EMPTY),
-    // DeepSeek over the Anthropic wire (`lm15/compat.py:943-949`).
-    (
-        "deepseek",
-        AnthropicCompat {
-            thinking_format: Some(Set(AnthropicThinkingFormat::Deepseek)),
-            cache_control: Some(Set(AnthropicCacheControl::None)),
-            structured_output: Some(Set(SendReject::Reject)),
-            parallel_tool_calls: Some(Set(SendReject::Reject)),
-            // MAP-10: HTTP 200 and the model sees [Unsupported Image] — silent degrade.
-            tool_result_media: Some(Set(ToolResultMedia::Reject)),
-            model_prefixes: Some(&["deepseek-"]),
-            ..AnthropicCompat::EMPTY
-        },
-    ),
-    // Meta Model API over the Anthropic wire (`lm15/compat.py:956-961`).
-    (
-        "meta",
-        AnthropicCompat {
-            thinking_format: Some(Set(AnthropicThinkingFormat::Adaptive)),
-            cache_control: Some(Set(AnthropicCacheControl::None)),
-            structured_output: Some(Set(SendReject::Send)),
-            parallel_tool_calls: Some(Set(SendReject::Send)),
-            ..AnthropicCompat::EMPTY
-        },
-    ),
-    // Moonshot AI over the Anthropic wire (`lm15/compat.py:974-983`).
-    (
-        "moonshotai",
-        AnthropicCompat {
-            thinking_format: Some(Set(AnthropicThinkingFormat::Effort)),
-            thinking_replay: Some(Set(AnthropicThinkingReplay::Unsigned)),
-            cache_control: Some(Set(AnthropicCacheControl::None)),
-            structured_output: Some(Set(SendReject::Send)),
-            parallel_tool_calls: Some(Set(SendReject::Reject)),
-            sampling_params: Some(Set(SendReject::Reject)),
-            // MAP-10: images received (kimi-k3); a document block is 400.
-            tool_result_media: Some(Set(ToolResultMedia::Images)),
-            reasoning_efforts: Some(&[
-                ReasoningEffort::Low,
-                ReasoningEffort::High,
-                ReasoningEffort::Max,
-            ]),
-            model_prefixes: Some(&["kimi-"]),
-            ..AnthropicCompat::EMPTY
-        },
-    ),
-];
-
-/// `lm15/compat.py:987-999` `ANTHROPIC_PRESET_BASE_URLS`.
-pub const ANTHROPIC_PRESET_BASE_URLS: &[(&str, &str)] = &[
-    ("anthropic", "https://api.anthropic.com/v1"),
-    ("deepseek", "https://api.deepseek.com/anthropic/v1"),
-    ("meta", "https://api.meta.ai/v1"),
-    ("moonshotai", "https://api.moonshot.ai/anthropic/v1"),
-];
+/// The roots the presets supply (`lm15/compat.py`), generated likewise.
+pub const ANTHROPIC_PRESET_BASE_URLS: &[(&str, &str)] =
+    crate::generated::tables::ANTHROPIC_PRESET_BASE_URLS;
 
 #[cfg(test)]
 mod tests {

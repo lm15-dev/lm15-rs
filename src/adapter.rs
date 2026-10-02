@@ -2246,7 +2246,7 @@ impl LmBuilder {
             aliases: Vec::new(),
             dialect: definition.dialect,
             policy: definition.access(),
-            compat_name: definition.compat.map(Cow::Borrowed),
+            compat_name: definition.preset().map(Cow::Borrowed),
             compat: None,
             credentials: None,
             credential_name: None,

@@ -17,10 +17,16 @@ use super::time::now_ms;
 /// AUTH-3 skew, in milliseconds (the borrowed files store milliseconds).
 const REFRESH_SKEW_MS: i64 = 5 * 60 * 1000;
 
-pub const CLAUDE_CODE_LOGIN_HINT: &str =
-    "Log in again: run `claude` and use /login (Claude subscription auth)";
-pub const OPENAI_CODEX_LOGIN_HINT: &str =
-    "Log in again: run `codex login` (ChatGPT subscription auth)";
+/// The claude-code re-login hint (the generated table's).
+pub const CLAUDE_CODE_LOGIN_HINT: &str = match super::policy::CLAUDE_CODE.login_hint {
+    Some(hint) => hint,
+    None => panic!("claude-code has a login hint in the table"),
+};
+/// The openai-codex re-login hint (the generated table's).
+pub const OPENAI_CODEX_LOGIN_HINT: &str = match super::policy::OPENAI_CODEX.login_hint {
+    Some(hint) => hint,
+    None => panic!("openai-codex has a login hint in the table"),
+};
 /// AUTH-9: the uniform `lm15::auth::login("xai", ..)` door runs the
 /// device-code flow this hint names.
 pub const XAI_LOGIN_HINT: &str =

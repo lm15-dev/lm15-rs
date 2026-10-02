@@ -5,10 +5,6 @@ use std::sync::{Arc, Mutex};
 
 use super::manager::Auth;
 use crate::auth::{AuthError, Credential, CredentialProvider, CredentialSource};
-use crate::compat::{
-    AnthropicCompat, IncludeOmit, Knob, OpenAIChatCompat, OpenAIChatInstructionRole,
-    OpenAIChatMaxTokensField, OpenAIChatThinkingFormat,
-};
 use crate::errors::{AuthOperation, Lm15Error};
 use crate::router::DeclaredProvider;
 use crate::transport::BoxFuture;
@@ -144,24 +140,23 @@ impl CredentialProvider for ManagedCredential {
 /// `kimi-code` and `github-copilot`: routes that exist only for a managed
 /// connection (no contract wire receipt, so no registry row — AUTH-26).
 pub fn declared_providers() -> Vec<DeclaredProvider> {
-    let copilot = OpenAIChatCompat {
-        instruction_role: Some(Knob::Set(OpenAIChatInstructionRole::System)),
-        max_tokens_field: Some(Knob::Set(OpenAIChatMaxTokensField::MaxCompletionTokens)),
-        stream_usage: Some(Knob::Set(IncludeOmit::Include)),
-        thinking_format: Some(Knob::Set(OpenAIChatThinkingFormat::ReasoningEffort)),
-        ..OpenAIChatCompat::default()
+    use crate::generated::tables;
+    let base_url = |policy: &crate::auth::AccessPolicy| {
+        policy
+            .base_url
+            .expect("a declared-login policy names its base URL in the table")
     };
     vec![
         DeclaredProvider::anthropic(
             "kimi-code",
-            "https://api.kimi.com/coding",
-            AnthropicCompat::default(),
+            base_url(&crate::auth::KIMI_CODE),
+            tables::KIMI_CODE_COMPAT,
         )
         .factory(|builder| builder.access_policy(&crate::auth::KIMI_CODE).build()),
         DeclaredProvider::chat(
             "github-copilot",
-            super::flows::COPILOT_DEFAULT_API_BASE,
-            copilot,
+            base_url(&crate::auth::GITHUB_COPILOT),
+            tables::GITHUB_COPILOT_COMPAT,
         )
         .factory(|builder| builder.access_policy(&crate::auth::GITHUB_COPILOT).build()),
     ]
