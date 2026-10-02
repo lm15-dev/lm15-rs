@@ -415,7 +415,7 @@ fn response_and_stream_goldens_replay_exactly() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(
         checked,
-        (355, 52), // +2 2026-09-30: claude-code.client_version_setting, claude-code.max_tokens_defaulted
+        (359, 52), // +2 2026-09-30: claude-code.client_version_setting, claude-code.max_tokens_defaulted; +4 2026-10-02: {anthropic,openai,openai-chat,gemini}.tool_no_description (MAP-17)
         "complete/stream goldens at the target CONTRACT_PIN"
     );
 }

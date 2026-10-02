@@ -40,16 +40,7 @@ pub fn tools_payload(tools: &[Tool], compat: &ResolvedOpenAIResponsesCompat) -> 
                 let mut payload = Map::new();
                 payload.insert("type".into(), Value::String("function".into()));
                 payload.insert("name".into(), Value::String(function.name.clone()));
-                // The reference sends `description: null` when absent; the
-                // schema takes it and the bytes match.
-                payload.insert(
-                    "description".into(),
-                    function
-                        .description
-                        .clone()
-                        .map(Value::String)
-                        .unwrap_or(Value::Null),
-                );
+                function.insert_wire_description(&mut payload);
                 payload.insert(
                     "parameters".into(),
                     Value::Object(function.parameters.clone()),

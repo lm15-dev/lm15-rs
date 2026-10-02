@@ -23,7 +23,7 @@ use lm15::{Canonical, HostSettings, Request};
 /// request cases each pins at `CONTRACT_PIN`.
 const PROVIDERS: &[(&str, usize)] = &[
     ("openai_chat", 27),
-    ("openai-chat", 2),
+    ("openai-chat", 3), // +1 2026-10-02: tool_no_description (MAP-17)
     ("groq", 3),
     ("ollama", 2),
     ("deepseek", 13),

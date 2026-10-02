@@ -54,6 +54,24 @@ impl FunctionTool {
     pub fn validate(&self) -> VResult<()> {
         non_empty(&self.name, "FunctionTool.name")
     }
+
+    /// MAP-17: the description a wire carries, or `None` when the key must
+    /// be left off. An absent description is never sent as `null`
+    /// (Anthropic and Groq refuse it with a 400; lm15-contract
+    /// receipts/2026-10-02-tool-description), and `""` is the same value as
+    /// absent in canonical JSON (omit-empty), so it is left off too.
+    pub(crate) fn wire_description(&self) -> Option<&str> {
+        self.description.as_deref().filter(|d| !d.is_empty())
+    }
+
+    /// MAP-17: insert `description` into a wire declaration when the tool
+    /// has one. Call it between the name and the schema so the documented
+    /// key order holds.
+    pub(crate) fn insert_wire_description(&self, declaration: &mut serde_json::Map<String, Value>) {
+        if let Some(description) = self.wire_description() {
+            declaration.insert("description".into(), Value::String(description.to_owned()));
+        }
+    }
 }
 
 impl Default for FunctionTool {

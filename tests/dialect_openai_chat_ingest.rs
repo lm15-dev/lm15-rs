@@ -139,7 +139,7 @@ fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
     }
     assert_eq!(
         (round_trips, lossy, foreign, refusals),
-        (174, 37, 34, 9),
+        (175, 37, 34, 9), // +1 round trip 2026-10-02: openai-chat.tool_no_description
         "case counts moved; move CONTRACT_PIN and these constants together"
     );
 }

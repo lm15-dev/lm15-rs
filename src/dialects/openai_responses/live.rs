@@ -91,7 +91,14 @@ pub fn session_update(cx: &BuildContext<'_>, config: &LiveConfig) -> Result<Valu
             .tools
             .iter()
             .filter_map(|t| match t {
-                Tool::Function(f) => Some(json!({"type": "function", "name": f.name, "description": f.description, "parameters": f.parameters})),
+                Tool::Function(f) => {
+                    let mut decl = Map::new();
+                    decl.insert("type".into(), Value::String("function".into()));
+                    decl.insert("name".into(), Value::String(f.name.clone()));
+                    f.insert_wire_description(&mut decl);
+                    decl.insert("parameters".into(), Value::Object(f.parameters.clone()));
+                    Some(Value::Object(decl))
+                }
                 _ => None,
             })
             .collect();

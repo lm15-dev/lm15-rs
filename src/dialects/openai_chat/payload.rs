@@ -110,9 +110,7 @@ pub(super) fn build_payload(
                 Tool::Function(function) => {
                     let mut inner = Map::new();
                     inner.insert("name".into(), Value::String(function.name.clone()));
-                    if let Some(description) = &function.description {
-                        inner.insert("description".into(), Value::String(description.clone()));
-                    }
+                    function.insert_wire_description(&mut inner);
                     inner.insert(
                         "parameters".into(),
                         Value::Object(function.parameters.clone()),

@@ -676,17 +676,22 @@ fn thinking_plan(
 
 // ─── Tools, tool choice, structured output (MAP-8) ──────────────────
 
-/// `lm15/providers/anthropic.py:102-107`, `:647-654`: a function tool is
-/// `{name, description, input_schema}` (`description` is sent as `null`
-/// when absent, as the reference does); a builtin is its versioned type
-/// with the canonical name and its config merged in.
+/// A function tool is `{name, description?, input_schema}`: the
+/// description key is left off when the tool has none (MAP-17; Anthropic
+/// refuses `null`); a builtin is its versioned type with the canonical
+/// name and its config merged in.
 fn tool_value(tool: &Tool) -> Value {
     match tool {
-        Tool::Function(function) => json!({
-            "name": function.name,
-            "description": function.description,
-            "input_schema": function.parameters,
-        }),
+        Tool::Function(function) => {
+            let mut out = Map::new();
+            out.insert("name".into(), Value::String(function.name.clone()));
+            function.insert_wire_description(&mut out);
+            out.insert(
+                "input_schema".into(),
+                Value::Object(function.parameters.clone()),
+            );
+            Value::Object(out)
+        }
         Tool::Builtin(builtin) => {
             let mut out = Map::new();
             out.insert("type".into(), builtin_tool_type(&builtin.name).into());

@@ -110,8 +110,8 @@ fn builtin_tool(tool: &BuiltinTool) -> Value {
 
 /// `tools`: one `functionDeclarations` group for every FunctionTool (in
 /// order), then one entry per BuiltinTool (in order) —
-/// `lm15/providers/gemini.py:747-759`. `description` is omitted when
-/// absent (the reference sends `null`; the field is optional on the wire).
+/// `lm15/providers/gemini.py:747-759`. `description` is left off when the
+/// tool has none (MAP-17).
 fn tools(request: &Request) -> Option<Value> {
     if request.tools.is_empty() {
         return None;
@@ -123,9 +123,7 @@ fn tools(request: &Request) -> Option<Value> {
             Tool::Function(f) => {
                 let mut decl = Map::new();
                 decl.insert("name".into(), Value::String(f.name.clone()));
-                if let Some(description) = &f.description {
-                    decl.insert("description".into(), Value::String(description.clone()));
-                }
+                f.insert_wire_description(&mut decl);
                 let parameters = Value::Object(f.parameters.clone());
                 let field = config::parameters_field(&parameters);
                 decl.insert(field.into(), parameters);

@@ -63,10 +63,12 @@ pub fn setup_frame(cx: &BuildContext<'_>, config: &LiveConfig) -> Result<Value, 
         .filter_map(|t| match t {
             Tool::Function(f) => {
                 let parameters = Value::Object(f.parameters.clone());
-                let mut decl = json!({"name": f.name, "description": f.description});
+                let mut decl = Map::new();
+                decl.insert("name".into(), Value::String(f.name.clone()));
+                f.insert_wire_description(&mut decl);
                 let field = super::config::parameters_field(&parameters);
-                decl[field] = parameters;
-                Some(decl)
+                decl.insert(field.into(), parameters);
+                Some(Value::Object(decl))
             }
             _ => None,
         })

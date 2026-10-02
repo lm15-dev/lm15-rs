@@ -562,6 +562,8 @@ fn map8_tool_choice_forms() {
 
 #[test]
 fn tools_are_declared_with_the_reference_shape() {
+    // MAP-17 (2026-10-02): a tool without a description carries no
+    // description key; it was `"description": null` before.
     let b = body(build(
         "openai",
         json!({"model": "m", "messages": [user("hi")], "tools": tools()}),
@@ -570,9 +572,9 @@ fn tools_are_declared_with_the_reference_shape() {
     assert_eq!(
         b["tools"],
         json!([
-            {"type": "function", "name": "add", "description": null,
+            {"type": "function", "name": "add",
              "parameters": {"type": "object", "properties": {}}},
-            {"type": "function", "name": "sub", "description": null,
+            {"type": "function", "name": "sub",
              "parameters": {"type": "object", "properties": {}}},
             {"type": "web_search_preview"},
             {"type": "code_interpreter", "container": {"type": "auto"}}
