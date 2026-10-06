@@ -18,9 +18,14 @@ pub struct SseEvent {
     pub data: String,
 }
 
-/// Limits the reference applies (`parse_sse` defaults): a line over
-/// `max_line_bytes` or an event over `max_event_bytes` is a
-/// `TransportError`.
+/// Optional caps: a line over `max_line_bytes` or an event over
+/// `max_event_bytes` is a `TransportError`. The default is no cap
+/// (`usize::MAX`, lm15-contract INV-056): a provider sends whole objects as
+/// one line (OpenAI Responses repeats the full response, system prompt
+/// included, in `response.completed`; Gemini sends a 4K image as one
+/// 29.7 MB line), a non-streamed reply has no limit either, and a stream is
+/// accumulated into the whole reply anyway. A line cap is enforced while
+/// the line is still arriving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SseLimits {
     pub max_line_bytes: usize,
@@ -30,8 +35,8 @@ pub struct SseLimits {
 impl Default for SseLimits {
     fn default() -> Self {
         SseLimits {
-            max_line_bytes: 64 * 1024,
-            max_event_bytes: 1024 * 1024,
+            max_line_bytes: usize::MAX,
+            max_event_bytes: usize::MAX,
         }
     }
 }
@@ -61,12 +66,18 @@ impl SseParser {
     }
 
     /// Feed a chunk; returns every event completed by it.
+    ///
+    /// Linear in the bytes fed: between calls the buffer holds only the
+    /// unterminated tail of a line, which has already been searched, so a
+    /// line arriving over thousands of chunks is searched once (INV-056).
     pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<SseEvent>, Lm15Error> {
+        let mut from = self.buffer.len();
         self.buffer.extend_from_slice(chunk);
         let mut events = Vec::new();
         let mut start = 0;
-        while let Some(rel) = self.buffer[start..].iter().position(|b| *b == b'\n') {
-            let end = start + rel + 1;
+        while let Some(rel) = self.buffer[from..].iter().position(|b| *b == b'\n') {
+            let end = from + rel + 1;
+            from = end;
             let line = self.buffer[start..end].to_vec();
             start = end;
             if let Some(event) = self.line(&line)? {
@@ -188,6 +199,92 @@ mod tests {
         }
         got.extend(parser.finish().unwrap());
         assert_eq!(got, parse_sse(body).unwrap());
+    }
+
+    // INV-056: no default cap. The former 64 KiB / 1 MiB defaults refused
+    // real streams (receipts/2026-10-06-sse-long-lines in the contract).
+    #[test]
+    fn a_line_over_the_former_limits_parses_by_default() {
+        let text = "x".repeat(3 * 1024 * 1024);
+        let body = format!("event: response.completed\ndata: {{\"text\": \"{text}\"}}\n\n");
+        let mut parser = SseParser::new();
+        let mut events = Vec::new();
+        for chunk in body.as_bytes().chunks(16 * 1024) {
+            events.extend(parser.feed(chunk).unwrap());
+        }
+        events.extend(parser.finish().unwrap());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event.as_deref(), Some("response.completed"));
+        assert_eq!(events[0].data.len(), text.len() + 12);
+        assert_eq!(events, parse_sse(body.as_bytes()).unwrap());
+    }
+
+    #[test]
+    fn chunked_feed_matches_one_shot_for_any_chunking() {
+        let pieces: [&[u8]; 8] = [
+            b"a",
+            b"\n",
+            b"bc",
+            b"\r\n",
+            b"\n\n",
+            b"data: {}\n",
+            b"data: x\n\n",
+            &[b'z'; 300],
+        ];
+        let mut seed: u32 = 56;
+        let mut rand = |n: usize| {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            (seed >> 8) as usize % n
+        };
+        for _ in 0..300 {
+            let mut body = Vec::new();
+            for _ in 0..rand(40) {
+                body.extend_from_slice(pieces[rand(pieces.len())]);
+            }
+            let size = 1 + rand(7);
+            let mut parser = SseParser::new();
+            let mut got = Vec::new();
+            for chunk in body.chunks(size) {
+                got.extend(parser.feed(chunk).unwrap());
+            }
+            got.extend(parser.finish().unwrap());
+            assert_eq!(got, parse_sse(&body).unwrap());
+        }
+    }
+
+    #[test]
+    fn a_thirty_megabyte_line_feeds_in_linear_time() {
+        let mut body = b"data: ".to_vec();
+        body.extend(std::iter::repeat_n(b'a', 30 * 1024 * 1024));
+        body.extend_from_slice(b"\n\n");
+        let started = std::time::Instant::now();
+        let mut parser = SseParser::new();
+        let mut events = Vec::new();
+        for chunk in body.chunks(16 * 1024) {
+            events.extend(parser.feed(chunk).unwrap());
+        }
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data.len(), 30 * 1024 * 1024);
+        // The old feed searched the whole pending line again on every chunk
+        // (about 1,900 chunks x 15 MB here).
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_line_cap_stops_an_unterminated_line_while_it_arrives() {
+        let mut parser = SseParser::with_limits(SseLimits {
+            max_line_bytes: 1024,
+            ..SseLimits::default()
+        });
+        let chunk = [b'a'; 512];
+        assert!(parser.feed(&chunk).unwrap().is_empty());
+        assert!(parser.feed(&chunk).unwrap().is_empty());
+        let err = parser.feed(&chunk).unwrap_err();
+        assert_eq!(err.class_name(), "TransportError");
     }
 
     #[test]

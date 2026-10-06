@@ -183,6 +183,6 @@ fn every_request_case_of_the_responses_providers_builds_its_fixture() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 101, "request cases with a canonical_request"); // +1 2026-10-02: openai.tool_no_description
+    assert_eq!(checked, 102, "request cases with a canonical_request"); // +1 2026-10-02: openai.tool_no_description; +1 2026-10-06: openai.streaming_long_line (INV-056)
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
