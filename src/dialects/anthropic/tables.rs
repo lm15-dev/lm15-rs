@@ -84,14 +84,7 @@ pub fn anthropic_adaptive_class(model: &str) -> bool {
 /// `lm15/providers/common.py:386-393` `EFFORT_THINKING_BUDGETS`: the one
 /// grading table for budget-only classes (MAP-7 rule 3). `off` has no row:
 /// it never reaches a budget.
-pub const EFFORT_THINKING_BUDGETS: &[(ReasoningEffort, u64)] = &[
-    (ReasoningEffort::Minimal, 1024),
-    (ReasoningEffort::Low, 2048),
-    (ReasoningEffort::Medium, 8192),
-    (ReasoningEffort::High, 16384),
-    (ReasoningEffort::Xhigh, 24576),
-    (ReasoningEffort::Max, 32768),
-];
+pub use crate::types::EFFORT_THINKING_BUDGETS;
 
 /// The budget for an effort word, `None` for `off`.
 pub fn effort_thinking_budget(effort: ReasoningEffort) -> Option<u64> {

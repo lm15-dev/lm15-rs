@@ -107,7 +107,23 @@ impl Response {
             .iter()
             .all(|p| matches!(p, Part::Text(_) | Part::Citation(_) | Part::Thinking(_)));
         if !all_textual {
-            return None;
+            // A structured answer that came back as a DataPart (MAP-14) reads
+            // as its compact JSON, so text(), parse_json() and json() work
+            // whichever form the wire gave it (types.md §Response, amended
+            // 2026-10-10).
+            let mut data = self.message.parts.iter().filter_map(|p| match p {
+                Part::Data(d) => Some(d),
+                _ => None,
+            });
+            let only_data_and_metadata = self
+                .message
+                .parts
+                .iter()
+                .all(|p| matches!(p, Part::Data(_) | Part::Citation(_) | Part::Thinking(_)));
+            return match (data.next(), data.next(), only_data_and_metadata) {
+                (Some(d), None, true) => Some(d.value.to_string()),
+                _ => None,
+            };
         }
         let texts: Vec<&str> = self
             .message

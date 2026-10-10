@@ -60,6 +60,28 @@ impl ToolChoice {
     }
 }
 
+/// The one grading table for budget-only classes (MAP-7 rule 3). `off` has
+/// no row: it never reaches a budget.
+pub const EFFORT_THINKING_BUDGETS: &[(ReasoningEffort, u64)] = &[
+    (ReasoningEffort::Minimal, 1024),
+    (ReasoningEffort::Low, 2048),
+    (ReasoningEffort::Medium, 8192),
+    (ReasoningEffort::High, 16384),
+    (ReasoningEffort::Xhigh, 24576),
+    (ReasoningEffort::Max, 32768),
+];
+
+/// The highest effort whose MAP-7 rule 3 budget is at or below `budget`
+/// (`Minimal` below 1024): the grading table read the other way.
+pub fn effort_for_budget(budget: u64) -> ReasoningEffort {
+    EFFORT_THINKING_BUDGETS
+        .iter()
+        .rev()
+        .find(|(_, tokens)| *tokens <= budget)
+        .map(|(effort, _)| *effort)
+        .unwrap_or(ReasoningEffort::Minimal)
+}
+
 /// How much hidden thinking the model does (MAP-7). `effort` is the dial.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reasoning {
@@ -73,6 +95,17 @@ impl Reasoning {
         Reasoning {
             effort,
             thinking_budget: None,
+            summary: None,
+        }
+    }
+
+    /// A budget alone: `effort` is filled from MAP-7 rule 3's table read
+    /// the other way, the highest level at or below `thinking_budget`
+    /// (`Minimal` below 1024; amended 2026-10-10).
+    pub fn with_budget(thinking_budget: u64) -> Self {
+        Reasoning {
+            effort: effort_for_budget(thinking_budget),
+            thinking_budget: Some(thinking_budget),
             summary: None,
         }
     }

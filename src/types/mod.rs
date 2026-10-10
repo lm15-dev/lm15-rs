@@ -25,7 +25,9 @@ mod usage;
 mod vocab;
 
 pub use adaptation::Adaptation;
-pub use config::{CacheConfig, Config, Reasoning, ToolChoice};
+pub use config::{
+    effort_for_budget, CacheConfig, Config, Reasoning, ToolChoice, EFFORT_THINKING_BUDGETS,
+};
 pub use continuation::{continuation_data, ContinuationState};
 pub use delta::{
     AudioDelta, CitationDelta, ContinuationDelta, Delta, ImageDelta, TextDelta, ThinkingDelta,

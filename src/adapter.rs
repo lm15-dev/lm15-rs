@@ -2583,10 +2583,15 @@ impl LmBuilder {
         let credentials = credentials.ok_or_else(|| {
             let hint = match (policy.login_hint, policy.env_keys.is_empty()) {
                 (Some(hint), _) => format!("; {hint}"),
-                (None, false) => format!("; set {} or pass api_key", policy.env_keys.join(" or ")),
+                // An adapter built by hand reads no environment (only the router
+                // does), so "set the variable" would not help: say what does.
+                (None, false) => format!(
+                    ". An adapter built by hand reads no environment variable, so {} is not used here even when it is set; pass api_key(std::env::var(\"{}\")), or use the router, which reads {}",
+                    policy.env_keys[0], policy.env_keys[0], policy.env_keys.join(" or ")
+                ),
                 (None, true) => "; pass api_key".to_string(),
             };
-            let mut meta = ErrorMeta::new(format!("{provider}: no credential given{hint}"));
+            let mut meta = ErrorMeta::new(format!("{provider}: no API key given{hint}"));
             meta.provider = Some(provider.to_string());
             Lm15Error::NotConfiguredError(meta)
         })?;
