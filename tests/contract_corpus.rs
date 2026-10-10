@@ -116,6 +116,6 @@ fn error_cases_normalize_to_pinned_class_and_code() {
             }
         }
     }
-    assert_eq!(total, 105, "all error vectors at the target CONTRACT_PIN");
+    assert_eq!(total, 108, "all error vectors at the target CONTRACT_PIN");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

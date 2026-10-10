@@ -367,8 +367,8 @@ fn explain_chain(provider: &str, options: &ExplainOptions) -> Result<Report, Aut
         if !policy.credential_policy.is_cloud_chain() {
             return Err(AuthError::not_configured(
                 &canonical,
-                "named credentials require a cloud identity policy; this is not a cloud door",
-                "remove credential or choose a cloud provider",
+                "credential takes the name of a cloud identity (platform, workload, environment, cli), and this is not a cloud door; the value given is not shown, because it may be a key",
+                "if that value is your API key, pass it as api_key (or the router's api_keys)",
             ));
         }
         #[cfg(feature = "native")]
@@ -380,8 +380,8 @@ fn explain_chain(provider: &str, options: &ExplainOptions) -> Result<Report, Aut
         ) {
             return Err(AuthError::not_configured(
                 &canonical,
-                "unknown named credential",
-                "choose platform, workload, environment, or cli",
+                "unknown named credential (one of platform, workload, environment, cli); the value given is not shown, because it may be a key",
+                "if that value is your API key, pass it as api_key (or the router's api_keys)",
             ));
         }
         if options.explicit_source(&canonical)?.is_some() {

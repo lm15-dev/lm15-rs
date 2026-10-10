@@ -363,7 +363,7 @@ fn named_credentials_replay_every_closed_walk_and_endpoint_pin() {
     )
     .unwrap();
     let cases = fixture["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 20, "all AUTH-19 named-credential vectors");
+    assert_eq!(cases.len(), 22, "all AUTH-19 named-credential vectors");
     let sentinel = fixture["sentinel"].as_str().unwrap();
     let scratch = scratch_dir("named");
     let mut seen = BTreeSet::new();
@@ -432,7 +432,7 @@ fn named_credentials_replay_every_closed_walk_and_endpoint_pin() {
             );
         }
     }
-    assert_eq!(seen.len(), 20, "every named case consumed exactly once");
+    assert_eq!(seen.len(), 22, "every named case consumed exactly once");
     std::fs::remove_dir_all(scratch).unwrap();
 }
 

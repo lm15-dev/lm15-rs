@@ -2890,12 +2890,14 @@ pub fn named_meaning(policy: &AccessPolicy, name: &str) -> Result<&'static str, 
             return Err(AuthError::NotConfigured {
                 provider: Some(policy.provider.into()),
                 message: if !NAMED_CREDENTIALS.contains(&name) {
-                    format!("unknown named credential {name:?}; expected platform, workload, environment, or cli")
+                    // AUTH-1/AUTH-5 (amended 2026-10-10): a value that is not a name is
+                    // usually a key in the wrong field; never repeat it.
+                    "unknown named credential (one of platform, workload, environment, cli); the value given is not shown, because it may be a key. If it is your API key, pass it as api_key".to_string()
                 } else {
                     "named credentials require a cloud door".into()
                 },
                 hint: None,
-            })
+            });
         }
     })
 }

@@ -1131,6 +1131,70 @@ pub fn is_pinned_model_not_found(provider_code: &str, message: &str) -> bool {
         })
 }
 
+/// One pinned MAP-18 form of a provider's "this key is not valid" answer that
+/// arrives without HTTP 401: an exact provider code, an optional Google
+/// `google.rpc.ErrorInfo` reason, and the text tests the message must pass
+/// (empty: no test).
+pub struct AuthFailedForm {
+    pub code: &'static str,
+    pub reason: &'static str,
+    pub prefix: &'static str,
+    pub contains: &'static str,
+    pub suffix: &'static str,
+}
+
+/// The pinned forms (lm15-contract spec/auth-failed.json, carried verbatim;
+/// each form has a live receipt).
+pub const AUTH_FAILED_FORMS: &[AuthFailedForm] = &[
+    // Gemini (2026-10-10)
+    AuthFailedForm {
+        code: "INVALID_ARGUMENT",
+        reason: "API_KEY_INVALID",
+        prefix: "",
+        contains: "",
+        suffix: "",
+    },
+    // xAI (2026-10-10)
+    AuthFailedForm {
+        code: "invalid-argument",
+        reason: "",
+        prefix: "Incorrect API key provided",
+        contains: "",
+        suffix: "",
+    },
+];
+
+/// The `reason` of every `google.rpc.ErrorInfo` in a Google error envelope's
+/// `details` (the inner `error` object), in order.
+pub fn google_error_reasons(error: Option<&Value>) -> Vec<String> {
+    let Some(Value::Array(details)) = error.and_then(|e| e.get("details")) else {
+        return Vec::new();
+    };
+    details
+        .iter()
+        .filter(|d| {
+            d.get("@type")
+                .and_then(Value::as_str)
+                .is_some_and(|t| t.ends_with("google.rpc.ErrorInfo"))
+        })
+        .filter_map(|d| d.get("reason").and_then(Value::as_str).map(str::to_owned))
+        .collect()
+}
+
+/// Whether an error is one of the pinned MAP-18 forms: the code matches
+/// exactly, the message passes every text test, and the form's reason, when
+/// it names one, is among `reasons`.
+pub fn is_pinned_auth_failure(provider_code: &str, message: &str, reasons: &[String]) -> bool {
+    !provider_code.is_empty()
+        && AUTH_FAILED_FORMS.iter().any(|f| {
+            f.code == provider_code
+                && (f.reason.is_empty() || reasons.iter().any(|r| r == f.reason))
+                && message.starts_with(f.prefix)
+                && message.contains(f.contains)
+                && message.ends_with(f.suffix)
+        })
+}
+
 pub(crate) fn is_model_error(text: &str) -> bool {
     let lowered = text.to_lowercase();
     lowered.contains("model") && MODEL_ERROR_MARKERS.iter().any(|m| lowered.contains(m))
@@ -1176,6 +1240,10 @@ fn normalize_openai_shape(ctx: &Context, status: u16, body: &str, codex: bool) -
     } else {
         None
     };
+    if is_pinned_auth_failure(provider_code.as_deref().unwrap_or(""), &msg, &[]) {
+        // MAP-18
+        return ctx.error(ErrorClass::AuthError, status, msg, provider_code, None);
+    }
     if code == "context_length_exceeded" {
         return ctx.error(
             ErrorClass::ContextLengthError,
@@ -1321,6 +1389,16 @@ fn normalize_anthropic(ctx: &Context, status: u16, body: &str) -> Lm15Error {
         // `claude-code` backend).
         msg = crate::auth::policy::claude_code_version_guidance(&msg);
     }
+    if is_pinned_auth_failure(&err_type, &msg, &[]) {
+        // MAP-18
+        return ctx.error(
+            ErrorClass::AuthError,
+            status,
+            msg,
+            provider_code,
+            request_id,
+        );
+    }
     if anthropic_is_context_length(&msg) {
         return ctx.error(
             ErrorClass::ContextLengthError,
@@ -1384,6 +1462,10 @@ fn normalize_gemini(ctx: &Context, status: u16, body: &str) -> Lm15Error {
         _ => (String::new(), String::new()),
     };
     let provider_code = Some(err_status.clone());
+    if is_pinned_auth_failure(&err_status, &msg, &google_error_reasons(data.get("error"))) {
+        // MAP-18
+        return ctx.error(ErrorClass::AuthError, status, msg, provider_code, None);
+    }
     if gemini_is_context_length(&msg) {
         return ctx.error(
             ErrorClass::ContextLengthError,
