@@ -13,7 +13,8 @@ use serde_json::{json, Map, Value};
 
 use super::engine::{
     await_return, http_url, https_url, op_error, positive, random_base64url, random_hex,
-    run_device_flow, with_query, DeviceStep, FlowError, HttpReply, LoginContext, ReturnContext,
+    run_device_flow, split_url, with_query, DeviceStep, FlowError, HttpReply, LoginContext,
+    ReturnContext,
 };
 use super::listener::CallbackListener;
 use super::types::{LoginMethod, MethodField, Notice, Prompt, ProviderDescriptor, RequestAuth};
@@ -183,7 +184,9 @@ const META_CLIENT_ID: &str = "1031625952748946";
 const META_DEVICE_URL: &str = "https://auth.meta.com/oidc/device/authorization/";
 const META_TOKEN_URL: &str = "https://auth.meta.com/oidc/device/token/";
 const META_KEY_MINT_URL: &str = "https://api.meta.ai/muse-code/key";
+// No expiry in the reply; a daily re-mint is free (the same key, live 2026-10-12).
 const META_KEY_LIFETIME_S: f64 = 86_400.0;
+const META_DEVICE_REASON: &str = "login, mint and inference observed 2026-10-12; Meta's Model API terms (§ 3.2) reserve the Muse Code key for Muse Code; using it here is outside those terms and puts the Meta account at risk. Subscription traffic is Contributor mode by default (Meta may train on it).";
 
 const OPENROUTER_AUTHORIZE_URL: &str = "https://openrouter.ai/auth";
 const OPENROUTER_KEY_URL: &str = "https://openrouter.ai/api/v1/auth/keys";
@@ -235,8 +238,8 @@ impl Flow {
                 method("device", "Sign in with Kimi Code (subscription)", "device_code", "unverified", Some("no live receipt yet"), &["device"], true),
             ], None),
             Flow::Meta => ("meta", "Meta", "Meta", vec!["meta", "meta-chat", "meta-anthropic"], vec![with_note(
-                method("device", "Sign in with Meta (Muse subscription)", "device_code", "unverified", Some("no live receipt yet"), &["device"], true),
-                "Minted Model API keys are tied to the Muse subscription; verify entitlement on your account.",
+                method("device", "Sign in with Meta (Muse subscription)", "device_code", "unverified", Some(META_DEVICE_REASON), &["device"], true),
+                "Billed to the Muse Code plan when it is active (muse-wonder-full-1.0 needs Power or Maximum Usage); without one, Meta bills the key pay-as-you-go.",
             )], Some("https://dev.meta.ai")),
             Flow::OpenRouter => ("openrouter", "OpenRouter", "OpenRouter", vec!["openrouter"], vec![with_note(
                 method("browser", "Sign in with OpenRouter (creates an API key for this app)", "authorization_code", "unverified",
@@ -304,13 +307,7 @@ impl Flow {
                         FlowError::denied("Meta credential has no identity token to re-mint with")
                     })?
                     .to_string();
-                Ok(FlowResult {
-                    material: meta_mint(ctx, &identity).await?,
-                    label: "Meta (Muse subscription)".into(),
-                    renewal: "remint",
-                    settings: Settings::new(),
-                    account_label: None,
-                })
+                meta_mint(ctx, &identity).await
             }
             Flow::OpenRouter => Ok(FlowResult {
                 material: material.clone(),
@@ -359,7 +356,9 @@ impl Flow {
                     text(material, "access").ok_or_else(missing)?.to_string(),
                 )),
                 headers: BTreeMap::new(),
-                base_url: None,
+                base_url: text(material, "base_url")
+                    .filter(|u| !u.is_empty())
+                    .map(str::to_string),
                 account_id: None,
                 named: None,
             }),
@@ -1313,7 +1312,47 @@ async fn kimi_renew(
 
 // ─── Meta (device login + key mint) ──────────────────────────────────
 
-async fn meta_mint(ctx: &LoginContext, identity: &str) -> Result<Material, FlowError> {
+/// The mint's `base_url` when the key may go there: https, a `meta.ai` host,
+/// no userinfo or query. `None` when absent; anything else is refused before
+/// the key is sent (changes/2026-10-12-muse-code-subscription.md D1).
+fn meta_api_base(value: Option<&Value>) -> Result<Option<String>, FlowError> {
+    let value = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(v) => v,
+    };
+    let trusted = value
+        .as_str()
+        .and_then(|s| split_url(s).map(|p| (s, p)))
+        .filter(|(_, p)| {
+            p.scheme == "https"
+                && !p.userinfo
+                && p.query.is_empty()
+                && (p.host == "meta.ai" || p.host.ends_with(".meta.ai"))
+        });
+    match trusted {
+        Some((s, _)) => Ok(Some(s.trim_end_matches('/').to_string())),
+        None => Err(FlowError::denied(
+            "Meta named an API address outside meta.ai for the minted key; refusing to send it there",
+        )),
+    }
+}
+
+/// Display text for the account's plan; `None` when the reply is silent.
+fn meta_plan(body: &Map<String, Value>) -> Option<String> {
+    match body.get("is_subs_active") {
+        Some(Value::Bool(true)) => Some(
+            body.get("subs_tier_name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Muse Code subscription")
+                .to_string(),
+        ),
+        Some(Value::Bool(false)) => Some("no Muse Code subscription (pay-as-you-go)".into()),
+        _ => None,
+    }
+}
+
+async fn meta_mint(ctx: &LoginContext, identity: &str) -> Result<FlowResult, FlowError> {
     ctx.notify(Notice::Progress {
         stage: "exchange".into(),
         message: "Enabling Meta Model API access…".into(),
@@ -1347,6 +1386,7 @@ async fn meta_mint(ctx: &LoginContext, identity: &str) -> Result<Material, FlowE
             None => "Meta did not issue an API key".into(),
         }));
     };
+    let base_url = meta_api_base(reply.body.get("base_url"))?;
     let now_ms = ctx.now_ms();
     let mut material = Map::new();
     material.insert("type".into(), json!("oauth"));
@@ -1358,7 +1398,16 @@ async fn meta_mint(ctx: &LoginContext, identity: &str) -> Result<Material, FlowE
         "expires".into(),
         json!((now_ms as f64 + META_KEY_LIFETIME_S * 1000.0) as i64),
     );
-    Ok(material)
+    if let Some(base_url) = base_url {
+        material.insert("base_url".into(), json!(base_url));
+    }
+    Ok(FlowResult {
+        material,
+        label: "Meta (Muse subscription)".into(),
+        renewal: "remint",
+        settings: Settings::new(),
+        account_label: meta_plan(&reply.body),
+    })
 }
 
 async fn meta_login(ctx: &mut LoginContext) -> Result<FlowResult, FlowError> {
@@ -1422,13 +1471,7 @@ async fn meta_login(ctx: &mut LoginContext) -> Result<FlowResult, FlowError> {
         })
     })
     .await?;
-    Ok(FlowResult {
-        material: meta_mint(ctx, &identity).await?,
-        label: "Meta (Muse subscription)".into(),
-        renewal: "remint",
-        settings: Settings::new(),
-        account_label: None,
-    })
+    meta_mint(ctx, &identity).await
 }
 
 // ─── OpenRouter (PKCE → a minted key) ────────────────────────────────
