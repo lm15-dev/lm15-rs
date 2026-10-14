@@ -206,6 +206,80 @@ fn typesafe_state_is_exactly_one_verbatim_user_part() {
 }
 
 #[test]
+fn typesafe_images_are_references_in_the_state_and_assets_beside_it() {
+    // changes/2026-10-14-jev-images.md D1-D4.
+    let settings = HostSettings::new();
+    let compat = Compat::None;
+    let cx = context(&settings, &compat);
+    let png = Part::Image(ImagePart::from_data("image/png", "iVBORw0KGgo=").unwrap());
+    let jpg = Part::Image(ImagePart::from_data("image/jpeg", "/9j/4AAQ").unwrap());
+    let mut one = request();
+    one.messages = vec![Message::user(png.clone()).unwrap()];
+    let wire = typesafe::TYPESAFE.build(&one, false, &cx).unwrap();
+    let header = |w: &lm15::wire::WireRequest| {
+        w.headers
+            .iter()
+            .find(|(k, _)| k == typesafe::IMAGES_HEADER)
+            .map(|(_, v)| v.clone())
+    };
+    assert_eq!(header(&wire).as_deref(), Some("true"));
+    let body = typesafe::payload(&one, &cx).unwrap();
+    assert_eq!(body["state"], json!("<lm15-image-1>"));
+    assert_eq!(
+        body["assets"],
+        json!({"<lm15-image-1>": {"type": "image", "format": "png", "data_base64": "iVBORw0KGgo="}})
+    );
+    let mut mixed = request();
+    mixed.messages = vec![Message::user(vec![
+        Part::text("A red ball."),
+        png.clone(),
+        Part::data(json!({"k": 1})),
+        jpg,
+    ])
+    .unwrap()];
+    let body = typesafe::payload(&mixed, &cx).unwrap();
+    assert_eq!(
+        body["state"],
+        json!(["A red ball.", "<lm15-image-1>", {"k": 1}, "<lm15-image-2>"])
+    );
+    assert_eq!(body["assets"]["<lm15-image-2>"]["format"], json!("jpg"));
+    // No image, no header, no assets.
+    let plain = typesafe::TYPESAFE.build(&request(), false, &cx).unwrap();
+    assert_eq!(header(&plain), None);
+    assert!(typesafe::payload(&request(), &cx)
+        .unwrap()
+        .get("assets")
+        .is_none());
+    for (part, why) in [
+        (
+            Part::Image(ImagePart::from_url("https://example.com/a.png").unwrap()),
+            "not a URL",
+        ),
+        (
+            Part::Image(ImagePart {
+                file_id: Some("file_1".into()),
+                ..Default::default()
+            }),
+            "not a file id",
+        ),
+        (
+            Part::Image(ImagePart::from_data("image/webp", "UklGRg==").unwrap()),
+            "PNG or JPEG",
+        ),
+        (
+            Part::Audio(AudioPart::from_data("audio/wav", "UklGRg==").unwrap()),
+            "no slot on the systemone wire",
+        ),
+    ] {
+        let mut bad = request();
+        bad.messages = vec![Message::user(vec![Part::text("x"), part]).unwrap()];
+        let err = typesafe::payload(&bad, &cx).unwrap_err();
+        assert_eq!(err.meta().feature.as_deref(), Some("messages[0].parts[1]"));
+        assert!(err.message().contains(why), "{}", err.message());
+    }
+}
+
+#[test]
 fn typesafe_response_never_defaults_missing_measurements_or_usage_to_zero() {
     let settings = HostSettings::new();
     let compat = Compat::None;

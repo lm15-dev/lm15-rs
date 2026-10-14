@@ -1,4 +1,6 @@
-//! TypeSafe System One: one user part is the state, verbatim (2026-09-19).
+//! TypeSafe System One: one user part is the state, verbatim (2026-09-19);
+//! an image part is a reference in the state and its bytes an asset
+//! (changes/2026-10-14-jev-images.md).
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::judgments::{self, JudgmentKind};
 use crate::registry::DialectId;
@@ -19,15 +21,76 @@ fn refuse(cx: &BuildContext<'_>, feature: &str, reason: impl Into<String>) -> Lm
     judgments::refusal(cx.provider, feature, reason)
 }
 
-pub fn state(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error> {
+/// Images are off unless each request that carries one sends this header
+/// (live 400 without it, 2026-10-14).
+pub const IMAGES_HEADER: &str = "TypeSafe-Danger-Zone-Images";
+
+/// The asset formats systemone reads: PNG and JPEG, nothing else.
+fn image_format(part: &ImagePart) -> Option<&'static str> {
+    match part.media_type.to_ascii_lowercase().as_str() {
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        _ => None,
+    }
+}
+
+/// The n-th image's reference (1-based, in part order); `>` closes it so
+/// `<lm15-image-1>` never matches inside `<lm15-image-10>`.
+fn image_reference(n: usize) -> String {
+    format!("<lm15-image-{n}>")
+}
+
+/// An image reaches systemone as inline PNG or JPEG bytes, or not at all
+/// (MAP-10 rule 1); lm15 never fetches or converts media.
+fn check_image(part: &ImagePart, cx: &BuildContext<'_>, at: &str) -> Result<(), Lm15Error> {
+    if part.url.is_some() || part.file_id.is_some() {
+        let how = if part.url.is_some() {
+            "a URL"
+        } else {
+            "a file id"
+        };
+        return Err(refuse(cx, at, format!("systemone takes image bytes, not {how}; fetch the image and pass its data or path (changes/2026-10-14-jev-images.md)")));
+    }
+    if image_format(part).is_none() {
+        return Err(refuse(cx, at, format!("systemone reads PNG or JPEG images, got {:?}; convert the image first (lm15 never converts media)", part.media_type)));
+    }
+    Ok(())
+}
+
+fn image_base64(part: &ImagePart, cx: &BuildContext<'_>) -> Result<String, Lm15Error> {
+    if let Some(data) = &part.data {
+        return Ok(base64_payload(data));
+    }
+    let path = part
+        .path
+        .as_ref()
+        .expect("INV-011: a checked image has data or a path");
+    let bytes = crate::adaptation::read_media(path).map_err(|err| {
+        crate::dialects::openai_responses::invalid_request(
+            cx.provider,
+            format!("image part path {} cannot be read: {err}", path.display()),
+        )
+    })?;
+    Ok(base64_encode(&bytes))
+}
+
+/// The state and its assets (2026-09-19 D1/D2; 2026-10-14 D1/D2): one
+/// text or data part verbatim, one image its reference, a message holding
+/// an image beside other parts the array of its parts in order.
+pub fn state(request: &Request, cx: &BuildContext<'_>) -> Result<(Value, JsonObject), Lm15Error> {
     for (m, message) in request.messages.iter().enumerate() {
         for (p, part) in message.parts.iter().enumerate() {
-            if !matches!(part, Part::Text(_) | Part::Data(_)) {
-                return Err(refuse(
-                    cx,
-                    &format!("messages[{m}].parts[{p}]"),
-                    "this part has no native state slot; Jev reads text or data (MAP-10)",
-                ));
+            let at = format!("messages[{m}].parts[{p}]");
+            match part {
+                Part::Text(_) | Part::Data(_) => {}
+                Part::Image(image) => check_image(image, cx, &at)?,
+                other => {
+                    return Err(refuse(
+                        cx,
+                        &at,
+                        format!("a {} part has no slot on the systemone wire (MAP-10); Jev reads text, data, or PNG/JPEG images", other.type_name()),
+                    ))
+                }
             }
         }
     }
@@ -49,18 +112,43 @@ pub fn state(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Erro
             "Jev's state must be a user message",
         ));
     }
-    if message.parts.len() != 1 {
+    let has_image = message.parts.iter().any(|p| matches!(p, Part::Image(_)));
+    if message.parts.len() != 1 && !has_image {
         return Err(refuse(
             cx,
             "messages[0].parts",
             "Jev's state is one text or data part; put several pieces in named data keys",
         ));
     }
-    Ok(match &message.parts[0] {
-        Part::Text(text) => Value::String(text.text.clone()),
-        Part::Data(data) => data.value.clone(),
-        _ => unreachable!("validated above"),
-    })
+    let mut assets = JsonObject::new();
+    let mut element = |part: &Part| -> Result<Value, Lm15Error> {
+        Ok(match part {
+            Part::Text(text) => Value::String(text.text.clone()),
+            Part::Data(data) => data.value.clone(),
+            Part::Image(image) => {
+                let reference = image_reference(assets.len() + 1);
+                let format = image_format(image).expect("checked above");
+                assets.insert(
+                    reference.clone(),
+                    json!({"type": "image", "format": format, "data_base64": image_base64(image, cx)?}),
+                );
+                Value::String(reference)
+            }
+            _ => unreachable!("validated above"),
+        })
+    };
+    let state = if message.parts.len() == 1 {
+        element(&message.parts[0])?
+    } else {
+        Value::Array(
+            message
+                .parts
+                .iter()
+                .map(&mut element)
+                .collect::<Result<_, _>>()?,
+        )
+    };
+    Ok((state, assets))
 }
 
 pub fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error> {
@@ -176,7 +264,12 @@ pub fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Er
         };
         questions.insert(j.name.clone(), question);
     }
-    let mut body = json!({"model":cx.model, "state":state(request, cx)?, "questions":questions});
+    let (state, assets) = state(request, cx)?;
+    let mut body = json!({"model": cx.model, "state": state});
+    if !assets.is_empty() {
+        body["assets"] = Value::Object(assets);
+    }
+    body["questions"] = Value::Object(questions);
     if let Some(extensions) = &request.config.extensions {
         for (key, value) in extensions {
             if key == "n" && value.as_f64().is_some_and(|n| n > 1.0) {
@@ -366,7 +459,14 @@ impl Dialect for TypeSafe {
                 "systemone answers in one piece; there is no stream",
             ));
         }
-        let mut wire = WireRequest::post("/v1/systemone", payload(request, cx)?);
+        let body = payload(request, cx)?;
+        // The caller put an image in the request: that is the opt-in the
+        // header exists for (changes/2026-10-14-jev-images.md D3).
+        let images = body.get("assets").is_some();
+        let mut wire = WireRequest::post("/v1/systemone", body);
+        if images {
+            wire.headers.push((IMAGES_HEADER.into(), "true".into()));
+        }
         wire.endpoint = Some("systemone");
         wire.model = Some(cx.model.into());
         apply_static_headers(&mut wire.headers, cx.policy);
