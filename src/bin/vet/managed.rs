@@ -445,6 +445,22 @@ async fn run(msg: &Map<String, Value>) -> Result<Value, Lm15Error> {
                     .map(|r| json!({"configured": r.configured, "steps": r.steps.iter().map(|s| json!({"kind": s.kind, "state": s.state.as_str()})).collect::<Vec<_>>()}))
                     .map_err(|e| error(&Lm15Error::from(e)))
             }
+            "route" => {
+                let mut config = lm15::router::RouterConfig::new()
+                    .auth(auth.clone())
+                    .env(env.clone());
+                for key in step.get("api_keys").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                    config = config.api_key(key, format!("{sentinel}-explicit"));
+                }
+                for (provider, given) in step.get("settings").and_then(Value::as_object).into_iter().flatten() {
+                    config = config.settings(provider, settings(Some(given)));
+                }
+                let model = step.get("model").and_then(Value::as_str).unwrap_or_default();
+                lm15::router::LMRouter::with_config(config)
+                    .and_then(|router| router.lm(model))
+                    .map(|lm| json!({"settings": lm.settings()}))
+                    .map_err(|e| error(&e))
+            }
             other => Err(json!({"type": "ValueError", "message": format!("unknown managed step {other:?}")})),
         };
         outcomes.push(match outcome {

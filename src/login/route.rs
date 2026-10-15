@@ -16,6 +16,9 @@ pub struct ManagedRoute {
     pub named: Option<String>,
     pub base_url: Option<String>,
     pub account_id: Option<String>,
+    /// The selected connection's saved settings (a cloud recipe's project,
+    /// location, region...): given values the explicit entry refines (AUTH-15).
+    pub settings: std::collections::BTreeMap<String, String>,
 }
 
 /// Order (AUTH-15): the scope's saved connection (its credential resolved and
@@ -35,6 +38,7 @@ pub fn managed_route(
                     named: Some(named),
                     base_url: None,
                     account_id: None,
+                    settings: connection.settings,
                 });
             }
             let origin = format!(
@@ -51,6 +55,7 @@ pub fn managed_route(
                 named: None,
                 base_url: shape.base_url,
                 account_id: shape.account_id,
+                settings: connection.settings,
             })
         }
         Err(error) if error.reason() == Some("login_required") => {
@@ -61,6 +66,7 @@ pub fn managed_route(
                         named: None,
                         base_url: None,
                         account_id: None,
+                        settings: Default::default(),
                     });
                 }
             }

@@ -392,3 +392,48 @@ async fn the_file_store_shares_the_layout_and_never_overwrites_an_unreadable_fil
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn a_saved_cloud_recipe_builds_the_route_with_its_settings() {
+    let auth = Auth::memory();
+    let pairs = |items: &[(&str, &str)]| {
+        items
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    auth.configure(
+        "vertex-anthropic",
+        "cloud",
+        pairs(&[("named", "environment")]),
+        pairs(&[("project", "saved-project"), ("location", "us-east5")]),
+        None,
+    )
+    .await
+    .unwrap();
+    let env = [
+        ("NO_GCE_CHECK", "1"),
+        ("GOOGLE_CLOUD_PROJECT", "env-project"),
+    ];
+    let model = "vertex-anthropic:claude-test";
+    let built = |config: RouterConfig| {
+        let lm = LMRouter::with_config(config).unwrap().lm(model).unwrap();
+        let settings = lm.settings();
+        (settings["project"].clone(), settings["location"].clone())
+    };
+    let base = || RouterConfig::new().auth(auth.clone()).env(env);
+    assert_eq!(built(base()), ("saved-project".into(), "us-east5".into()));
+    assert_eq!(
+        built(base().setting("vertex_anthropic", "project", "explicit-project")),
+        ("explicit-project".into(), "us-east5".into())
+    );
+    // An explicit key selects no connection: its settings do not apply.
+    assert_eq!(
+        built(base().api_key("vertex-anthropic", "explicit-key").setting(
+            "vertex-anthropic",
+            "location",
+            "europe-west1"
+        )),
+        ("env-project".into(), "europe-west1".into())
+    );
+}

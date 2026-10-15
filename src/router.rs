@@ -1746,7 +1746,13 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
             None => crate::transport::default_transport()?,
         };
         let mut ctx = ChainContext::online(env_map.clone(), transport, now);
-        let mut given = config.settings.get(provider).cloned().unwrap_or_default();
+        // AUTH-15: a selected connection's saved settings are given values;
+        // the explicit entry refines them setting by setting.
+        let mut given = managed
+            .as_ref()
+            .map(|route| route.settings.clone())
+            .unwrap_or_default();
+        given.extend(config.settings.get(provider).cloned().unwrap_or_default());
         let mut trace = crate::cloud::hosts::SettingsTrace::default();
         if policy.is_cloud_chain() {
             for setting in host.settings {
