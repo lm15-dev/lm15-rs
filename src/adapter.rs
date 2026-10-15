@@ -352,7 +352,7 @@ impl ProviderLM {
                 request.config.probabilities,
                 Some(crate::ProbabilityPolicy::Required | crate::ProbabilityPolicy::IfAvailable)
             )
-            && !crate::judgments::request_judgments(request).is_empty()
+            && !crate::judgments::request_measurable_judgments(request).is_empty()
             && crate::dialects::openai_chat::resolve_compat(
                 &self.binding.context(request),
                 self.wire_model(&request.model),
@@ -2442,7 +2442,7 @@ impl LmBuilder {
                 request.config.probabilities,
                 Some(crate::ProbabilityPolicy::Required | crate::ProbabilityPolicy::IfAvailable)
             )
-            && !crate::judgments::request_judgments(request).is_empty()
+            && !crate::judgments::request_measurable_judgments(request).is_empty()
             && crate::dialects::openai_chat::resolve_compat(&cx, model).token_scoring
                 == crate::compat::OpenAIChatTokenScoring::LogprobTokenIds;
         let (_, records) =

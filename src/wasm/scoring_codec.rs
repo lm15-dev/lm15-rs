@@ -48,7 +48,7 @@ fn compile(
     request: &Request,
     msg: &Map<String, Value>,
 ) -> Result<Tokenized, Lm15Error> {
-    let expected = crate::judgments::request_judgments(request);
+    let expected = crate::judgments::request_measurable_judgments(request);
     let replies = msg
         .get("tokenizations")
         .and_then(Value::as_array)

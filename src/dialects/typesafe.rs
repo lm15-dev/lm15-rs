@@ -1,6 +1,7 @@
 //! TypeSafe System One: one user part is the state, verbatim (2026-09-19);
 //! an image part is a reference in the state and its bytes an asset
-//! (changes/2026-10-14-jev-images.md).
+//! (changes/2026-10-14-jev-images.md); a bounding box is Jev's Box question,
+//! answered verbatim with no distribution (changes/2026-10-15-bounding-box.md).
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::judgments::{self, JudgmentKind};
 use crate::registry::DialectId;
@@ -21,8 +22,9 @@ fn refuse(cx: &BuildContext<'_>, feature: &str, reason: impl Into<String>) -> Lm
     judgments::refusal(cx.provider, feature, reason)
 }
 
-/// Images are off unless each request that carries one sends this header
-/// (live 400 without it, 2026-10-14).
+/// Images and Box questions are off unless each request that carries one
+/// sends this header (live 400 without it: 2026-10-14 for an image,
+/// 2026-10-15 for a Box question with no image).
 pub const IMAGES_HEADER: &str = "TypeSafe-Danger-Zone-Images";
 
 /// The asset formats systemone reads: PNG and JPEG, nothing else.
@@ -216,6 +218,8 @@ pub fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Er
         };
         let question = match j.kind {
             JudgmentKind::Boolean => json!({"type":"noul", "instructions":instruction}),
+            // Jev's Box takes no criteria (docs.typesafe.ai/primitives/box).
+            JudgmentKind::Box => json!({"type":"box", "instructions":instruction}),
             JudgmentKind::Choice => {
                 if j.keys.len() > judgments::MAX_CHOICE_KEYS {
                     return Err(refuse(
@@ -335,6 +339,7 @@ pub fn parse(
             JudgmentKind::Boolean => "noul",
             JudgmentKind::Choice => "choice",
             JudgmentKind::Ordered => "score",
+            JudgmentKind::Box => "box",
         };
         if answer.get("type").and_then(Value::as_str) != Some(expected) {
             return Err(malformed(
@@ -342,6 +347,32 @@ pub fn parse(
                 &format!("{path}.type"),
                 "answer kind does not match the declaration",
             ));
+        }
+        if j.kind == JudgmentKind::Box {
+            // The four edges verbatim, in Jev's order; a box has no
+            // distribution, and its `confidence` stays in provider_data.
+            let edges = answer
+                .get("box")
+                .and_then(Value::as_object)
+                .filter(|b| {
+                    b.len() == judgments::BOX_EDGES.len()
+                        && judgments::BOX_EDGES.iter().all(|e| b.contains_key(*e))
+                })
+                .ok_or_else(|| {
+                    malformed(
+                        cx,
+                        &format!("{path}.box"),
+                        "expected exactly top, bottom, left and right",
+                    )
+                })?;
+            let mut box_value = JsonObject::new();
+            for edge in judgments::BOX_EDGES {
+                probability(edges.get(edge), cx, &format!("{path}.box.{edge}"))?; // a fraction: finite, in [0, 1]
+                                                                                  // Numbers as written (an opaque value, serde number rule 4).
+                box_value.insert(edge.into(), edges[edge].clone());
+            }
+            value.insert(j.name.clone(), Value::Object(box_value));
+            continue;
         }
         if j.kind == JudgmentKind::Boolean {
             let p = probability(answer.get("noul"), cx, &format!("{path}.noul"))?;
@@ -460,9 +491,14 @@ impl Dialect for TypeSafe {
             ));
         }
         let body = payload(request, cx)?;
-        // The caller put an image in the request: that is the opt-in the
-        // header exists for (changes/2026-10-14-jev-images.md D3).
-        let images = body.get("assets").is_some();
+        // The caller put an image or a box in the request: that is the opt-in
+        // the header exists for (changes/2026-10-14-jev-images.md D3;
+        // changes/2026-10-15-bounding-box.md D2).
+        let asks_box = body["questions"].as_object().is_some_and(|q| {
+            q.values()
+                .any(|q| q.get("type").and_then(Value::as_str) == Some("box"))
+        });
+        let images = body.get("assets").is_some() || asks_box;
         let mut wire = WireRequest::post("/v1/systemone", body);
         if images {
             wire.headers.push((IMAGES_HEADER.into(), "true".into()));

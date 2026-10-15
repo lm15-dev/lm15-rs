@@ -1,5 +1,7 @@
 //! Declared judgments, equivalent provider schemas, and structured answers (MAP-14).
 //! This module is pure; probability totals are deliberately not validated (INV-052).
+//! A bounding box (changes/2026-10-15-bounding-box.md) is a judgment that
+//! declares no keys: it is answered, never scored.
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::types::*;
 use serde_json::{json, Value};
@@ -8,11 +10,24 @@ use std::collections::BTreeSet;
 pub const MAX_ORDERED_LEVELS: usize = 10;
 pub const MAX_CHOICE_KEYS: usize = 255;
 
+/// A box's edges, in Jev's order (changes/2026-10-15-bounding-box.md D1):
+/// fractions of the image from its top-left corner, `top`/`bottom` of its
+/// height, `left`/`right` of its width (docs.typesafe.ai/primitives/box).
+pub const BOX_EDGES: [&str; 4] = ["top", "bottom", "left", "right"];
+const BOX_EDGE_DESCRIPTIONS: [&str; 4] = [
+    "Top edge, as a fraction of the image's height from the top, from 0 to 1",
+    "Bottom edge, as a fraction of the image's height from the top, from 0 to 1",
+    "Left edge, as a fraction of the image's width from the left, from 0 to 1",
+    "Right edge, as a fraction of the image's width from the left, from 0 to 1",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JudgmentKind {
     Boolean,
     Choice,
     Ordered,
+    /// A bounding box: four edges, no declared keys (2026-10-15).
+    Box,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,13 +43,40 @@ impl Judgment {
     pub fn ordered(&self) -> bool {
         self.kind == JudgmentKind::Ordered
     }
+    /// Whether a distribution over declared keys exists to measure: a box
+    /// declares no keys, so it is answered, never scored (MAP-14 §1).
+    pub fn measurable(&self) -> bool {
+        self.kind != JudgmentKind::Box
+    }
     pub fn value_for_key(&self, key: &str) -> Value {
         match self.kind {
             JudgmentKind::Boolean => Value::Bool(key == "true"),
             JudgmentKind::Ordered => Value::from(key.parse::<u64>().expect("declared ordered key")),
-            JudgmentKind::Choice => Value::String(key.to_string()),
+            JudgmentKind::Choice | JudgmentKind::Box => Value::String(key.to_string()),
         }
     }
+}
+
+/// An object whose properties are exactly the four edges, each a `number`
+/// (changes/2026-10-15-bounding-box.md D1). Other keywords are the caller's
+/// and travel verbatim.
+fn is_box(prop: &JsonObject) -> bool {
+    if prop
+        .get("type")
+        .is_some_and(|t| t.as_str() != Some("object"))
+    {
+        return false;
+    }
+    let Some(props) = prop.get("properties").and_then(Value::as_object) else {
+        return false;
+    };
+    props.len() == BOX_EDGES.len()
+        && BOX_EDGES.iter().all(|edge| {
+            props
+                .get(*edge)
+                .and_then(Value::as_object)
+                .is_some_and(|s| s.get("type").and_then(Value::as_str) == Some("number"))
+        })
 }
 
 fn judgment_of(name: &str, property: &Value) -> Option<Judgment> {
@@ -51,6 +93,10 @@ fn judgment_of(name: &str, property: &Value) -> Option<Judgment> {
         descriptions: Default::default(),
         titles: Default::default(),
     };
+    if is_box(prop) {
+        j.kind = JudgmentKind::Box;
+        return Some(j);
+    }
     if prop.get("type").and_then(Value::as_str) == Some("boolean") {
         j.keys = vec!["true".into(), "false".into()];
         return Some(j);
@@ -146,6 +192,16 @@ pub fn request_judgments(request: &Request) -> Vec<Judgment> {
         .unwrap_or_default()
 }
 
+/// The judgments with declared keys: the ones a distribution can be measured
+/// for (boxes are left out).
+pub fn measurable_judgments(found: Vec<Judgment>) -> Vec<Judgment> {
+    found.into_iter().filter(Judgment::measurable).collect()
+}
+
+pub fn request_measurable_judgments(request: &Request) -> Vec<Judgment> {
+    measurable_judgments(request_judgments(request))
+}
+
 pub fn non_judgment_properties(schema: &Value, found: &[Judgment]) -> Vec<String> {
     schema
         .get("properties")
@@ -167,8 +223,10 @@ pub(crate) fn refusal(provider: &str, feature: &str, reason: impl Into<String>) 
     Lm15Error::UnsupportedFeatureError(meta)
 }
 
+/// MAP-14 §3 on a wire with no distribution. A request whose judgments are
+/// all boxes asked for nothing measurable: nothing is recorded or refused.
 pub fn note_unmeasurable_probabilities(request: &Request, provider: &str) -> Result<(), Lm15Error> {
-    if request_judgments(request).is_empty() {
+    if request_measurable_judgments(request).is_empty() {
         return Ok(());
     }
     match request.config.probabilities {
@@ -206,7 +264,9 @@ pub fn gemini_schema(schema: &JsonObject, found: &[Judgment]) -> JsonObject {
             let Some(prop) = props.get_mut(&j.name).and_then(Value::as_object_mut) else {
                 continue;
             };
-            if j.kind == JudgmentKind::Boolean || !prop.contains_key("anyOf") {
+            if matches!(j.kind, JudgmentKind::Boolean | JudgmentKind::Box)
+                || !prop.contains_key("anyOf")
+            {
                 continue;
             }
             prop.remove("anyOf");
@@ -379,6 +439,38 @@ pub fn choice_described(
         );
     }
     Ok(out)
+}
+
+/// A bounding-box judgment: where in the request's image is what
+/// `instruction` describes (changes/2026-10-15-bounding-box.md).
+///
+/// The answer is `{top, bottom, left, right}`, each a fraction from 0 to 1 of
+/// the image's height (`top`, `bottom`) or width (`left`, `right`), measured
+/// from the top-left corner; multiply by the image's size in pixels to draw
+/// or crop. There is no "not found" answer: ask a [`yes_no`] beside it. On
+/// `typesafe` this is Jev's Box question and needs Jev 1.14 (`jev-preview` or
+/// `jev-1.14.0`); elsewhere it is ordinary structured output.
+///
+/// The edges carry no `minimum`/`maximum`: Anthropic refuses both on a
+/// number (HTTP 400, receipted 2026-10-15); the range is in each edge's
+/// description, which every wire passes to the model. (Not `box`: a
+/// reserved word in Rust.)
+pub fn bounding_box(instruction: impl Into<String>) -> JsonObject {
+    let edges: JsonObject = BOX_EDGES
+        .iter()
+        .zip(BOX_EDGE_DESCRIPTIONS)
+        .map(|(edge, description)| {
+            (
+                (*edge).to_string(),
+                json!({"type":"number", "description":description}),
+            )
+        })
+        .collect();
+    json!({"type":"object", "description":instruction.into(), "properties":edges,
+           "required":BOX_EDGES, "additionalProperties":false})
+    .as_object()
+    .unwrap()
+    .clone()
 }
 
 pub fn yes_no(instruction: impl Into<String>) -> JsonObject {

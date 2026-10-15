@@ -150,7 +150,7 @@ pub fn plan(request: &Request, cx: &BuildContext<'_>) -> Result<ScoringPlan, Lm1
     request
         .validate()
         .map_err(|e| Lm15Error::InvalidRequestError(ErrorMeta::new(e.to_string())))?;
-    let found = judgments::request_judgments(request);
+    let found = judgments::request_measurable_judgments(request);
     if found.is_empty() {
         return Err(judgments::refusal(
             cx.provider,
@@ -656,7 +656,7 @@ pub fn parse_generated(
     let object = value.as_object().ok_or_else(|| {
         provider_fault(cx.provider, "generated judgment answer needs a JSON object")
     })?;
-    let found = judgments::request_judgments(request);
+    let found = judgments::request_measurable_judgments(request);
     let schema = request
         .config
         .response_format
@@ -729,7 +729,7 @@ pub fn merge_ordinary(
         .as_ref()
         .and_then(|f| f.get("schema"))
         .expect("judgment schema");
-    let found = judgments::request_judgments(request);
+    let found = judgments::request_measurable_judgments(request);
     if let Some(required) = schema.get("required").and_then(Value::as_array) {
         for name in required.iter().filter_map(Value::as_str) {
             if !found.iter().any(|j| j.name == name) && !combined.contains_key(name) {

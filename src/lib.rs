@@ -84,8 +84,8 @@ pub use errors::{
 };
 pub use jobs::{BatchJob, VideoJob, WaitError, WaitOptions, WaitSnapshot};
 pub use judgments::{
-    choice, choice_described, judgments, judgments_named, score, score_named, yes_no, Judgment,
-    JudgmentKind,
+    bounding_box, choice, choice_described, judgments, judgments_named, score, score_named, yes_no,
+    Judgment, JudgmentKind,
 };
 #[cfg(feature = "native")]
 pub use live::{
