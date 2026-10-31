@@ -70,27 +70,42 @@ pub fn usage_from_metadata(
         return Ok(Usage::default());
     }
     let c = |field: &str, value: Option<&Value>| count_of(provider, field, value);
-    // `usage_payload.get(key, 0)`: an absent key is 0, a present one is
-    // read as it is.
-    let present_or_zero = |field: &str, value: Option<&Value>| match value {
-        Some(v) => c(field, Some(v)),
-        None => Ok(Some(0)),
+    // MAP-19 rule 6: proto3 JSON omits zeros, so inside a present
+    // `usageMetadata` an absent counter is a reported 0.
+    let n = |field: &str| -> Result<u64, Lm15Error> { Ok(c(field, data.get(field))?.unwrap_or(0)) };
+    let answer = match output_keys.iter().find_map(|key| data.get(*key)) {
+        Some(v) => c("candidatesTokenCount", Some(v))?.unwrap_or(0),
+        None => 0,
     };
-    let output_tokens = present_or_zero(
-        "candidatesTokenCount",
-        output_keys.iter().find_map(|key| data.get(*key)),
-    )?;
+    let thoughts = n("thoughtsTokenCount")?;
+    let audio_in = [
+        modality_tokens(provider, data.get("promptTokensDetails"), "AUDIO")?,
+        modality_tokens(provider, data.get("toolUsePromptTokensDetails"), "AUDIO")?,
+    ];
+    let overflow = || {
+        Lm15Error::ProviderError(crate::errors::ErrorMeta::new(
+            "Gemini usage counter overflow",
+        ))
+    };
+    // Gemini counts the prompt, its own tool-use tokens, the answer and the
+    // thoughts side by side (the total is their sum): input is prompt + tool
+    // use, output is answer + thoughts. Gemini reports no cache-write count.
     Ok(usage(Usage {
-        input_tokens: present_or_zero("promptTokenCount", data.get("promptTokenCount"))?,
-        output_tokens,
+        input_tokens: Some(
+            n("promptTokenCount")?
+                .checked_add(n("toolUsePromptTokenCount")?)
+                .ok_or_else(overflow)?,
+        ),
+        output_tokens: Some(answer.checked_add(thoughts).ok_or_else(overflow)?),
         total_tokens: c("totalTokenCount", data.get("totalTokenCount"))?,
-        cache_read_tokens: c(
-            "cachedContentTokenCount",
-            data.get("cachedContentTokenCount"),
-        )?,
+        cache_read_tokens: Some(n("cachedContentTokenCount")?),
         cache_write_tokens: None,
-        reasoning_tokens: c("thoughtsTokenCount", data.get("thoughtsTokenCount"))?,
-        input_audio_tokens: modality_tokens(provider, data.get("promptTokensDetails"), "AUDIO")?,
+        reasoning_tokens: Some(thoughts),
+        input_audio_tokens: if audio_in.iter().all(Option::is_none) {
+            None
+        } else {
+            Some(audio_in.iter().map(|a| a.unwrap_or(0)).sum())
+        },
         output_audio_tokens: modality_tokens(
             provider,
             data.get("candidatesTokensDetails")
@@ -718,9 +733,11 @@ mod tests {
             Part::Citation(c) => assert_eq!(c.text.as_deref(), Some("Paris")),
             other => panic!("{other:?}"),
         }
-        assert_eq!(r.usage.output_tokens, Some(0));
+        // MAP-19 rule 6: output is answer (absent: 0) + thoughts.
+        assert_eq!(r.usage.output_tokens, Some(3));
         assert_eq!(r.usage.input_tokens, Some(2));
         assert_eq!(r.usage.total_tokens, Some(5));
+        assert_eq!(r.usage.cache_read_tokens, Some(0));
         assert_eq!(
             r.provider_data.unwrap()["_lm15_unmapped"][0]["type"],
             "alpha+weird"

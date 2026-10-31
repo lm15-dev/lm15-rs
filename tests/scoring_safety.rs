@@ -59,13 +59,19 @@ fn unknown_measurement_privacy_money_and_action_controls_refuse() {
 #[test]
 fn missing_scores_differ_from_malformed_scores_and_usage_keeps_every_counter() {
     let reply = json!({"choices":[{"index":0,"logprobs":{"top_logprobs":[null]}}],"usage":{
-        "prompt_tokens":10,"completion_tokens":3,"total_tokens":999,
+        "prompt_tokens":10,"completion_tokens":7,"total_tokens":17,
         "prompt_tokens_details":{"cached_tokens":2,"cache_write_tokens":4,"audio_tokens":1},
         "completion_tokens_details":{"reasoning_tokens":7,"audio_tokens":2}
     }});
-    let scored = lm15::scoring::scores_from_value(&reply, 1, "vllm").unwrap();
+    let scored = lm15::scoring::scores_from_value(
+        &reply,
+        1,
+        "vllm",
+        lm15::compat::OpenAIChatReasoningUsage::InCompletion,
+    )
+    .unwrap();
     assert!(scored.scores[0].is_empty());
-    assert_eq!(scored.usage.total_tokens, Some(999));
+    assert_eq!(scored.usage.total_tokens, Some(17));
     assert_eq!(scored.usage.cache_read_tokens, Some(2));
     assert_eq!(scored.usage.cache_write_tokens, Some(4));
     assert_eq!(scored.usage.reasoning_tokens, Some(7));
@@ -73,15 +79,21 @@ fn missing_scores_differ_from_malformed_scores_and_usage_keeps_every_counter() {
     assert_eq!(scored.usage.output_audio_tokens, Some(2));
     let mut malformed = reply;
     malformed["choices"][0]["logprobs"]["top_logprobs"] = json!(["bad"]);
-    assert!(lm15::scoring::scores_from_value(&malformed, 1, "vllm").is_err());
+    assert!(lm15::scoring::scores_from_value(
+        &malformed,
+        1,
+        "vllm",
+        lm15::compat::OpenAIChatReasoningUsage::InCompletion
+    )
+    .is_err());
     let other = Usage {
         input_tokens: Some(1),
         output_tokens: Some(1),
-        total_tokens: Some(11),
+        total_tokens: Some(2),
         ..Default::default()
     };
     let total = lm15::scoring::combined_usage("vllm", scored.usage, other).unwrap();
-    assert_eq!(total.total_tokens, Some(1010));
+    assert_eq!(total.total_tokens, Some(19));
     assert_eq!(total.reasoning_tokens, None);
     let dist = lm15::judgments::normalize_logprobs(&[
         ("zero".into(), f64::NEG_INFINITY),

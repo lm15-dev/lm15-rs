@@ -29,7 +29,13 @@ pub fn response_from_openai_chat(
     model: Option<&str>,
     choice: Option<usize>,
 ) -> Result<Response, Lm15Error> {
-    response::response_from_openai_chat("openai-chat", body, model, choice)
+    response::response_from_openai_chat(
+        "openai-chat",
+        body,
+        model,
+        choice,
+        crate::compat::OpenAIChatReasoningUsage::InCompletion,
+    )
 }
 
 use serde_json::Value;
@@ -258,7 +264,8 @@ impl Dialect for OpenAIChat {
         cx: &BuildContext<'_>,
         body: &[u8],
     ) -> Result<Response, Lm15Error> {
-        response::parse_response(cx.provider, request, body)
+        let reasoning_usage = resolve_compat(cx, &request.model).reasoning_usage;
+        response::parse_response(cx.provider, request, body, reasoning_usage)
     }
 
     fn parse_stream_event(
@@ -268,7 +275,8 @@ impl Dialect for OpenAIChat {
         event: &SseEvent,
         out: &mut Vec<StreamEvent>,
     ) -> Result<(), Lm15Error> {
-        response::parse_stream_event(cx.provider, request, event, out)
+        let reasoning_usage = resolve_compat(cx, &request.model).reasoning_usage;
+        response::parse_stream_event(cx.provider, request, event, out, reasoning_usage)
     }
 }
 

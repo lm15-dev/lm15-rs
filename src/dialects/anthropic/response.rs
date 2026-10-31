@@ -37,23 +37,30 @@ pub fn finish_reason_of(stop_reason: Option<&Value>, has_tool_call: bool) -> Fin
     }
 }
 
-/// `Usage` from a Messages `usage` object. INV-029: absent counters stay
-/// `None`; the total is summed from the primaries (Anthropic reports none).
+/// MAP-19 rule 5, `Usage` from a Messages `usage` object (every server on
+/// the wire). The wire's `input_tokens` is only the tokens after the last
+/// cache breakpoint; the two cache counters are counted beside it, so
+/// canonical input is their exact sum, unknown unless all three are
+/// reported. A total is read when the server sends one (Moonshot does);
+/// otherwise it is summed from the primaries.
 pub fn usage_from_messages(provider: &str, data: &JsonObject) -> Result<Usage, Lm15Error> {
     let details = object_or_empty(data.get("output_tokens_details"));
     let c = |field: &str, value: Option<&Value>| count_of(provider, field, value);
+    let cache_read = c(
+        "cache_read_input_tokens",
+        data.get("cache_read_input_tokens"),
+    )?;
+    let cache_write = c(
+        "cache_creation_input_tokens",
+        data.get("cache_creation_input_tokens"),
+    )?;
+    let wire_input = c("input_tokens", data.get("input_tokens"))?;
     Ok(usage(Usage {
-        input_tokens: c("input_tokens", data.get("input_tokens"))?,
+        input_tokens: crate::types::wire_sum(&[wire_input, cache_read, cache_write]),
         output_tokens: c("output_tokens", data.get("output_tokens"))?,
-        total_tokens: None,
-        cache_read_tokens: c(
-            "cache_read_input_tokens",
-            data.get("cache_read_input_tokens"),
-        )?,
-        cache_write_tokens: c(
-            "cache_creation_input_tokens",
-            data.get("cache_creation_input_tokens"),
-        )?,
+        total_tokens: c("total_tokens", data.get("total_tokens"))?,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: cache_write,
         reasoning_tokens: c("thinking_tokens", details.get("thinking_tokens"))?,
         input_audio_tokens: None,
         output_audio_tokens: None,
@@ -400,14 +407,17 @@ mod tests {
                 {"type": "tool_use", "id": "t1", "name": "f", "input": {"a": 1}},
                 {"type": "odd"}
             ],
-            "usage": {"input_tokens": 3, "output_tokens": 5, "cache_read_input_tokens": 0,
+            "usage": {"input_tokens": 3, "output_tokens": 5, "cache_read_input_tokens": 4,
+                      "cache_creation_input_tokens": 1,
                       "output_tokens_details": {"thinking_tokens": 2}}
         });
         let r = parse_response("anthropic", &request(), body.to_string().as_bytes()).unwrap();
         assert_eq!(r.message.parts.len(), 5);
         assert_eq!(r.finish_reason, FinishReason::ToolCall);
-        assert_eq!(r.usage.total_tokens, Some(8));
-        assert_eq!(r.usage.cache_read_tokens, Some(0));
+        // MAP-19 rule 5: input is the wire's input + cache read + cache write.
+        assert_eq!(r.usage.input_tokens, Some(8));
+        assert_eq!(r.usage.total_tokens, Some(13));
+        assert_eq!(r.usage.cache_read_tokens, Some(4));
         assert_eq!(r.usage.reasoning_tokens, Some(2));
         match &r.message.parts[1] {
             Part::Thinking(t) => assert_eq!(t.continuation[0].kind, "redacted_thinking"),

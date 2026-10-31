@@ -138,8 +138,15 @@ pub(super) fn run(
         return Err(lm.http_error(status, &headers, &body));
     }
     let reply = scoring::ScoringReply::from_http(status, headers, body, lm.provider())?;
-    let scored =
-        scoring::scores_from_value(&reply.value, count, lm.provider()).map_err(|mut e| {
+    let reasoning_usage = lm
+        .compat()
+        .openai_chat()
+        .unwrap_or(&crate::compat::OpenAIChatCompat::EMPTY)
+        .for_model(&request.model)
+        .resolve()
+        .reasoning_usage;
+    let scored = scoring::scores_from_value(&reply.value, count, lm.provider(), reasoning_usage)
+        .map_err(|mut e| {
             crate::transport::attach_http_error(&mut e, status, &reply.headers, &reply.body);
             e
         })?;

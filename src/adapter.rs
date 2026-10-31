@@ -451,11 +451,20 @@ impl ProviderLM {
             meta.provider = Some(self.provider().to_string());
             return Err(Lm15Error::UnsupportedFeatureError(meta));
         }
+        let partial = self
+            .compat()
+            .openai_chat()
+            .unwrap_or(&crate::compat::OpenAIChatCompat::EMPTY);
+        let resolved = match model {
+            Some(model) => partial.for_model(model).resolve(),
+            None => partial.resolve(),
+        };
         crate::dialects::openai_chat::response::response_from_openai_chat(
             self.provider(),
             body,
             model,
             choice,
+            resolved.reasoning_usage,
         )
     }
 

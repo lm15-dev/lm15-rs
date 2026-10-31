@@ -418,6 +418,7 @@ pub fn scores_from_value(
     value: &Value,
     count: usize,
     provider: &str,
+    reasoning_usage: crate::compat::OpenAIChatReasoningUsage,
 ) -> Result<ScoredNodes, Lm15Error> {
     let choices = value
         .get("choices")
@@ -501,7 +502,7 @@ pub fn scores_from_value(
                     ));
                 }
             }
-            crate::dialects::openai_chat::response::usage_from_chat(provider, raw)?
+            crate::dialects::openai_chat::response::usage_from_chat(provider, raw, reasoning_usage)?
                 .normalized()
                 .map_err(|e| provider_fault(provider, e.to_string()))?
         }
@@ -829,7 +830,10 @@ where
     }
     let count = prompts.len();
     let reply: ScoringReply = send(score_request(cx, prompts, &ids)).await?.into();
-    let scored = reply.parse(|value| scores_from_value(value, count, cx.provider))?;
+    let reasoning_usage =
+        crate::dialects::openai_chat::resolve_compat(cx, &request.model).reasoning_usage;
+    let scored =
+        reply.parse(|value| scores_from_value(value, count, cx.provider, reasoning_usage))?;
     let mut tables = vec![ScoreTable::new(); tokenized.len()];
     for ((index, prefix, children), scores) in locations.into_iter().zip(scored.scores) {
         if children.iter().any(|id| !scores.contains_key(id)) {

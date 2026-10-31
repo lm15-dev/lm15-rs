@@ -51,7 +51,7 @@ pub use live::{
     LiveServerToolCallEvent, LiveServerTurnEndEvent, LiveServerUsageEvent,
 };
 pub use message::{Message, SystemContent};
-pub use model_info::{InferenceModelInfo, InferencePricing, ModelInfo, ModelOrigin};
+pub use model_info::{InferenceModelInfo, InferencePricing, ModelInfo, ModelOrigin, PricingTier};
 pub use parts::{
     AudioPart, BinaryPart, CitationPart, ContentInput, DataPart, DocumentPart, ImagePart, Part,
     RefusalPart, TextPart, ThinkingPart, ToolCallInfo, ToolCallPart, ToolResultPart, VideoPart,
@@ -62,6 +62,7 @@ pub use stream::{
     StreamErrorEvent, StreamEvent, StreamStartEvent,
 };
 pub use tools::{BuiltinTool, FunctionTool, Tool};
+pub(crate) use usage::wire_sum;
 pub use usage::{TokenLogprob, TopLogprob, Usage};
 pub use vocab::{
     AdaptationAction, AdaptationPolicy, AudioEncoding, BatchOutcome, BatchStatus, CacheMode,

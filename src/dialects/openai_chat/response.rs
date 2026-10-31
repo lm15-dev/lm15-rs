@@ -11,6 +11,7 @@ use super::super::wire_json::{
     index_of, object_or_empty, openai_token_logprobs, parse_json_object, provider_error,
     str_or_empty, str_or_none, truthy, usage, Unmapped,
 };
+use crate::compat::OpenAIChatReasoningUsage;
 use crate::errors::{ErrorClass, Lm15Error};
 use crate::sse::SseEvent;
 use crate::types::{
@@ -35,15 +36,40 @@ fn finish_reason_of(raw: &str) -> Option<FinishReason> {
         .map(|(_, r)| *r)
 }
 
-/// `_usage_from_chat`.
-pub fn usage_from_chat(provider: &str, data: &JsonObject) -> Result<Usage, Lm15Error> {
+/// MAP-19 rule 4, `_usage_from_chat`. `prompt_tokens` already includes the
+/// cached and written tokens. Reasoning is inside `completion_tokens` unless
+/// the preset says `reasoning_usage = Separate` (xAI), where output is
+/// completion + reasoning; a body without a reasoning count then still
+/// determines output when its total is prompt + completion, and otherwise
+/// output is unknown.
+pub fn usage_from_chat(
+    provider: &str,
+    data: &JsonObject,
+    reasoning_usage: OpenAIChatReasoningUsage,
+) -> Result<Usage, Lm15Error> {
     let prompt = object_or_empty(data.get("prompt_tokens_details"));
     let completion = object_or_empty(data.get("completion_tokens_details"));
     let c = |field: &str, value: Option<&Value>| count_of(provider, field, value);
+    let prompt_tokens = c("prompt_tokens", data.get("prompt_tokens"))?;
+    let completion_tokens = c("completion_tokens", data.get("completion_tokens"))?;
+    let total = c("total_tokens", data.get("total_tokens"))?;
+    let reasoning = c("reasoning_tokens", completion.get("reasoning_tokens"))?;
+    let output = match (reasoning_usage, completion_tokens) {
+        (OpenAIChatReasoningUsage::Separate, Some(completion)) => match reasoning {
+            Some(r) => completion.checked_add(r),
+            None if prompt_tokens.and_then(|p| p.checked_add(completion)) == total
+                && total.is_some() =>
+            {
+                Some(completion)
+            }
+            None => None,
+        },
+        _ => completion_tokens,
+    };
     Ok(usage(Usage {
-        input_tokens: c("prompt_tokens", data.get("prompt_tokens"))?,
-        output_tokens: c("completion_tokens", data.get("completion_tokens"))?,
-        total_tokens: c("total_tokens", data.get("total_tokens"))?,
+        input_tokens: prompt_tokens,
+        output_tokens: output,
+        total_tokens: total,
         // Nested (OpenAI) first; some servers report the count flat on usage
         // instead (Together's non-reasoning models: `usage.cached_tokens`,
         // live 2026-09-26). Reading one place only turns a reported 0 into
@@ -53,7 +79,7 @@ pub fn usage_from_chat(provider: &str, data: &JsonObject) -> Result<Usage, Lm15E
             None => c("cached_tokens", data.get("cached_tokens"))?,
         },
         cache_write_tokens: c("cache_write_tokens", prompt.get("cache_write_tokens"))?,
-        reasoning_tokens: c("reasoning_tokens", completion.get("reasoning_tokens"))?,
+        reasoning_tokens: reasoning,
         input_audio_tokens: c("prompt audio_tokens", prompt.get("audio_tokens"))?,
         output_audio_tokens: c("completion audio_tokens", completion.get("audio_tokens"))?,
     }))
@@ -63,9 +89,11 @@ pub fn parse_response(
     provider: &str,
     request: &Request,
     body: &[u8],
+    reasoning_usage: OpenAIChatReasoningUsage,
 ) -> Result<Response, Lm15Error> {
     let data = body_object(provider, body)?;
-    let mut response = response_from_chat_body(provider, data, Some(&request.model), None)?;
+    let mut response =
+        response_from_chat_body(provider, data, Some(&request.model), None, reasoning_usage)?;
     crate::judgments::replace_text_with_data(
         &mut response.message.parts,
         &crate::judgments::request_judgments(request),
@@ -81,13 +109,15 @@ pub fn parse_response(
 /// `parse_response` runs on provider traffic. `model` fills `Response.model`
 /// when the body carries none; `choice` names the choice to read — unset, a
 /// body with several choices is refused. Keys the reader does not know are
-/// neither refused nor lost: the whole body is `provider_data`. No compat is
-/// taken: the response shape does not vary by server.
+/// neither refused nor lost: the whole body is `provider_data`. Usage is
+/// read under `reasoning_usage` (MAP-19 rule 4): OpenAI's own counting for
+/// the family function, the binding's preset for an adapter.
 pub fn response_from_openai_chat(
     provider: &str,
     body: &Value,
     model: Option<&str>,
     choice: Option<usize>,
+    reasoning_usage: OpenAIChatReasoningUsage,
 ) -> Result<Response, Lm15Error> {
     let Value::Object(data) = body else {
         return Err(malformed_body(
@@ -95,7 +125,7 @@ pub fn response_from_openai_chat(
             "a Chat Completions response body is a JSON object",
         ));
     };
-    response_from_chat_body(provider, data.clone(), model, choice)
+    response_from_chat_body(provider, data.clone(), model, choice, reasoning_usage)
 }
 
 fn malformed_body(provider: &str, message: &str) -> Lm15Error {
@@ -114,6 +144,7 @@ fn response_from_chat_body(
     data: JsonObject,
     model: Option<&str>,
     choice: Option<usize>,
+    reasoning_usage: OpenAIChatReasoningUsage,
 ) -> Result<Response, Lm15Error> {
     if let Some(Value::Object(error)) = data.get("error") {
         return Err(response_error(provider, error));
@@ -252,7 +283,11 @@ fn response_from_chat_body(
             }
         }
     };
-    let usage = usage_from_chat(provider, object_or_empty(data.get("usage")))?;
+    let usage = usage_from_chat(
+        provider,
+        object_or_empty(data.get("usage")),
+        reasoning_usage,
+    )?;
     // choices[0].logprobs.content is the message-level token sequence;
     // refusal logprobs stay in provider_data.
     let logprobs = openai_token_logprobs(object_or_empty(choice.get("logprobs")).get("content"));
@@ -290,6 +325,7 @@ pub fn parse_stream_event(
     _request: &Request,
     raw: &SseEvent,
     out: &mut Vec<StreamEvent>,
+    reasoning_usage: OpenAIChatReasoningUsage,
 ) -> Result<(), Lm15Error> {
     if raw.data.is_empty() {
         return Ok(());
@@ -374,7 +410,7 @@ pub fn parse_stream_event(
     // usage, verbatim, else the frame that supplied finish_reason; [DONE]
     // contributes nothing.
     let usage_frame = match payload.get("usage") {
-        Some(Value::Object(u)) => Some(usage_from_chat(provider, u)?),
+        Some(Value::Object(u)) => Some(usage_from_chat(provider, u, reasoning_usage)?),
         _ => None,
     };
     if truthy(choice.get("finish_reason")) {
@@ -415,7 +451,13 @@ mod tests {
             "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7,
                       "prompt_tokens_details": {"cached_tokens": 1}}
         });
-        let r = parse_response("openai_chat", &request(), body.to_string().as_bytes()).unwrap();
+        let r = parse_response(
+            "openai_chat",
+            &request(),
+            body.to_string().as_bytes(),
+            OpenAIChatReasoningUsage::InCompletion,
+        )
+        .unwrap();
         assert_eq!(r.message.parts.len(), 3);
         assert_eq!(r.finish_reason, FinishReason::ToolCall);
         assert_eq!(r.usage.cache_read_tokens, Some(1));
@@ -426,7 +468,13 @@ mod tests {
     #[test]
     fn unknown_finish_reason_is_recorded() {
         let body = br#"{"choices": [{"message": {"content": ""}, "finish_reason": "weird"}]}"#;
-        let r = parse_response("openai_chat", &request(), body).unwrap();
+        let r = parse_response(
+            "openai_chat",
+            &request(),
+            body,
+            OpenAIChatReasoningUsage::InCompletion,
+        )
+        .unwrap();
         assert_eq!(r.message.parts, vec![Part::text("")]);
         assert_eq!(r.finish_reason, FinishReason::Stop);
         assert_eq!(
@@ -453,6 +501,7 @@ mod tests {
                     data: data.into(),
                 },
                 &mut out,
+                OpenAIChatReasoningUsage::InCompletion,
             )
             .unwrap();
         }

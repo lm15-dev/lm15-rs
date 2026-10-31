@@ -5,7 +5,38 @@ use serde_json::Value;
 use super::config::extensions_to_json;
 use super::helpers::{float, is_empty, strings, Obj, Reader, VResult};
 use super::{impl_serde_via_canonical, Canonical};
-use crate::types::{InferenceModelInfo, InferencePricing, ModelInfo, ModelOrigin};
+use crate::types::{InferenceModelInfo, InferencePricing, ModelInfo, ModelOrigin, PricingTier};
+
+impl Canonical for PricingTier {
+    fn from_json(value: &Value) -> VResult<Self> {
+        let r = Reader::new(value, "PricingTier")?;
+        let tier = PricingTier {
+            above_input_tokens: r.req_u64("above_input_tokens")?,
+            input_per_million: r.opt_f64("input_per_million")?,
+            output_per_million: r.opt_f64("output_per_million")?,
+            cache_read_per_million: r.opt_f64("cache_read_per_million")?,
+            cache_write_per_million: r.opt_f64("cache_write_per_million")?,
+        };
+        tier.validate()?;
+        Ok(tier)
+    }
+
+    fn to_json(&self) -> Value {
+        let mut o = Obj::new();
+        o.set("above_input_tokens", self.above_input_tokens);
+        o.opt("input_per_million", self.input_per_million.map(float));
+        o.opt("output_per_million", self.output_per_million.map(float));
+        o.opt(
+            "cache_read_per_million",
+            self.cache_read_per_million.map(float),
+        );
+        o.opt(
+            "cache_write_per_million",
+            self.cache_write_per_million.map(float),
+        );
+        o.finish()
+    }
+}
 
 impl Canonical for InferencePricing {
     fn from_json(value: &Value) -> VResult<Self> {
@@ -17,6 +48,11 @@ impl Canonical for InferencePricing {
             cache_write_per_million: r.opt_f64("cache_write_per_million")?,
             currency: r.str_or("currency", "USD")?,
             dimensions: r.opt_object("dimensions")?,
+            tiers: r
+                .array_or_empty("tiers")?
+                .iter()
+                .map(PricingTier::from_json)
+                .collect::<VResult<Vec<_>>>()?,
         };
         pricing.validate()?;
         Ok(pricing)
@@ -36,6 +72,10 @@ impl Canonical for InferencePricing {
         );
         o.omit_empty("currency", self.currency.as_str());
         o.omit_empty_opt("dimensions", self.dimensions.clone().map(Value::Object));
+        o.omit_empty(
+            "tiers",
+            Value::Array(self.tiers.iter().map(Canonical::to_json).collect()),
+        );
         o.finish()
     }
 }
@@ -153,4 +193,10 @@ impl Canonical for ModelInfo {
     }
 }
 
-impl_serde_via_canonical!(InferencePricing, InferenceModelInfo, ModelOrigin, ModelInfo);
+impl_serde_via_canonical!(
+    PricingTier,
+    InferencePricing,
+    InferenceModelInfo,
+    ModelOrigin,
+    ModelInfo
+);

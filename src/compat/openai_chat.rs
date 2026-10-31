@@ -143,6 +143,26 @@ impl OpenAIChatReasoningOff {
     }
 }
 
+/// `lm15/compat.py` `OpenAIChatReasoningUsage` (MAP-19): how the server
+/// counts reasoning in its usage. `InCompletion` (the dialect's rule):
+/// `completion_tokens` already includes it. `Separate`: it is counted
+/// beside the completion (xAI), so canonical output is their sum. Usage
+/// only; nothing on the request changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OpenAIChatReasoningUsage {
+    InCompletion,
+    Separate,
+}
+
+impl OpenAIChatReasoningUsage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OpenAIChatReasoningUsage::InCompletion => "in_completion",
+            OpenAIChatReasoningUsage::Separate => "separate",
+        }
+    }
+}
+
 /// `lm15/compat.py:356` `OpenAIChatForcedToolChoice`.
 pub type OpenAIChatForcedToolChoice = SendReject;
 /// `lm15/compat.py:361` `OpenAIChatJsonSchema`.
@@ -173,6 +193,7 @@ pub struct OpenAIChatCompat {
     pub json_schema: Option<Knob<OpenAIChatJsonSchema>>,
     pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
     pub reasoning_off: Option<Knob<OpenAIChatReasoningOff>>,
+    pub reasoning_usage: Option<Knob<OpenAIChatReasoningUsage>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
@@ -196,6 +217,7 @@ pub struct ChatModelOverride {
     pub json_schema: Option<Knob<OpenAIChatJsonSchema>>,
     pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
     pub reasoning_off: Option<Knob<OpenAIChatReasoningOff>>,
+    pub reasoning_usage: Option<Knob<OpenAIChatReasoningUsage>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub tool_result_media: Option<Knob<ToolResultMedia>>,
 }
@@ -215,6 +237,7 @@ impl ChatModelOverride {
         json_schema: None,
         token_scoring: None,
         reasoning_off: None,
+        reasoning_usage: None,
         reasoning_efforts: None,
         tool_result_media: None,
     };
@@ -239,6 +262,7 @@ impl OpenAIChatCompat {
         json_schema: None,
         token_scoring: None,
         reasoning_off: None,
+        reasoning_usage: None,
         reasoning_efforts: None,
         routing: None,
         extensions: None,
@@ -279,6 +303,7 @@ impl OpenAIChatCompat {
                 json_schema,
                 token_scoring,
                 reasoning_off,
+                reasoning_usage,
                 reasoning_efforts,
                 tool_result_media
             );
@@ -325,6 +350,10 @@ impl OpenAIChatCompat {
             json_schema: Knob::resolve(self.json_schema, SendReject::Send),
             token_scoring: Knob::resolve(self.token_scoring, OpenAIChatTokenScoring::None),
             reasoning_off: Knob::resolve(self.reasoning_off, OpenAIChatReasoningOff::Send),
+            reasoning_usage: Knob::resolve(
+                self.reasoning_usage,
+                OpenAIChatReasoningUsage::InCompletion,
+            ),
             reasoning_efforts: self.reasoning_efforts,
             routing: self.routing.clone(),
             extensions: self.extensions.clone(),
@@ -352,6 +381,7 @@ pub struct ResolvedOpenAIChatCompat {
     pub json_schema: OpenAIChatJsonSchema,
     pub token_scoring: OpenAIChatTokenScoring,
     pub reasoning_off: OpenAIChatReasoningOff,
+    pub reasoning_usage: OpenAIChatReasoningUsage,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,

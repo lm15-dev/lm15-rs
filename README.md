@@ -40,13 +40,19 @@ on every page · API reference: [docs.rs/lm15](https://docs.rs/lm15).
 ## Install
 
 ```bash
-cargo add lm15@1.0.0-rc.11
+cargo add lm15@1.0.0-rc.12
 cargo add tokio --features macros,rt-multi-thread
 ```
 
-**1.0.0-rc.11 is a release candidate**: the API intended for 1.0, published
+**1.0.0-rc.12 is a release candidate**: the API intended for 1.0, published
 to be tried first. Pin the exact version. Python's and TypeScript's lm15
-are stable; Go is a release candidate too.
+are stable; Go is a release candidate too. rc.12 changes the meaning of the
+usage counters to one meaning on every provider (`input_tokens` includes
+cached tokens, `output_tokens` includes reasoning), so Anthropic input and
+Gemini and xAI output counts grow, and `InferencePricing::estimate(&usage)`
+now returns `Option<f64>`: the exact list price, or `None` when an unknown
+count could change it (lm15-contract
+`changes/2026-10-31-usage-one-meaning.md`).
 
 Set the key of the provider you call (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, ...); the router reads it from the

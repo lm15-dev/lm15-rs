@@ -277,12 +277,14 @@ fn byte_list(value: Option<&Value>) -> Option<Vec<u64>> {
     }
 }
 
-/// INV-029 at the wire boundary: the counters as reported, the total
-/// summed only when both primaries are present and no total came.
+/// MAP-19 at the wire boundary: canonical-meaning counters with what the
+/// provider's numbers do not determine withheld (rule 3), the total summed
+/// only when both primaries are present and no total came.
 pub fn usage(fields: Usage) -> Usage {
+    let settled = fields.settled();
     // Overflow of two provider counts is not a real case; keep the total
     // unknown rather than fail a whole response over it.
-    fields.normalized().unwrap_or(fields)
+    settled.normalized().unwrap_or(settled)
 }
 
 /// The `ErrorDetail` of a stream error frame: the class from a dialect's

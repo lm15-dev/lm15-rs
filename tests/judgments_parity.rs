@@ -365,15 +365,23 @@ fn trie_terminator_scoring_preserves_prefix_keys_and_validates_indices() {
         ]}),
         2,
         "vllm",
+        lm15::compat::OpenAIChatReasoningUsage::InCompletion,
     )
     .unwrap();
     assert_eq!(scores.scores[0][&2], -0.2);
     assert!(scores.usage.is_empty());
-    assert!(scores_from_value(&json!({"choices":[{"index":0},{"index":0}]}), 2, "vllm").is_err());
+    assert!(scores_from_value(
+        &json!({"choices":[{"index":0},{"index":0}]}),
+        2,
+        "vllm",
+        lm15::compat::OpenAIChatReasoningUsage::InCompletion
+    )
+    .is_err());
     assert!(scores_from_value(
         &json!({"choices":[{"index":0,"logprobs":{"top_logprobs":[{"token_id:2":"bad"}]}}]}),
         1,
-        "vllm"
+        "vllm",
+        lm15::compat::OpenAIChatReasoningUsage::InCompletion
     )
     .is_err());
     let table: ScoreTable = BTreeMap::from([

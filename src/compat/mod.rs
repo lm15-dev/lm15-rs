@@ -25,10 +25,10 @@ pub use openai_chat::{
     ChatModelOverride, OpenAIChatAssistantAfterToolResult, OpenAIChatAssistantReasoningContent,
     OpenAIChatBuiltinTools, OpenAIChatCompat, OpenAIChatForcedToolChoice,
     OpenAIChatInstructionRole, OpenAIChatJsonSchema, OpenAIChatMaxTokensField,
-    OpenAIChatReasoningOff, OpenAIChatStreamUsage, OpenAIChatThinkingFormat,
-    OpenAIChatThinkingReplay, OpenAIChatTokenScoring, OpenAIChatUserField,
-    ResolvedOpenAIChatCompat, DEEPINFRA_FORCED_TOOL_CHOICE, OPENAI_CHAT_PRESETS,
-    OPENAI_CHAT_PRESET_BASE_URLS,
+    OpenAIChatReasoningOff, OpenAIChatReasoningUsage, OpenAIChatStreamUsage,
+    OpenAIChatThinkingFormat, OpenAIChatThinkingReplay, OpenAIChatTokenScoring,
+    OpenAIChatUserField, ResolvedOpenAIChatCompat, DEEPINFRA_FORCED_TOOL_CHOICE,
+    OPENAI_CHAT_PRESETS, OPENAI_CHAT_PRESET_BASE_URLS,
 };
 pub use openai_responses::{
     OpenAIResponsesBuiltinTools, OpenAIResponsesCommentaryPhase, OpenAIResponsesCompat,

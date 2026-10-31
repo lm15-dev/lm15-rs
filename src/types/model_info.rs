@@ -2,7 +2,52 @@
 
 use super::json::{non_empty, opt_non_empty, positive, JsonObject, VResult, ValidationError};
 
-/// Per-million pricing. Float fields (Number rule); non-negative.
+/// The rates of a call whose prompt is longer than `above_input_tokens`
+/// (spec/types.md § PricingTier). A tier reprices the WHOLE call; a rate the
+/// tier leaves out is unknown at that tier, never taken from the base rates.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PricingTier {
+    pub above_input_tokens: u64,
+    pub input_per_million: Option<f64>,
+    pub output_per_million: Option<f64>,
+    pub cache_read_per_million: Option<f64>,
+    pub cache_write_per_million: Option<f64>,
+}
+
+fn check_rates(rates: [(&str, Option<f64>); 4]) -> VResult<()> {
+    for (name, value) in rates {
+        if value.is_some_and(|v| !v.is_finite() || v < 0.0) {
+            return Err(ValidationError::value(format!("{name} must be >= 0")));
+        }
+    }
+    Ok(())
+}
+
+impl PricingTier {
+    fn rates(&self) -> [(&'static str, Option<f64>); 4] {
+        [
+            ("input_per_million", self.input_per_million),
+            ("output_per_million", self.output_per_million),
+            ("cache_read_per_million", self.cache_read_per_million),
+            ("cache_write_per_million", self.cache_write_per_million),
+        ]
+    }
+
+    pub fn validate(&self) -> VResult<()> {
+        if self.above_input_tokens == 0 {
+            return Err(ValidationError::value(
+                "PricingTier.above_input_tokens must be a positive integer",
+            ));
+        }
+        check_rates(self.rates())
+    }
+}
+
+/// List prices per million tokens of each billing bucket (uncached input,
+/// cache reads, cache writes, output). Float fields (Number rule);
+/// non-negative. An absent rate is unknown, never zero. `tiers` (strictly
+/// ascending, INV-057) reprice long prompts; `dimensions` is opaque catalog
+/// data [`InferencePricing::estimate`] does not read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InferencePricing {
     pub input_per_million: Option<f64>,
@@ -11,6 +56,7 @@ pub struct InferencePricing {
     pub cache_write_per_million: Option<f64>,
     pub currency: String,
     pub dimensions: Option<JsonObject>,
+    pub tiers: Vec<PricingTier>,
 }
 
 impl Default for InferencePricing {
@@ -22,45 +68,83 @@ impl Default for InferencePricing {
             cache_write_per_million: None,
             currency: "USD".to_string(),
             dimensions: None,
+            tiers: Vec::new(),
         }
     }
 }
 
 impl InferencePricing {
     pub fn validate(&self) -> VResult<()> {
-        for (name, value) in [
+        check_rates([
             ("input_per_million", self.input_per_million),
             ("output_per_million", self.output_per_million),
             ("cache_read_per_million", self.cache_read_per_million),
             ("cache_write_per_million", self.cache_write_per_million),
-        ] {
-            if value.is_some_and(|v| !v.is_finite() || v < 0.0) {
-                return Err(ValidationError::value(format!("{name} must be >= 0")));
+        ])?;
+        let mut previous = 0u64;
+        for tier in &self.tiers {
+            tier.validate()?;
+            if tier.above_input_tokens <= previous {
+                return Err(ValidationError::value(
+                    "InferencePricing.tiers must be in strictly ascending above_input_tokens order",
+                ));
             }
+            previous = tier.above_input_tokens;
         }
         non_empty(&self.currency, "currency")
     }
 
-    /// Cost estimate; an unknown count contributes nothing (never zero).
-    pub fn estimate(
-        &self,
-        input_tokens: Option<u64>,
-        output_tokens: Option<u64>,
-        cache_read_tokens: Option<u64>,
-        cache_write_tokens: Option<u64>,
-    ) -> f64 {
-        let mut total = 0.0;
-        for (rate, count) in [
-            (self.input_per_million, input_tokens),
-            (self.output_per_million, output_tokens),
-            (self.cache_read_per_million, cache_read_tokens),
-            (self.cache_write_per_million, cache_write_tokens),
-        ] {
-            if let (Some(rate), Some(count)) = (rate, count) {
-                total += count as f64 * rate / 1_000_000.0;
-            }
+    /// The list-price cost of one call, or `None` when it is not known
+    /// (spec/types.md § InferencePricing, "estimate"). Exact or nothing: the
+    /// sum, in this order, of uncached input, cache reads, cache writes and
+    /// output, each `tokens * rate / 1_000_000`, at the base rates or the
+    /// highest tier whose threshold `input_tokens` exceeds. `None` when input
+    /// or output is unknown; when an unreported cache count's rate differs
+    /// from the input rate; when a bucket with tokens has no rate; when audio
+    /// tokens were used. Service tiers, regional multipliers, longer cache
+    /// lifetimes and tool fees are outside it.
+    pub fn estimate(&self, usage: &super::Usage) -> Option<f64> {
+        let input = usage.input_tokens?;
+        let output = usage.output_tokens?;
+        if usage.input_audio_tokens.unwrap_or(0) > 0 || usage.output_audio_tokens.unwrap_or(0) > 0 {
+            return None;
         }
-        total
+        let base = PricingTier {
+            above_input_tokens: 0,
+            input_per_million: self.input_per_million,
+            output_per_million: self.output_per_million,
+            cache_read_per_million: self.cache_read_per_million,
+            cache_write_per_million: self.cache_write_per_million,
+        };
+        let rates = self
+            .tiers
+            .iter()
+            .rev()
+            .find(|tier| input > tier.above_input_tokens)
+            .unwrap_or(&base);
+        // An unknown cache count is harmless only when its tokens cost the
+        // same as plain input: then the split cannot change the price.
+        let known = |count: Option<u64>, rate: Option<f64>| match count {
+            Some(n) => Some(n),
+            None if rate.is_some() && rate == rates.input_per_million => Some(0),
+            None => None,
+        };
+        let read = known(usage.cache_read_tokens, rates.cache_read_per_million)?;
+        let write = known(usage.cache_write_tokens, rates.cache_write_per_million)?;
+        let uncached = input.checked_sub(read)?.checked_sub(write)?;
+        let mut total = 0.0;
+        for (tokens, rate) in [
+            (uncached, rates.input_per_million),
+            (read, rates.cache_read_per_million),
+            (write, rates.cache_write_per_million),
+            (output, rates.output_per_million),
+        ] {
+            if tokens == 0 {
+                continue;
+            }
+            total += tokens as f64 * rate? / 1_000_000.0;
+        }
+        Some(total)
     }
 }
 

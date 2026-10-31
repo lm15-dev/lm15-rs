@@ -27,6 +27,7 @@ const IMPL_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Ops this shim answers (`capabilities.ops`).
 const OPS: &[&str] = &[
+    "estimate_cost",
     "build_request",
     "plan",
     "surface_dump",
@@ -103,6 +104,14 @@ fn op_serde_roundtrip(msg: &Map<String, Value>) -> Result<Value, Failure> {
     let kind = field_str(msg, "kind")?;
     let value = roundtrip(&kind, field(msg, "value")?)?;
     Ok(json!({ "value": value }))
+}
+
+/// PROTOCOL.md estimate_cost: `InferencePricing::estimate`; `cost` is null
+/// when unknown.
+fn op_estimate_cost(msg: &Map<String, Value>) -> Result<Value, Failure> {
+    let pricing = lm15::types::InferencePricing::from_json(field(msg, "pricing")?)?;
+    let usage = lm15::types::Usage::from_json(field(msg, "usage")?)?;
+    Ok(json!({ "cost": pricing.estimate(&usage) }))
 }
 
 fn op_validate(msg: &Map<String, Value>) -> Result<Value, Failure> {
@@ -932,6 +941,7 @@ fn dispatch(op: &str, msg: &Map<String, Value>) -> Result<Value, Failure> {
     match op {
         "capabilities" => Ok(op_capabilities()),
         "serde_roundtrip" => op_serde_roundtrip(msg),
+        "estimate_cost" => op_estimate_cost(msg),
         "validate" => op_validate(msg),
         "normalize_error" => op_normalize_error(msg),
         "explain_auth" => op_explain_auth(msg),

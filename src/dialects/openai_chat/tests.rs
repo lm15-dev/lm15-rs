@@ -1507,8 +1507,14 @@ fn chat_models_read_a_bare_array_and_refuse_an_unknown_shape() {
 
 #[test]
 fn chat_cached_tokens_are_read_nested_first_then_flat() {
-    let usage =
-        |v: Value| super::response::usage_from_chat("together", v.as_object().unwrap()).unwrap();
+    let usage = |v: Value| {
+        super::response::usage_from_chat(
+            "together",
+            v.as_object().unwrap(),
+            crate::compat::OpenAIChatReasoningUsage::InCompletion,
+        )
+        .unwrap()
+    };
     assert_eq!(
         usage(json!({"prompt_tokens": 9, "cached_tokens": 0})).cache_read_tokens,
         Some(0)

@@ -152,7 +152,7 @@ pub fn image_response(
         }
     }
     let usage_obj = data.get("usage").and_then(Value::as_object);
-    let usage = Usage {
+    let usage = crate::dialects::wire_json::usage(Usage {
         input_tokens: usage_obj
             .and_then(|u| u.get("input_tokens"))
             .and_then(Value::as_u64),
@@ -163,7 +163,7 @@ pub fn image_response(
             .and_then(|u| u.get("total_tokens"))
             .and_then(Value::as_u64),
         ..Default::default()
-    };
+    });
     // Captured: the images response carries no id and no model echo.
     Ok(ImageGenerationResponse {
         images,

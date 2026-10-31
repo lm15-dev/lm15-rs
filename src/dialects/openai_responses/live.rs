@@ -182,7 +182,7 @@ fn usage_from_response(response: &Map<String, Value>) -> Option<Usage> {
     let input = details("input_token_details", "input_tokens_details");
     let output = details("output_token_details", "output_tokens_details");
     let count = |map: &Map<String, Value>, key: &str| map.get(key).and_then(Value::as_u64);
-    Some(Usage {
+    Some(crate::dialects::wire_json::usage(Usage {
         input_tokens: count(usage, "input_tokens"),
         output_tokens: count(usage, "output_tokens"),
         total_tokens: count(usage, "total_tokens"),
@@ -191,7 +191,7 @@ fn usage_from_response(response: &Map<String, Value>) -> Option<Usage> {
         cache_write_tokens: count(&input, "cache_write_tokens"),
         input_audio_tokens: count(&input, "audio_tokens"),
         output_audio_tokens: count(&output, "audio_tokens"),
-    })
+    }))
 }
 
 fn error_detail(provider_code: &str, message: &str) -> ErrorDetail {
