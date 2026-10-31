@@ -45,8 +45,8 @@ cargo add tokio --features macros,rt-multi-thread
 ```
 
 **1.0.0-rc.11 is a release candidate**: the API intended for 1.0, published
-to be tried first. Pin the exact version. Python's lm15 1.0 is stable;
-TypeScript and Go are release candidates too.
+to be tried first. Pin the exact version. Python's and TypeScript's lm15
+are stable; Go is a release candidate too.
 
 Set the key of the provider you call (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `GEMINI_API_KEY`, ...); the router reads it from the
