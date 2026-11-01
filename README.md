@@ -45,7 +45,7 @@ cargo add tokio --features macros,rt-multi-thread
 ```
 
 **2.0.0** is the first stable release of lm15 for Rust (after the 1.0.0
-and 2.0.0 release candidates); lm15 is stable in every published language.
+and 2.0.0 release candidates); lm15 is stable in Python, TypeScript, Rust and Go.
 Every lm15 language shares its major version, the generation of the
 contract it implements, so Rust went from the 1.0 candidates straight to 2.0
 with the others; no stable 1.0 was released. 2.0 changes the meaning of the
