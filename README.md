@@ -40,15 +40,15 @@ on every page · API reference: [docs.rs/lm15](https://docs.rs/lm15).
 ## Install
 
 ```bash
-cargo add lm15@2.0.0-rc.1
+cargo add lm15
 cargo add tokio --features macros,rt-multi-thread
 ```
 
-**2.0.0-rc.1 is a release candidate**: the API intended for 2.0, published
-to be tried first. Pin the exact version. Python's and TypeScript's lm15
-are stable; Go is a release candidate too. Every lm15 language shares its
-major version, the generation of the contract it implements, so Rust moves
-from the 1.0 candidates straight to 2.0 with the others. 2.0 changes the meaning of the
+**2.0.0** is the first stable release of lm15 for Rust (after the 1.0.0
+and 2.0.0 release candidates); lm15 is stable in every published language.
+Every lm15 language shares its major version, the generation of the
+contract it implements, so Rust went from the 1.0 candidates straight to 2.0
+with the others; no stable 1.0 was released. 2.0 changes the meaning of the
 usage counters to one meaning on every provider (`input_tokens` includes
 cached tokens, `output_tokens` includes reasoning), so Anthropic input and
 Gemini and xAI output counts grow, and `InferencePricing::estimate(&usage)`
@@ -219,18 +219,18 @@ into lm15: see the [guides](https://lm15.dev/docs/) and
 
 ## Stability
 
-The chat core is stable in 1.x once 1.0.0 is released: requests, responses,
+The chat core is stable in 2.x: requests, responses,
 streaming, tools, structured output, media inside messages, reasoning,
 errors, credentials and model listing. These ship as **provisional** and may
-still change in 1.x, with a notice in the contract: files, batches, media
+still change in 2.x, with a notice in the contract: files, batches, media
 generation, stored caches, realtime sessions, Chat Completions ingest and
 sign-in.
 
 ## Conformance
 
 Graded by [lm15-contract](https://github.com/lm15-dev/lm15-contract) at the
-commit in `CONTRACT_PIN`: every check passes (1,788 of 1,788 on
-2026-09-26), the same as Python, TypeScript and Go at theirs. The checks
+commit in `CONTRACT_PIN`: every check passes (1,968 of 1,968 at `cfc3edc`,
+2026-11-01), the same as every other lm15 language. The checks
 compare the exact requests lm15 builds and the responses it reads against
 recorded provider traffic. `cargo run --example live_smoke` sends real
 requests with your keys and writes receipts ([receipts/](receipts/)).
