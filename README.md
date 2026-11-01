@@ -40,13 +40,15 @@ on every page · API reference: [docs.rs/lm15](https://docs.rs/lm15).
 ## Install
 
 ```bash
-cargo add lm15@1.0.0-rc.12
+cargo add lm15@2.0.0-rc.1
 cargo add tokio --features macros,rt-multi-thread
 ```
 
-**1.0.0-rc.12 is a release candidate**: the API intended for 1.0, published
+**2.0.0-rc.1 is a release candidate**: the API intended for 2.0, published
 to be tried first. Pin the exact version. Python's and TypeScript's lm15
-are stable; Go is a release candidate too. rc.12 changes the meaning of the
+are stable; Go is a release candidate too. Every lm15 language shares its
+major version, the generation of the contract it implements, so Rust moves
+from the 1.0 candidates straight to 2.0 with the others. 2.0 changes the meaning of the
 usage counters to one meaning on every provider (`input_tokens` includes
 cached tokens, `output_tokens` includes reasoning), so Anthropic input and
 Gemini and xAI output counts grow, and `InferencePricing::estimate(&usage)`
