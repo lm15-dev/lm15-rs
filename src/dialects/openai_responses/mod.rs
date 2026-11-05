@@ -285,6 +285,10 @@ impl Surfaces for OpenAIResponses {
 }
 
 impl Dialect for OpenAIResponses {
+    fn stream_reader(&self) -> Option<Box<dyn crate::wire::StreamReader>> {
+        Some(Box::new(response::ResponsesStreamReader::default()))
+    }
+
     fn dialect(&self) -> DialectId {
         DialectId::OpenaiResponses
     }

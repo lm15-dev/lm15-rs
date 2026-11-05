@@ -224,6 +224,14 @@ pub trait Dialect: Sync + Surfaces {
         out: &mut Vec<StreamEvent>,
     ) -> Result<(), Lm15Error>;
 
+    /// The per-stream reader of this dialect (MAP-20), or `None` when each
+    /// frame maps on its own. A dialect that restates an item in a final
+    /// copy completes the item's fragments from it, which needs what the
+    /// fragments of THIS stream delivered.
+    fn stream_reader(&self) -> Option<Box<dyn StreamReader>> {
+        None
+    }
+
     /// The wire GET for the provider's model catalog (module 6; the
     /// mapping table of `changes/2026-08-31-list-models-provisional.md`),
     /// before auth and host work. The default: the dialect has no listing.
@@ -243,6 +251,18 @@ pub trait Dialect: Sync + Surfaces {
         let _ = body;
         Err(models_unsupported(cx.provider))
     }
+}
+
+/// What one stream needs beyond the per-frame mapping (MAP-20): state for
+/// that stream and nothing across streams. Called after
+/// `Dialect::parse_stream_event` with the frame and the events it mapped;
+/// the reader may add, change or refuse them.
+pub trait StreamReader: Send {
+    fn after_frame(
+        &mut self,
+        frame: &SseEvent,
+        events: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error>;
 }
 
 /// A fetched body with its response headers.

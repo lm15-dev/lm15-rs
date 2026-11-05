@@ -415,7 +415,7 @@ fn response_and_stream_goldens_replay_exactly() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(
         checked,
-        (363, 53), // +4 2026-10-15: {typesafe,anthropic,vertex}.judgments_box, typesafe.judgments_box_text_state; +2 2026-09-30: claude-code.client_version_setting, claude-code.max_tokens_defaulted; +4 2026-10-02: {anthropic,openai,openai-chat,gemini}.tool_no_description (MAP-17); +1 stream 2026-10-06: openai.streaming_long_line (INV-056)
+        (363, 64), // +11 stream 2026-11-05: {openai-codex,anthropic,deepseek,gemini,meta,moonshotai-responses}.streaming_parallel_tool_calls, gemini.streaming_parallel_tool_calls_chunked, openai-codex.{streaming,streaming_tool_call,streaming_reasoning_summary}, meta.streaming_incomplete (MAP-20); +4 2026-10-15: {typesafe,anthropic,vertex}.judgments_box, typesafe.judgments_box_text_state; +2 2026-09-30: claude-code.client_version_setting, claude-code.max_tokens_defaulted; +4 2026-10-02: {anthropic,openai,openai-chat,gemini}.tool_no_description (MAP-17); +1 stream 2026-10-06: openai.streaming_long_line (INV-056)
         "complete/stream goldens at the target CONTRACT_PIN"
     );
 }

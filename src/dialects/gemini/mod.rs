@@ -550,6 +550,10 @@ impl Surfaces for Gemini {
 }
 
 impl Dialect for Gemini {
+    fn stream_reader(&self) -> Option<Box<dyn crate::wire::StreamReader>> {
+        Some(Box::new(response::GeminiStreamReader::default()))
+    }
+
     fn dialect(&self) -> DialectId {
         DialectId::Gemini
     }

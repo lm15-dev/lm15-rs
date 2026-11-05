@@ -528,18 +528,18 @@ pub fn parse_stream_event(
                 name: str_or_none(payload.get("name")),
             })));
         }
-        "response.completed" => {
+        "response.completed" | "response.incomplete" => {
+            // A turn cut short (the output limit, a content filter) ends with
+            // response.incomplete; its finish reason reads status and
+            // incomplete_details as on the complete path (INV-051,
+            // cases/meta/streaming_incomplete.json).
             let response = object_or_empty(payload.get("response"));
             let usage = usage_from_responses(provider, object_or_empty(response.get("usage")))?;
             let has_tool = array_or_empty(response.get("output")).iter().any(|item| {
                 matches!(item, Value::Object(o) if str_or_empty(o.get("type")) == "function_call")
             });
             out.push(StreamEvent::End(StreamEndEvent {
-                finish_reason: Some(if has_tool {
-                    FinishReason::ToolCall
-                } else {
-                    FinishReason::Stop
-                }),
+                finish_reason: Some(finish_from_status(response, has_tool)),
                 usage: Some(usage),
                 provider_data: match payload.get("response") {
                     Some(Value::Object(o)) => Some(o.clone()),
@@ -578,6 +578,248 @@ pub fn parse_stream_event(
 
 fn delta(delta: Delta) -> StreamEvent {
     StreamEvent::Delta(StreamDeltaEvent { delta })
+}
+
+// ─── Stream reader (MAP-20) ──────────────────────────────────────────
+
+/// What one stream's fragments delivered, per part slot and channel. A
+/// final copy is the provider restating a value it may also have sent in
+/// fragments; `remainder` is what the fragments did not deliver: the whole
+/// value when none came, the rest when they are its beginning, nothing when
+/// they are all of it. Fragments that are not its beginning contradict it
+/// and the stream is refused: lm15 does not choose.
+#[derive(Debug, Default)]
+pub(crate) struct FinalCopies {
+    seen: std::collections::HashMap<(u64, &'static str), String>,
+}
+
+impl FinalCopies {
+    pub(crate) fn saw(&mut self, index: u64, channel: &'static str, text: &str) {
+        if !text.is_empty() {
+            self.seen
+                .entry((index, channel))
+                .or_default()
+                .push_str(text);
+        }
+    }
+
+    pub(crate) fn remainder(
+        &mut self,
+        index: u64,
+        channel: &'static str,
+        final_copy: &str,
+        json_value: bool,
+    ) -> Result<String, Lm15Error> {
+        let got = self
+            .seen
+            .get(&(index, channel))
+            .cloned()
+            .unwrap_or_default();
+        if let Some(rest) = final_copy.strip_prefix(got.as_str()) {
+            let rest = rest.to_string();
+            self.seen.insert((index, channel), final_copy.to_string());
+            return Ok(rest);
+        }
+        // The same JSON value, members in the same order: the text differs
+        // (whitespace, escapes), the arguments do not.
+        if json_value && same_json(&got, final_copy) {
+            return Ok(String::new());
+        }
+        Err(Lm15Error::stream_assembly(
+            format!(
+                "the streamed {channel} of part {index} is not the beginning of the provider's final copy of it \
+                 ({} bytes streamed, {} in the final copy); lm15 does not choose between them (MAP-20)",
+                got.len(),
+                final_copy.len()
+            ),
+            None,
+            Some(index),
+        ))
+    }
+}
+
+fn same_json(a: &str, b: &str) -> bool {
+    match (
+        serde_json::from_str::<Value>(a),
+        serde_json::from_str::<Value>(b),
+    ) {
+        // Compared as text, not with `==`: preserve_order's maps are equal
+        // in any member order, and member order is part of the value (INV-002).
+        (Ok(x), Ok(y)) => serde_json::to_string(&x).ok() == serde_json::to_string(&y).ok(),
+        _ => false,
+    }
+}
+
+fn arguments_text(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// The text a message item's fragments add up to: its output_text and
+/// refusal contents in order (both stream as text into the item's slot).
+fn message_final_text(item: &JsonObject) -> String {
+    let mut out = String::new();
+    for content in array_or_empty(item.get("content")) {
+        if let Value::Object(c) = content {
+            match str_or_empty(c.get("type")).as_str() {
+                "output_text" | "text" => out.push_str(&str_or_empty(c.get("text"))),
+                "refusal" => out.push_str(
+                    &str_or_none(c.get("refusal"))
+                        .or_else(|| str_or_none(c.get("text")))
+                        .unwrap_or_default(),
+                ),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// One OpenAI Responses stream (MAP-20). `response.output_item.done` is
+/// each item's final copy; at it the reader emits what the item's fragments
+/// did not deliver: a function call's arguments (the Codex backend sends
+/// parallel calls' arguments only there), a message's text, a reasoning
+/// item's summary. A summary's parts are joined with a newline, as the
+/// complete path joins them (INV-051); the newline goes before the first
+/// fragment of each later part.
+#[derive(Debug, Default)]
+pub struct ResponsesStreamReader {
+    copies: FinalCopies,
+    summary_part: std::collections::HashMap<u64, u64>,
+    named: std::collections::HashSet<u64>,
+}
+
+impl crate::wire::StreamReader for ResponsesStreamReader {
+    fn after_frame(
+        &mut self,
+        frame: &SseEvent,
+        events: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error> {
+        if frame.data.is_empty() || frame.data == "[DONE]" {
+            return Ok(());
+        }
+        let Some(payload) = frame_object(&frame.data) else {
+            return Ok(());
+        };
+        let et = str_or_empty(payload.get("type"));
+        let index = index_of(payload.get("output_index"));
+        match et.as_str() {
+            "response.reasoning_summary_text.delta" => {
+                let part = index_of(payload.get("summary_index"));
+                let at = self.summary_part.get(&index).copied().unwrap_or(0);
+                let prefix = if part > at {
+                    self.summary_part.insert(index, part);
+                    "\n".repeat((part - at) as usize)
+                } else {
+                    String::new()
+                };
+                for event in events.iter_mut() {
+                    if let StreamEvent::Delta(StreamDeltaEvent {
+                        delta: Delta::Thinking(t),
+                    }) = event
+                    {
+                        t.text.insert_str(0, &prefix);
+                        self.copies.saw(index, "summary", &t.text);
+                    }
+                }
+            }
+            "response.output_text.delta" | "response.refusal.delta" => {
+                self.copies
+                    .saw(index, "text", &str_or_empty(payload.get("delta")));
+            }
+            "response.output_item.added" | "response.function_call_arguments.delta" => {
+                for event in events.iter() {
+                    if let StreamEvent::Delta(StreamDeltaEvent {
+                        delta: Delta::ToolCall(t),
+                    }) = event
+                    {
+                        self.copies.saw(index, "arguments", &t.input);
+                        if t.name.is_some() {
+                            self.named.insert(index);
+                        }
+                    }
+                }
+            }
+            "response.output_item.done" => {
+                if let Some(Value::Object(item)) = payload.get("item") {
+                    let mut fill = self.complete(index, item)?;
+                    fill.append(events);
+                    *events = fill;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl ResponsesStreamReader {
+    fn complete(&mut self, index: u64, item: &JsonObject) -> Result<Vec<StreamEvent>, Lm15Error> {
+        match str_or_empty(item.get("type")).as_str() {
+            "function_call" => {
+                let rest = self.copies.remainder(
+                    index,
+                    "arguments",
+                    &arguments_text(item.get("arguments")),
+                    true,
+                )?;
+                if rest.is_empty() && self.named.contains(&index) {
+                    return Ok(Vec::new());
+                }
+                let name = str_or_none(item.get("name"));
+                if name.is_some() {
+                    self.named.insert(index);
+                }
+                Ok(vec![delta(Delta::ToolCall(ToolCallDelta {
+                    input: rest,
+                    part_index: index,
+                    id: first_str(item, &["call_id", "id"]),
+                    name,
+                }))])
+            }
+            "message" => {
+                let rest =
+                    self.copies
+                        .remainder(index, "text", &message_final_text(item), false)?;
+                Ok(if rest.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![delta(Delta::Text(TextDelta {
+                        text: rest,
+                        part_index: index,
+                        ..Default::default()
+                    }))]
+                })
+            }
+            "reasoning" => {
+                let Some(Value::Array(summary)) = item.get("summary") else {
+                    return Ok(Vec::new());
+                };
+                let texts: Vec<String> = summary
+                    .iter()
+                    .map(|x| match x {
+                        Value::Object(o) => str_or_empty(o.get("text")),
+                        other => str_or_empty(Some(other)),
+                    })
+                    .collect();
+                let rest = self
+                    .copies
+                    .remainder(index, "summary", &texts.join("\n"), false)?;
+                Ok(if rest.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![delta(Delta::Thinking(ThinkingDelta {
+                        text: rest,
+                        part_index: index,
+                    }))]
+                })
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
 }
 
 #[cfg(test)]

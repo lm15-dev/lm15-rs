@@ -362,20 +362,12 @@ fn op_plan(msg: &Map<String, Value>) -> Result<Value, Failure> {
 }
 
 fn op_build_request(msg: &Map<String, Value>) -> Result<Value, Failure> {
-    let provider = field_str(msg, "provider")?;
-    let credential = credential_of(msg)?;
-    let base_url = msg.get("base_url").and_then(Value::as_str);
-    let clock = clock_of(msg)?;
-    let lm = lm15::registry::adapter_for(
-        &provider,
-        credential,
-        base_url,
-        settings_of(msg),
-        clock.map(|c| Box::new(c) as Box<dyn lm15::wire::Clock + Send + Sync>),
-    )?;
+    // The same adapter the surface ops build: `openai-codex` with the
+    // harness's account id (PROTOCOL.md; first chat-surface Codex cases
+    // 2026-11-05, changes/2026-11-05-stream-final-copy.md).
+    let lm = surface_adapter(msg, credential_of(msg)?)?;
     let request = Request::from_json(field(msg, "canonical_request")?)?;
     let stream = msg.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let lm = lm.with_adaptations(adaptation_policy(msg)?);
     let transport = lm.build_request(&request, stream)?;
     let mut output = transport_request_json(&transport);
     let records = if stream {

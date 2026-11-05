@@ -526,6 +526,102 @@ fn delta(delta: Delta) -> StreamEvent {
     StreamEvent::Delta(StreamDeltaEvent { delta })
 }
 
+// ─── Stream reader: part slots across chunks (MAP-20) ────────────────
+
+fn part_kind(part: &Value) -> Option<&'static str> {
+    let Value::Object(part) = part else {
+        return None;
+    };
+    if part.contains_key("text") {
+        return Some(if truthy(part.get("thought")) {
+            "thought"
+        } else {
+            "text"
+        });
+    }
+    if matches!(part.get("functionCall"), Some(Value::Object(_))) {
+        return Some("call");
+    }
+    if matches!(part.get("inlineData"), Some(Value::Object(_))) {
+        return Some("media");
+    }
+    None
+}
+
+/// One Gemini stream: which slot each chunk's parts belong to. A chunk's
+/// parts are numbered from 0 in every chunk. The first part of a chunk
+/// continues the previous chunk's last part when both are text (or both
+/// thought text): that is how a long text arrives. Every other part is a
+/// new part with a slot of its own, in arrival order. A function call is
+/// never a continuation: gemini-2.5-pro sends each parallel call in a chunk
+/// of its own (cases/gemini/streaming_parallel_tool_calls_chunked.json).
+#[derive(Debug, Default)]
+pub struct GeminiStreamReader {
+    last: Option<(u64, &'static str)>,
+    next: u64,
+}
+
+impl crate::wire::StreamReader for GeminiStreamReader {
+    fn after_frame(
+        &mut self,
+        frame: &SseEvent,
+        events: &mut Vec<StreamEvent>,
+    ) -> Result<(), Lm15Error> {
+        let Some(payload) = frame_object(&frame.data) else {
+            return Ok(());
+        };
+        let parts: &[Value] = match array_or_empty(payload.get("candidates")).first() {
+            Some(Value::Object(cand)) => {
+                array_or_empty(object_or_empty(cand.get("content")).get("parts"))
+            }
+            _ => &[],
+        };
+        let mut slots = std::collections::HashMap::new();
+        for (idx, part) in parts.iter().enumerate() {
+            let Some(kind) = part_kind(part) else {
+                continue;
+            };
+            let slot = match self.last {
+                Some((slot, last))
+                    if idx == 0 && (kind == "text" || kind == "thought") && last == kind =>
+                {
+                    slot
+                }
+                _ => {
+                    let slot = self.next;
+                    self.next += 1;
+                    slot
+                }
+            };
+            slots.insert(idx as u64, slot);
+            self.last = Some((slot, kind));
+        }
+        let remap = |i: &mut u64| {
+            if let Some(slot) = slots.get(i) {
+                *i = *slot;
+            }
+        };
+        for event in events.iter_mut() {
+            if let StreamEvent::Delta(StreamDeltaEvent { delta }) = event {
+                match delta {
+                    Delta::Text(d) => remap(&mut d.part_index),
+                    Delta::Thinking(d) => remap(&mut d.part_index),
+                    Delta::Audio(d) => remap(&mut d.part_index),
+                    Delta::Image(d) => remap(&mut d.part_index),
+                    Delta::ToolCall(d) => remap(&mut d.part_index),
+                    Delta::Citation(d) => remap(&mut d.part_index),
+                    Delta::Continuation(d) => {
+                        if let Some(i) = d.part_index.as_mut() {
+                            remap(i);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 fn signature_delta(signature: &Value, idx: u64) -> StreamEvent {
     let state = signature_state(signature);
     delta(Delta::Continuation(ContinuationDelta {

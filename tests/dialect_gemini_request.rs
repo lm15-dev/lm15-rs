@@ -198,6 +198,6 @@ fn every_gemini_request_case_matches_the_fixture() {
             ));
         }
     }
-    assert_eq!(checked, 46, "gemini cases with a canonical_request"); // +1 2026-10-02: tool_no_description
+    assert_eq!(checked, 48, "gemini cases with a canonical_request"); // +2 2026-11-05: streaming_parallel_tool_calls{,_chunked} (MAP-20); +1 2026-10-02: tool_no_description
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

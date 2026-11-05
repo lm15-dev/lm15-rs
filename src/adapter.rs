@@ -602,6 +602,7 @@ impl ProviderLM {
             body_prefix: Vec::new(),
             source: None,
             dialect: dialect_for(self.dialect()),
+            reader: dialect_for(self.dialect()).stream_reader(),
             binding: Arc::clone(&self.binding),
             request: request.clone(),
             sse: SseParser::new(),
@@ -2033,6 +2034,8 @@ impl fmt::Debug for EventStream {
 /// `finish` at end of body yields the merged end event.
 pub struct StreamDecoder {
     dialect: &'static dyn Dialect,
+    /// The dialect's per-stream reader (MAP-20), when it has one.
+    reader: Option<Box<dyn crate::wire::StreamReader>>,
     binding: Arc<Binding>,
     request: Request,
     sse: SseParser,
@@ -2197,6 +2200,9 @@ impl StreamDecoder {
                 frame,
                 &mut raw,
             )?;
+            if let Some(reader) = &mut self.reader {
+                reader.after_frame(frame, &mut raw)?;
+            }
             for event in raw {
                 if self.close_source {
                     break;
