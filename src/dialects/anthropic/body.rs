@@ -562,6 +562,28 @@ impl ThinkingPlan {
 
     /// The `thinking` object, if any.
     fn wire(&self, reasoning: Option<&Reasoning>) -> Option<Value> {
+        let mut thinking = self.thinking(reasoning)?;
+        // MAP-7 rule 7 (amended 2026-11-07): the thinking is shown only when
+        // asked on Opus 4.7, 4.8 and every Claude 5 (display defaults to
+        // "omitted": a thinking block with empty text); every Claude model
+        // accepts "summarized" (live 2026-11-07, 14 models).
+        let shown = matches!(
+            thinking.get("type").and_then(Value::as_str),
+            Some("adaptive" | "enabled")
+        );
+        if self.format == AnthropicThinkingFormat::Anthropic
+            && shown
+            && reasoning.is_some_and(|r| r.summary.is_some())
+        {
+            if let Some(object) = thinking.as_object_mut() {
+                object.insert("display".into(), Value::String("summarized".into()));
+            }
+        }
+        Some(thinking)
+    }
+
+    /// The `thinking` object's shape, before the display knob.
+    fn thinking(&self, reasoning: Option<&Reasoning>) -> Option<Value> {
         let off = reasoning.is_some_and(Reasoning::is_off);
         match self.format {
             // DeepSeek (thinking on by default: off MUST be sent) and Moonshot
@@ -627,11 +649,11 @@ fn thinking_plan(
         reasoning.summary,
         Some(ReasoningSummary::Concise) | Some(ReasoningSummary::Detailed)
     ) {
-        // MAP-7 rule 7: OpenAI detail levels; `auto` is satisfied silently
-        // (thinking blocks come back whenever thinking runs).
+        // MAP-7 rule 7: OpenAI detail levels; the Messages API returns one
+        // summary of the thinking (`auto`: display "summarized").
         return Err(refuse.feature(format!(
-            "reasoning.summary={:?} is an OpenAI detail level; the Messages API returns thinking \
-             blocks whenever thinking runs (use 'auto' or none)",
+            "reasoning.summary={:?} is an OpenAI detail level; the Messages API returns one \
+             summary of the thinking (use 'auto')",
             reasoning.summary.map(|s| s.as_str()).unwrap_or_default()
         )));
     }

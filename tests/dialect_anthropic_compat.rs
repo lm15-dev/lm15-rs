@@ -157,6 +157,25 @@ fn thinking_format_adaptive_has_no_model_table() {
 }
 
 #[test]
+fn thinking_display_is_anthropics_own_knob() {
+    // MAP-7 rule 7 (amended 2026-11-07): servers of another thinking format get no display.
+    for (format, model) in [
+        (AnthropicThinkingFormat::Deepseek, "deepseek-v4-flash"),
+        (AnthropicThinkingFormat::Adaptive, "muse-spark-1.3"),
+        (AnthropicThinkingFormat::Effort, "kimi-k3"),
+    ] {
+        let lm = bound(AnthropicCompat {
+            thinking_format: set(format),
+            ..AnthropicCompat::EMPTY
+        });
+        let mut config = reasoning(ReasoningEffort::Low);
+        config.reasoning.as_mut().unwrap().summary = Some(lm15::types::ReasoningSummary::Auto);
+        let wire = body(&lm, &request(model, config));
+        assert!(!wire.to_string().contains("display"), "{format:?}: {wire}");
+    }
+}
+
+#[test]
 fn thinking_format_effort_sends_the_dial_alone() {
     let lm = bound(AnthropicCompat {
         thinking_format: set(AnthropicThinkingFormat::Effort),

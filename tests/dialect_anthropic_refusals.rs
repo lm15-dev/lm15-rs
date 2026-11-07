@@ -122,7 +122,7 @@ fn map7_minimal_raises_on_the_adaptive_class_only() {
 }
 
 #[test]
-fn map7_summary_detail_levels_raise_and_auto_is_satisfied() {
+fn map7_summary_detail_levels_raise_and_auto_shows_the_summary() {
     for summary in [ReasoningSummary::Concise, ReasoningSummary::Detailed] {
         let config = cfg(|c| {
             c.reasoning = Some(Reasoning {
@@ -141,11 +141,32 @@ fn map7_summary_detail_levels_raise_and_auto_is_satisfied() {
         });
     });
     let out = anthropic()
-        .build_request(&request("claude-sonnet-5", config), false)
+        .build_request(&request("claude-sonnet-5", config.clone()), false)
         .unwrap();
     let body = out.body.unwrap();
-    assert_eq!(body["thinking"], json!({"type": "adaptive"}));
+    // MAP-7 rule 7 (amended 2026-11-07): Claude 5 hides the thinking unless asked.
+    assert_eq!(
+        body["thinking"],
+        json!({"type": "adaptive", "display": "summarized"})
+    );
     assert_eq!(body["output_config"], json!({"effort": "medium"}));
+    let manual = anthropic()
+        .build_request(&request("claude-haiku-4-5-20251001", config), false)
+        .unwrap()
+        .body
+        .unwrap();
+    assert_eq!(
+        manual["thinking"],
+        json!({"type": "enabled", "budget_tokens": 8192, "display": "summarized"})
+    );
+    // No summary asked: the model's own default, no knob.
+    let config = cfg(|c| c.reasoning = Some(Reasoning::new(ReasoningEffort::Medium)));
+    let plain = anthropic()
+        .build_request(&request("claude-sonnet-5", config), false)
+        .unwrap()
+        .body
+        .unwrap();
+    assert_eq!(plain["thinking"], json!({"type": "adaptive"}));
 }
 
 // ─── MAP-6 ──────────────────────────────────────────────────────────

@@ -18,7 +18,7 @@ use lm15::serde::Canonical;
 use lm15::types::Request;
 
 const PROVIDERS: &[(&str, usize)] = &[
-    ("anthropic", 50), // +1 2026-11-05: streaming_parallel_tool_calls (MAP-20); +1 2026-10-15: judgments_box; +1 2026-09-30: max_tokens_defaulted_reasoning; +1 2026-10-02: tool_no_description (MAP-17)
+    ("anthropic", 53), // +3 2026-11-07: reasoning_summary, reasoning_summary_budget, streaming_reasoning_summary (MAP-7 rule 7 amended); +1 2026-11-05: streaming_parallel_tool_calls (MAP-20); +1 2026-10-15: judgments_box; +1 2026-09-30: max_tokens_defaulted_reasoning; +1 2026-10-02: tool_no_description (MAP-17)
     ("deepseek-anthropic", 17), // +1 2026-09-30: max_tokens_defaulted
     ("moonshotai-anthropic", 18),
     ("meta-anthropic", 16),
