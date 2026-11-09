@@ -2,7 +2,7 @@
 //! Anthropic dialect (module 4 W1) consults the resolved value at the
 //! named points.
 
-use super::{JsonObject, Knob, ReasoningEfforts, SendReject, ToolResultMedia};
+use super::{JsonObject, Knob, ReasoningEfforts, SendReject, StopInText, ToolResultMedia};
 
 /// `lm15/compat.py:839-853` `AnthropicThinkingFormat`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,6 +57,8 @@ pub struct AnthropicCompat {
     /// MAP-10: media inside `tool_result.content` (`lm15/compat.py` `tool_result_media`).
     pub tool_result_media: Option<Knob<ToolResultMedia>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
+    /// MAP-22: the server returns the stop sequence it stopped at.
+    pub stop_in_text: Option<Knob<StopInText>>,
     pub model_prefixes: Option<&'static [&'static str]>,
     pub extensions: Option<JsonObject>,
 }
@@ -71,6 +73,7 @@ impl AnthropicCompat {
         sampling_params: None,
         tool_result_media: None,
         reasoning_efforts: None,
+        stop_in_text: None,
         model_prefixes: None,
         extensions: None,
     };
@@ -95,6 +98,7 @@ impl AnthropicCompat {
             // tool_result.content takes image and document blocks (anthropic exact, 2026-09-07).
             tool_result_media: Knob::resolve(self.tool_result_media, ToolResultMedia::Native),
             reasoning_efforts: self.reasoning_efforts,
+            stop_in_text: Knob::resolve(self.stop_in_text, StopInText::Excluded),
             model_prefixes: self.model_prefixes,
             extensions: self.extensions.clone(),
         }
@@ -112,6 +116,7 @@ pub struct ResolvedAnthropicCompat {
     pub sampling_params: AnthropicSamplingParams,
     pub tool_result_media: ToolResultMedia,
     pub reasoning_efforts: Option<ReasoningEfforts>,
+    pub stop_in_text: StopInText,
     pub model_prefixes: Option<&'static [&'static str]>,
     pub extensions: Option<JsonObject>,
 }

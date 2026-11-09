@@ -8,8 +8,8 @@ use super::cache::cache_payload;
 use super::messages::build_messages;
 use super::text::unsupported;
 use crate::compat::{
-    IncludeOmit, OpenAIChatBuiltinTools, OpenAIChatReasoningOff, OpenAIChatThinkingFormat,
-    ResolvedOpenAIChatCompat, SendReject,
+    IncludeOmit, OpenAIChatBuiltinTools, OpenAIChatJsonSchema, OpenAIChatReasoningOff,
+    OpenAIChatThinkingFormat, ResolvedOpenAIChatCompat, SendReject,
 };
 use crate::errors::Lm15Error;
 use crate::types::{
@@ -163,7 +163,9 @@ pub(super) fn build_payload(
     }
     if let Some(format) = &config.response_format {
         let kind = format.get("type").and_then(Value::as_str).unwrap_or("");
-        if compat.json_schema == SendReject::Reject && kind != "json_object" {
+        if compat.json_schema == OpenAIChatJsonSchema::None
+            || (compat.json_schema == OpenAIChatJsonSchema::Reject && kind != "json_object")
+        {
             // The server accepts response_format.type=json_schema and
             // ignores it (Z.AI, live 2026-09-03; gpt-oss on Bedrock).
             return Err(unsupported(
@@ -295,7 +297,24 @@ fn prepare(
         &mut c.top_k,
         "the Chat Completions wire has no top_k field; server-native top_k belongs in extensions",
     )?;
-    if compat.json_schema == SendReject::Reject
+    if compat.json_schema == OpenAIChatJsonSchema::None {
+        // The server applies no response_format of either type and answers
+        // 200 with free text (Tinker, live 2026-11-09): MAP-8, never sent.
+        let kind = c
+            .response_format
+            .as_ref()
+            .and_then(|f| f.get("type").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
+        drop_value(
+            "config.response_format",
+            &mut c.response_format,
+            &format!(
+                "this server accepts response_format type {kind:?} and applies no response_format                  at all; describe the shape in the prompt"
+            ),
+        )?;
+    }
+    if compat.json_schema == OpenAIChatJsonSchema::Reject
         && c.response_format
             .as_ref()
             .is_some_and(|f| f.get("type").and_then(Value::as_str) == Some("json_schema"))
@@ -343,6 +362,18 @@ fn prepare(
         summary_auto(r)?;
         if let Some(levels) = compat.reasoning_efforts {
             clamp_effort(r, levels)?;
+        }
+        if !r.is_off() && compat.thinking_format == OpenAIChatThinkingFormat::ReasoningEffortSwitch
+        {
+            // An on/off switch with no levels (Tinker's Qwen, Kimi K2.6,
+            // Nemotron): a level's nearest value is "on" (MAP-13).
+            adapt(
+                "config.reasoning.effort",
+                Substituted,
+                Some(json!(r.effort.as_str())),
+                Some(json!("on")),
+                "this model's reasoning is an on/off switch with no levels; reasoning was switched on",
+            )?;
         }
     }
     if compat.forced_tool_choice == SendReject::Reject {
@@ -526,6 +557,9 @@ fn reasoning_on(
                 json!({"enable_thinking": true, "preserve_thinking": true}),
             );
         }
+        OpenAIChatThinkingFormat::ReasoningEffortSwitch => {
+            payload.insert("reasoning_effort".into(), Value::Bool(true));
+        }
         OpenAIChatThinkingFormat::None => {}
     }
 }
@@ -534,6 +568,15 @@ fn reasoning_on(
 /// must reach the wire; a server with no dial sends nothing.
 fn reasoning_off(payload: &mut Map<String, Value>, compat: &ResolvedOpenAIChatCompat) {
     match compat.thinking_format {
+        OpenAIChatThinkingFormat::ReasoningEffortSwitch => {
+            payload.insert("reasoning_effort".into(), Value::Bool(false));
+        }
+        // The switch's off where `none` is refused (compat reasoning_off "switch").
+        OpenAIChatThinkingFormat::ReasoningEffort
+            if compat.reasoning_off == OpenAIChatReasoningOff::Switch =>
+        {
+            payload.insert("reasoning_effort".into(), Value::Bool(false));
+        }
         OpenAIChatThinkingFormat::ReasoningEffort => {
             payload.insert("reasoning_effort".into(), Value::String("none".into()));
         }

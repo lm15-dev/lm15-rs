@@ -77,6 +77,9 @@ struct Binding {
     settings: HostSettings,
     account_id: Option<String>,
     adaptations: crate::adaptation::AdaptationPolicy,
+    /// A fine-tune's base model by model id (`RouterConfig::base_models`):
+    /// per-model rules match the model id first, then its base model's.
+    base_models: std::collections::BTreeMap<String, String>,
     /// Settings only a network source can supply (the Google project from
     /// the metadata server, AUTH-10 amended 2026-09-26), asked in the async
     /// `prepare` step before the first request.
@@ -164,12 +167,14 @@ impl Binding {
     /// The model string the dialect sends (see `ProviderLM::wire_model`).
     fn wire_model<'a>(&self, model: &'a str) -> &'a str {
         match model.split_once(':') {
+            // A URI (`tinker://…`) is one name, never a prefix (2026-11-09).
             Some((head, rest))
                 if (crate::registry::canonical_provider(head) == self.provider
                     || self
                         .aliases
                         .contains(&crate::registry::canonical_provider(head)))
-                    && !rest.is_empty() =>
+                    && !rest.is_empty()
+                    && !rest.starts_with("//") =>
             {
                 rest
             }
@@ -187,7 +192,28 @@ impl Binding {
             base_url,
             model: self.wire_model(&request.model),
             account_id: self.account_id.as_deref(),
+            base_model: self
+                .base_models
+                .get(self.wire_model(&request.model))
+                .map(String::as_str),
         }
+    }
+
+    /// MAP-22: `Config.stop` is set and the compat says the server returns
+    /// the matched sequence in the text (`stop_in_text = included`).
+    fn stop_returned_in_text(&self, request: &Request) -> bool {
+        if request.config.stop.is_empty() {
+            return false;
+        }
+        let policy = match &self.compat {
+            Compat::OpenAIChat(_) => {
+                let cx = self.context(request);
+                crate::dialects::openai_chat::resolve_compat(&cx, cx.model).stop_in_text
+            }
+            Compat::Anthropic(c) => c.resolve().stop_in_text,
+            _ => crate::compat::StopInText::Excluded,
+        };
+        policy == crate::compat::StopInText::Included
     }
 
     /// The context of a surface request that names no model.
@@ -201,6 +227,7 @@ impl Binding {
             base_url,
             model: "",
             account_id: self.account_id.as_deref(),
+            base_model: None,
         }
     }
 }
@@ -408,6 +435,24 @@ impl ProviderLM {
         self
     }
 
+    /// This adapter with a fine-tune → base model map (`RouterConfig::base_models`;
+    /// PROTOCOL.md `base_models`, 2026-11-09).
+    pub fn with_base_models(
+        mut self,
+        base_models: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        Arc::make_mut(&mut self.binding).base_models = base_models
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
+    /// The fine-tune → base model map this adapter was built with.
+    pub fn base_models(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.binding.base_models
+    }
+
     /// MAP-12 (module 4b): a Chat Completions request body → the canonical
     /// `Request`, under this binding's compat (per-model overrides applied)
     /// — the inverse of `build_request`'s body on the chat dialect. A
@@ -483,12 +528,18 @@ impl ProviderLM {
             return Err(self.http_error(status, &[], body));
         }
         let cx = self.binding.context(request);
-        reply_context(
+        let response = reply_context(
             dialect_for(self.dialect()).parse_response(request, &cx, body),
             status,
             &[],
             body,
-        )
+        )?;
+        // MAP-22: a server that returns the stop sequence it stopped at is cut here.
+        Ok(if self.binding.stop_returned_in_text(request) {
+            crate::stop::cut_returned_stop(response, &request.config.stop)
+        } else {
+            response
+        })
     }
 
     /// Parse a host-supplied response while retaining HTTP diagnostic evidence.
@@ -602,7 +653,18 @@ impl ProviderLM {
             body_prefix: Vec::new(),
             source: None,
             dialect: dialect_for(self.dialect()),
-            reader: dialect_for(self.dialect()).stream_reader(),
+            reader: {
+                let reader = dialect_for(self.dialect()).stream_reader();
+                // MAP-22: a server that returns the stop sequence it stopped at.
+                if self.binding.stop_returned_in_text(request) {
+                    Some(Box::new(crate::stop::StopCuttingReader::new(
+                        reader,
+                        &request.config.stop,
+                    )) as Box<dyn crate::wire::StreamReader>)
+                } else {
+                    reader
+                }
+            },
             binding: Arc::clone(&self.binding),
             request: request.clone(),
             sse: SseParser::new(),
@@ -2248,6 +2310,7 @@ pub struct LmBuilder {
     timeouts: crate::transport::Timeouts,
     max_connections: usize,
     budget_explicit: bool,
+    base_models: std::collections::BTreeMap<String, String>,
     /// Settings the router could not resolve offline and that a network
     /// source supplies before the first request (AUTH-10).
     deferred: Vec<(String, SettingResolver)>,
@@ -2276,7 +2339,24 @@ impl LmBuilder {
             timeouts: crate::transport::Timeouts::default(),
             max_connections: crate::transport::DEFAULT_MAX_CONNECTIONS,
             budget_explicit: false,
+            base_models: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// What each fine-tune was trained from, by model id
+    /// (`RouterConfig::base_models`, 2026-11-09): a model matching no
+    /// `model_overrides` entry follows its base model's entry (a Tinker
+    /// checkpoint takes its base family's reasoning switch). Never sent;
+    /// never discovered.
+    pub fn base_models(
+        mut self,
+        base_models: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        self.base_models = base_models
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
     }
 
     pub fn timeouts(mut self, timeouts: crate::transport::Timeouts) -> Self {
@@ -2431,6 +2511,7 @@ impl LmBuilder {
         let model = match request.model.split_once(':') {
             Some((head, rest))
                 if !rest.is_empty()
+                    && !rest.starts_with("//")
                     && (crate::registry::canonical_provider(head) == self.provider
                         || self
                             .aliases
@@ -2451,6 +2532,7 @@ impl LmBuilder {
                 .unwrap_or(self.dialect.default_base_url()),
             model,
             account_id: self.account_id.as_deref(),
+            base_model: None,
         };
         let scoring = self.dialect == DialectId::OpenaiChat
             && matches!(
@@ -2694,6 +2776,7 @@ impl LmBuilder {
                 settings,
                 account_id: self.account_id,
                 adaptations: self.adaptations,
+                base_models: self.base_models,
                 pending,
             }),
             credentials,

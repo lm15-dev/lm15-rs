@@ -339,6 +339,7 @@ pub struct RouterConfig {
     timeouts: crate::transport::Timeouts,
     max_connections: usize,
     budget_explicit: bool,
+    base_models: BTreeMap<String, String>,
     #[cfg(feature = "native")]
     auth: Option<crate::login::Auth>,
 }
@@ -361,6 +362,7 @@ impl Default for RouterConfig {
             timeouts: crate::transport::Timeouts::default(),
             max_connections: crate::transport::DEFAULT_MAX_CONNECTIONS,
             budget_explicit: false,
+            base_models: BTreeMap::new(),
             #[cfg(feature = "native")]
             auth: None,
         }
@@ -379,6 +381,28 @@ impl RouterConfig {
 
     pub fn adaptations(mut self, policy: crate::adaptation::AdaptationPolicy) -> Self {
         self.adaptations = policy;
+        self
+    }
+
+    /// A fine-tune's base model, by model id (`{"tinker://…": "Qwen/Qwen3.5-4B"}`):
+    /// a provider's per-model rules (a compat preset's `model_overrides`)
+    /// match the model id first, then its base model's. Never sent; never
+    /// discovered — the provider's catalog states it
+    /// (`ModelInfo.origin.base_model`). An empty id or base is refused when
+    /// the router is built.
+    pub fn base_models(
+        mut self,
+        base_models: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        for (model, base) in base_models {
+            let (model, base) = (model.into(), base.into());
+            if model.is_empty() || base.is_empty() {
+                self.configuration_errors.push(
+                    "base_models maps a model id to its base model id, both non-empty".into(),
+                );
+            }
+            self.base_models.insert(model, base);
+        }
         self
     }
 
@@ -857,7 +881,8 @@ impl LMRouter {
         };
         builder = builder
             .api_key("plan-only")
-            .adaptations(self.config.adaptations);
+            .adaptations(self.config.adaptations)
+            .base_models(self.config.base_models.clone());
         builder.plan(&routed(request, &resolution))
     }
 
@@ -1032,13 +1057,27 @@ pub fn openai_chat_model_string(model: &str) -> Result<String, Lm15Error> {
     if rest.is_empty() {
         return Ok(model.to_string());
     }
+    let registry_alias = crate::registry::PROVIDERS
+        .iter()
+        .find(|d| d.aliases.contains(&canonical_provider(head).as_str()))
+        .map(|d| d.id);
     match LITELLM_PROVIDER_PREFIXES
         .iter()
         .find(|(prefix, _)| *prefix == head)
+        .map(|(_, provider)| *provider)
+        .or(registry_alias)
     {
-        Some((_, provider)) => Ok(format!("{provider}:{rest}")),
+        Some(provider) => Ok(format!("{provider}:{rest}")),
         None => {
-            let mut known: Vec<&str> = LITELLM_PROVIDER_PREFIXES.iter().map(|(p, _)| *p).collect();
+            let mut known: Vec<&str> = LITELLM_PROVIDER_PREFIXES
+                .iter()
+                .map(|(p, _)| *p)
+                .chain(
+                    crate::registry::PROVIDERS
+                        .iter()
+                        .flat_map(|d| d.aliases.iter().copied()),
+                )
+                .collect();
             known.sort_unstable();
             Err(unknown_model(
                 format!(
@@ -1301,6 +1340,14 @@ fn env_key_for(definition: &ProviderDefinition, config: &RouterConfig) -> Option
         .or_else(|| env_keys.first().copied())
 }
 
+/// A model string whose first `:` is followed by `//`: a URI, one name
+/// (`tinker://<run>:train:0/sampler_weights/<n>`), never `provider:model`.
+pub fn is_uri(model: &str) -> bool {
+    model
+        .split_once(':')
+        .is_some_and(|(head, rest)| !head.is_empty() && rest.starts_with("//"))
+}
+
 fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> {
     if model.is_empty() {
         return Err(unknown_model(
@@ -1309,8 +1356,9 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
         ));
     }
 
-    // Rung 1: explicit provider prefix (split on the FIRST colon).
-    if let Some((head, rest)) = model.split_once(':') {
+    // Rung 1: explicit provider prefix (split on the FIRST colon). A URI
+    // (`scheme://…`) is one name and never a prefix (2026-11-09).
+    if let Some((head, rest)) = model.split_once(':').filter(|_| !is_uri(model)) {
         if let Some(definition) = config.declared(head) {
             if !rest.is_empty() {
                 return Ok(declared_resolution(
@@ -1470,7 +1518,7 @@ fn resolve(model: &str, config: &RouterConfig) -> Result<Resolution, Lm15Error> 
     }
 
     let mut hints = Vec::new();
-    if let Some((head, rest)) = model.split_once(':') {
+    if let Some((head, rest)) = model.split_once(':').filter(|_| !is_uri(model)) {
         let head = canonical_provider(head);
         if let Some(close) = closest_provider(&head) {
             hints.push(format!("Did you mean \"{close}:{rest}\"?"));
@@ -1651,7 +1699,8 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
             .compat(d.compat.clone())
             .base_url(&base_url)
             .api_key(credentials)
-            .adaptations(config.adaptations);
+            .adaptations(config.adaptations)
+            .base_models(config.base_models.clone());
         if let Some(t) = &config.transport {
             builder = builder.transport_shared(t.clone());
         }
@@ -1664,7 +1713,9 @@ fn build_lm(provider: &str, config: &RouterConfig) -> Result<ProviderLM, Lm15Err
     let policy = definition.access();
     let provider = definition.id;
     let env = |key: &str| config.env_value(key);
-    let mut builder = LmBuilder::for_entry(definition).adaptations(config.adaptations);
+    let mut builder = LmBuilder::for_entry(definition)
+        .adaptations(config.adaptations)
+        .base_models(config.base_models.clone());
     if let Some(transport) = &config.transport {
         builder = builder.transport_shared(Arc::clone(transport));
     }

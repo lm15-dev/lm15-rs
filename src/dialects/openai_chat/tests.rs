@@ -51,6 +51,7 @@ fn build_with(
         base_url: "https://x/v1",
         model: &request.model,
         account_id: None,
+        base_model: None,
     };
     // The historical refusal cells exercise the retained strict policy.
     // MAP-13 note/silent behavior has separate regression coverage.
@@ -200,6 +201,7 @@ fn headers_carry_content_type_and_the_policy_statics() {
         base_url: "https://api.x.ai/v1",
         model: "grok-4.6",
         account_id: None,
+        base_model: None,
     };
     let wire = OPENAI_CHAT
         .build(&request(Config::default()), false, &cx)
@@ -840,7 +842,7 @@ fn json_schema_send_and_reject() {
         json!({"type": "json_object"})
     );
     let mut compat = OpenAIChatCompat::EMPTY;
-    compat.json_schema = Some(Knob::Set(SendReject::Reject));
+    compat.json_schema = Some(Knob::Set(crate::compat::OpenAIChatJsonSchema::Reject));
     refuses(build(compat, &schema), "json_schema");
 }
 
@@ -1487,6 +1489,7 @@ fn chat_models_read_a_bare_array_and_refuse_an_unknown_shape() {
         base_url: "https://api.together.ai/v1",
         model: "",
         account_id: None,
+        base_model: None,
     };
     let ids = |body: &str| -> Vec<String> {
         OPENAI_CHAT

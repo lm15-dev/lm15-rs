@@ -302,6 +302,25 @@ fn clock_of(msg: &Map<String, Value>) -> Result<Option<FixedClock>, Failure> {
     }
 }
 
+/// PROTOCOL.md `base_models` (2026-11-09): a fine-tune's base model, by model id.
+fn base_models_of(msg: &Map<String, Value>) -> Vec<(String, String)> {
+    msg.get("base_models")
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        v.as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| v.to_string()),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn settings_of(msg: &Map<String, Value>) -> Option<HostSettings> {
     let settings = msg.get("settings")?.as_object()?;
     Some(
@@ -405,7 +424,7 @@ fn surface_adapter(
     if definition.id == "openai-codex" {
         builder = builder.account_id("test-account");
     }
-    Ok(builder.build()?)
+    Ok(builder.base_models(base_models_of(msg)).build()?)
 }
 
 fn op_file_op_build(msg: &Map<String, Value>) -> Result<Value, Failure> {
@@ -810,7 +829,8 @@ fn parse_adapter(msg: &Map<String, Value>) -> Result<lm15::ProviderLM, Failure> 
         settings_of(msg),
         clock.map(|c| Box::new(c) as Box<dyn lm15::wire::Clock + Send + Sync>),
     )?
-    .with_adaptations(adaptation_policy(msg)?))
+    .with_adaptations(adaptation_policy(msg)?)
+    .with_base_models(base_models_of(msg)))
 }
 
 fn body_of(msg: &Map<String, Value>) -> Result<Vec<u8>, Failure> {

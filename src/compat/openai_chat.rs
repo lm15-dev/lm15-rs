@@ -3,7 +3,7 @@
 //! `for_model` applied the door's per-model overrides.
 
 use super::{
-    IncludeOmit, JsonObject, Knob, OpenAICacheControl, ReasoningEfforts, SendReject,
+    IncludeOmit, JsonObject, Knob, OpenAICacheControl, ReasoningEfforts, SendReject, StopInText,
     ToolResultMedia,
 };
 
@@ -75,6 +75,10 @@ pub enum OpenAIChatThinkingFormat {
     Kimi,
     Qwen,
     QwenChatTemplate,
+    /// `reasoning_effort` is an on/off switch, `true`/`false`, no levels
+    /// (Tinker's Qwen 3/3.5/3.6, Kimi K2.6, Nemotron; live 2026-11-09). Off
+    /// is `false`; an effort word is `true`, recorded as substituted.
+    ReasoningEffortSwitch,
 }
 
 /// `lm15/compat.py:342` `OpenAIChatBuiltinTools`.
@@ -132,6 +136,9 @@ impl OpenAIChatUserField {
 pub enum OpenAIChatReasoningOff {
     Send,
     Lowest,
+    /// Off is `reasoning_effort: false` under the `reasoning_effort` format
+    /// (Tinker's Qwen 3.8 and DeepSeek V4.1 refuse `none`; 2026-11-09).
+    Switch,
 }
 
 impl OpenAIChatReasoningOff {
@@ -139,6 +146,7 @@ impl OpenAIChatReasoningOff {
         match self {
             OpenAIChatReasoningOff::Send => "send",
             OpenAIChatReasoningOff::Lowest => "lowest",
+            OpenAIChatReasoningOff::Switch => "switch",
         }
     }
 }
@@ -165,8 +173,25 @@ impl OpenAIChatReasoningUsage {
 
 /// `lm15/compat.py:356` `OpenAIChatForcedToolChoice`.
 pub type OpenAIChatForcedToolChoice = SendReject;
-/// `lm15/compat.py:361` `OpenAIChatJsonSchema`.
-pub type OpenAIChatJsonSchema = SendReject;
+/// `lm15/compat.py` `OpenAIChatJsonSchema`: `None` (2026-11-09) is a server
+/// that applies no `response_format` at all (Tinker): either type is dropped
+/// and recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OpenAIChatJsonSchema {
+    Send,
+    Reject,
+    None,
+}
+
+impl OpenAIChatJsonSchema {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OpenAIChatJsonSchema::Send => "send",
+            OpenAIChatJsonSchema::Reject => "reject",
+            OpenAIChatJsonSchema::None => "none",
+        }
+    }
+}
 
 /// Partial OpenAI Chat Completions compat (`lm15/compat.py:372-469`).
 ///
@@ -194,6 +219,7 @@ pub struct OpenAIChatCompat {
     pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
     pub reasoning_off: Option<Knob<OpenAIChatReasoningOff>>,
     pub reasoning_usage: Option<Knob<OpenAIChatReasoningUsage>>,
+    pub stop_in_text: Option<Knob<StopInText>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
@@ -218,6 +244,7 @@ pub struct ChatModelOverride {
     pub token_scoring: Option<Knob<OpenAIChatTokenScoring>>,
     pub reasoning_off: Option<Knob<OpenAIChatReasoningOff>>,
     pub reasoning_usage: Option<Knob<OpenAIChatReasoningUsage>>,
+    pub stop_in_text: Option<Knob<StopInText>>,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub tool_result_media: Option<Knob<ToolResultMedia>>,
 }
@@ -238,6 +265,7 @@ impl ChatModelOverride {
         token_scoring: None,
         reasoning_off: None,
         reasoning_usage: None,
+        stop_in_text: None,
         reasoning_efforts: None,
         tool_result_media: None,
     };
@@ -263,6 +291,7 @@ impl OpenAIChatCompat {
         token_scoring: None,
         reasoning_off: None,
         reasoning_usage: None,
+        stop_in_text: None,
         reasoning_efforts: None,
         routing: None,
         extensions: None,
@@ -277,13 +306,27 @@ impl OpenAIChatCompat {
     /// This compat with the first matching `model_overrides` entry applied
     /// (`lm15/compat.py:451-456`); the overrides are consumed.
     pub fn for_model(&self, model: &str) -> OpenAIChatCompat {
+        self.for_model_with_base(model, None)
+    }
+
+    /// As [`OpenAIChatCompat::for_model`], and a fine-tune whose own id
+    /// matches no entry follows its declared base model's entry
+    /// (`RouterConfig::base_models`; 2026-11-09).
+    pub fn for_model_with_base(&self, model: &str, base_model: Option<&str>) -> OpenAIChatCompat {
         let mut out = self.clone();
         out.model_overrides = &[];
-        if let Some((_, knobs)) = self
+        let found = self
             .model_overrides
             .iter()
             .find(|(prefix, _)| model.starts_with(prefix))
-        {
+            .or_else(|| {
+                base_model.and_then(|base| {
+                    self.model_overrides
+                        .iter()
+                        .find(|(prefix, _)| base.starts_with(prefix))
+                })
+            });
+        if let Some((_, knobs)) = found {
             macro_rules! apply {
                 ($($field:ident),+) => {
                     $(if knobs.$field.is_some() { out.$field = knobs.$field; })+
@@ -304,6 +347,7 @@ impl OpenAIChatCompat {
                 token_scoring,
                 reasoning_off,
                 reasoning_usage,
+                stop_in_text,
                 reasoning_efforts,
                 tool_result_media
             );
@@ -347,13 +391,14 @@ impl OpenAIChatCompat {
             cache_control: Knob::resolve(self.cache_control, OpenAICacheControl::OpenAI),
             user_field: Knob::resolve(self.user_field, OpenAIChatUserField::User),
             forced_tool_choice: Knob::resolve(self.forced_tool_choice, SendReject::Send),
-            json_schema: Knob::resolve(self.json_schema, SendReject::Send),
+            json_schema: Knob::resolve(self.json_schema, OpenAIChatJsonSchema::Send),
             token_scoring: Knob::resolve(self.token_scoring, OpenAIChatTokenScoring::None),
             reasoning_off: Knob::resolve(self.reasoning_off, OpenAIChatReasoningOff::Send),
             reasoning_usage: Knob::resolve(
                 self.reasoning_usage,
                 OpenAIChatReasoningUsage::InCompletion,
             ),
+            stop_in_text: Knob::resolve(self.stop_in_text, StopInText::Excluded),
             reasoning_efforts: self.reasoning_efforts,
             routing: self.routing.clone(),
             extensions: self.extensions.clone(),
@@ -382,6 +427,7 @@ pub struct ResolvedOpenAIChatCompat {
     pub token_scoring: OpenAIChatTokenScoring,
     pub reasoning_off: OpenAIChatReasoningOff,
     pub reasoning_usage: OpenAIChatReasoningUsage,
+    pub stop_in_text: StopInText,
     pub reasoning_efforts: Option<ReasoningEfforts>,
     pub routing: Option<JsonObject>,
     pub extensions: Option<JsonObject>,
@@ -424,7 +470,7 @@ mod tests {
         assert_eq!(resolved.thinking_replay, OpenAIChatThinkingReplay::AsText);
         assert_eq!(resolved.builtin_tools, OpenAIChatBuiltinTools::Reject);
         assert_eq!(resolved.user_field, OpenAIChatUserField::User);
-        assert_eq!(resolved.json_schema, SendReject::Send);
+        assert_eq!(resolved.json_schema, OpenAIChatJsonSchema::Send);
     }
 
     #[test]
@@ -433,10 +479,10 @@ mod tests {
         let oss = bedrock.for_model("openai.gpt-oss-20b-1:0");
         assert!(oss.model_overrides.is_empty());
         assert_eq!(oss.resolve().forced_tool_choice, SendReject::Reject);
-        assert_eq!(oss.resolve().json_schema, SendReject::Reject);
+        assert_eq!(oss.resolve().json_schema, OpenAIChatJsonSchema::Reject);
         let gemma = bedrock.for_model("google.gemma-3-27b").resolve();
         assert_eq!(gemma.forced_tool_choice, SendReject::Reject);
-        assert_eq!(gemma.json_schema, SendReject::Send);
+        assert_eq!(gemma.json_schema, OpenAIChatJsonSchema::Send);
         let other = bedrock.for_model("deepseek.v3").resolve();
         assert_eq!(other.forced_tool_choice, SendReject::Send);
         let mantle = OpenAIChatCompat::preset("bedrock-mantle").unwrap();
@@ -472,8 +518,8 @@ mod tests {
                 .builtin_tools,
             OpenAIChatBuiltinTools::Groq
         );
-        assert_eq!(OPENAI_CHAT_PRESETS.len(), 19); // + lmstudio (2026-09-11), + four inference hosts (2026-09-26)
-        assert_eq!(OPENAI_CHAT_PRESET_BASE_URLS.len(), 16);
+        assert_eq!(OPENAI_CHAT_PRESETS.len(), 20); // + lmstudio (2026-09-11), + four inference hosts (2026-09-26), + tinker (2026-11-09)
+        assert_eq!(OPENAI_CHAT_PRESET_BASE_URLS.len(), 17);
         assert_eq!(
             OpenAIChatCompat::preset("ollama")
                 .unwrap()

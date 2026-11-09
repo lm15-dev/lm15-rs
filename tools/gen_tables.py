@@ -181,7 +181,8 @@ class Emitter:
             raise SystemExit(f"{r['id']}: a registry row with a compat object has no ProviderDefinition form")
         return ("ProviderDefinition { "
                 f"id: {s(r['id'])}, dialect: {self.c.variant('DialectId', r['dialect'])}, kind: EntryKind::{kind}, "
-                f"compat: {opt(compat)}, placeholder_key: {opt(r['placeholder_key'])}, note: {s(r['note'])} }}")
+                f"compat: {opt(compat)}, placeholder_key: {opt(r['placeholder_key'])}, aliases: {strs(r['aliases'])}, "
+                f"note: {s(r['note'])} }}")
 
 
 def render(tables: dict, digest: str, crate: Crate) -> str:

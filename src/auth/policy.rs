@@ -602,7 +602,7 @@ mod tests {
         let mut names = known_providers();
         names.dedup();
         assert_eq!(names.len(), ACCESS_POLICIES.len());
-        assert_eq!(ACCESS_POLICIES.len(), 36); // + the four inference hosts (2026-09-26)
+        assert_eq!(ACCESS_POLICIES.len(), 38); // + the four inference hosts (2026-09-26), + tinker, tinker-anthropic (2026-11-09)
     }
 
     #[test]

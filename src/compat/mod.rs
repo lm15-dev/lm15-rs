@@ -131,6 +131,25 @@ impl SendReject {
     }
 }
 
+/// MAP-22 (`lm15/compat.py` `StopInText`, 2026-11-09): whether the server
+/// returns the stop sequence it stopped at. `Excluded` is the dialects' own
+/// rule; `Included` (Tinker, both doors) makes lm15 cut the text at the first
+/// stop sequence where replies become canonical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StopInText {
+    Excluded,
+    Included,
+}
+
+impl StopInText {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StopInText::Excluded => "excluded",
+            StopInText::Included => "included",
+        }
+    }
+}
+
 /// `lm15/compat.py:78` `OpenAICacheControl` (shared by both OpenAI dialects).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpenAICacheControl {

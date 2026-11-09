@@ -41,6 +41,7 @@ fn typesafe_cx<'a>(settings: &'a HostSettings, compat: &'a Compat) -> BuildConte
         base_url: "https://api.typesafe.ai",
         model: "jev-preview",
         account_id: None,
+        base_model: None,
     }
 }
 fn header(w: &lm15::wire::WireRequest) -> Option<String> {
@@ -264,6 +265,7 @@ async fn the_trie_measures_the_yes_no_and_generation_answers_the_box() {
         base_url: "http://server/v1",
         model: "m",
         account_id: None,
+        base_model: None,
     };
     let mut request = Request::new("m", vec![Message::user("a kitchen").unwrap()]).unwrap();
     request.config.response_format = Some(find());

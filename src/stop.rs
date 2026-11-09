@@ -180,6 +180,59 @@ impl StopCutter {
 }
 /// Utility for already materialized responses. Network `complete` must instead
 /// stream underneath when stop is client-side, to close the source at the cut.
+/// MAP-22: the stream reader of a server that stops at a stop sequence and
+/// returns it in the text. Text is cut at the first sequence; text after the
+/// cut is dropped; every other event (usage, the end) passes, because the
+/// server has already stopped. Wraps the dialect's own reader, if any.
+pub struct StopCuttingReader {
+    inner: Option<Box<dyn crate::wire::StreamReader>>,
+    cutter: StopCutter,
+}
+
+impl StopCuttingReader {
+    pub fn new(inner: Option<Box<dyn crate::wire::StreamReader>>, stop: &[String]) -> Self {
+        Self {
+            inner,
+            cutter: StopCutter::new(stop),
+        }
+    }
+}
+
+impl crate::wire::StreamReader for StopCuttingReader {
+    fn after_frame(
+        &mut self,
+        frame: &crate::sse::SseEvent,
+        events: &mut Vec<StreamEvent>,
+    ) -> Result<(), crate::errors::Lm15Error> {
+        if let Some(inner) = &mut self.inner {
+            inner.after_frame(frame, events)?;
+        }
+        let mut out = Vec::new();
+        for event in events.drain(..) {
+            if self.cutter.is_cut() {
+                if text(&event).is_none() {
+                    out.push(event);
+                }
+                continue;
+            }
+            out.extend(self.cutter.step(event).events);
+        }
+        *events = out;
+        Ok(())
+    }
+}
+
+/// MAP-22: the reply of a server that stopped at a stop sequence and
+/// returned it: the text is cut as for a client-side stop, and the usage the
+/// server reported stays (it read the whole reply; a client-side cut never
+/// does).
+pub fn cut_returned_stop(response: Response, stop: &[String]) -> Response {
+    let usage = response.usage;
+    let mut out = apply_client_side_stop(response, stop);
+    out.usage = usage;
+    out
+}
+
 pub fn apply_client_side_stop(mut response: Response, stop: &[String]) -> Response {
     let joined: String = response
         .message

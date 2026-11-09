@@ -115,6 +115,7 @@ fn with_cx<T>(b: &Binding, f: impl FnOnce(&BuildContext<'_>) -> T) -> T {
         base_url: "https://example.invalid/v1",
         model: b.model,
         account_id: None,
+        base_model: None,
     };
     f(&cx)
 }

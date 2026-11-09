@@ -288,7 +288,7 @@ pub(crate) fn resolve_compat(cx: &BuildContext<'_>, model: &str) -> ResolvedOpen
     if partial.model_overrides.is_empty() {
         partial.resolve()
     } else {
-        partial.for_model(model).resolve()
+        partial.for_model_with_base(model, cx.base_model).resolve()
     }
 }
 

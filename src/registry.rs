@@ -90,6 +90,9 @@ pub struct ProviderDefinition {
     pub compat: Option<&'static str>,
     /// The key a keyless local server accepts (AUTH-1 last rung).
     pub placeholder_key: Option<&'static str>,
+    /// Extra input spellings (`alias:model`, litellm's `alias/model`), never
+    /// emitted (2026-11-09: `thinkingmachines` names `tinker`).
+    pub aliases: &'static [&'static str],
     pub note: &'static str,
 }
 
@@ -104,10 +107,15 @@ pub fn canonical_provider(name: &str) -> String {
     name.replace('_', "-")
 }
 
-/// The definition for a provider string in either spelling.
+/// The definition for a provider string in either spelling, or one of its
+/// aliases (a registry entry's aliases route like its id).
 pub fn lookup(name: &str) -> Option<&'static ProviderDefinition> {
     let canonical = canonical_provider(name);
-    PROVIDERS.iter().find(|d| d.id == canonical)
+    PROVIDERS.iter().find(|d| d.id == canonical).or_else(|| {
+        PROVIDERS
+            .iter()
+            .find(|d| d.aliases.contains(&canonical.as_str()))
+    })
 }
 
 impl ProviderDefinition {
@@ -204,7 +212,8 @@ mod tests {
             DialectId::Anthropic
         );
         assert!(lookup("nope").is_none());
-        assert_eq!(PROVIDERS.len(), 36); // + the four inference hosts (2026-09-26)
+        assert_eq!(PROVIDERS.len(), 38); // + the four inference hosts (2026-09-26), + tinker, tinker-anthropic (2026-11-09)
+        assert_eq!(lookup("thinkingmachines").unwrap().id, "tinker"); // a registry alias
     }
 
     /// Every registry entry has a policy of the same id, and the hosted

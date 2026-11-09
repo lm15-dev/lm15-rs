@@ -1117,18 +1117,29 @@ pub const MODEL_NOT_FOUND_FORMS: &[ModelNotFoundForm] = &[
         "",
         " doesn't exist or isn't accessible.",
     ), // Parasail
+    // Tinker (2026-11-09). An empty code matches an error that carries none
+    // (the contract's `code: null`; MAP-21 detail bodies).
+    form("", "Sampling is not supported for ", "", ""),
+    form(
+        "invalid_request_error",
+        "Sampling is not supported for ",
+        "",
+        "",
+    ),
+    form("", "Weights not found for model_path ", "", ""),
+    form("", "model_path '", "' is not a valid tinker path.", ""),
 ];
 
 /// Whether an error is one of the pinned MAP-15 forms: the code matches
-/// exactly and the message passes every text test the form gives.
+/// exactly (a form whose code is empty matches an error with none) and the
+/// message passes every text test the form gives.
 pub fn is_pinned_model_not_found(provider_code: &str, message: &str) -> bool {
-    !provider_code.is_empty()
-        && MODEL_NOT_FOUND_FORMS.iter().any(|f| {
-            f.code == provider_code
-                && message.starts_with(f.prefix)
-                && message.contains(f.contains)
-                && message.ends_with(f.suffix)
-        })
+    MODEL_NOT_FOUND_FORMS.iter().any(|f| {
+        f.code == provider_code
+            && message.starts_with(f.prefix)
+            && message.contains(f.contains)
+            && message.ends_with(f.suffix)
+    })
 }
 
 /// One pinned MAP-18 form of a provider's "this key is not valid" answer that
@@ -1212,6 +1223,63 @@ const OPENAI_MODEL_ERROR_CODES: &[&str] = &[
 const OPENAI_BILLING_CODES: &[&str] = &["insufficient_quota", "1113"];
 const OPENAI_BILLING_TYPES: &[&str] = &["insufficient_quota", "exceeded_current_quota_error"];
 
+/// MAP-21: the message of an error body in FastAPI's shape, which has no
+/// `error` envelope: `{"detail": "<text>"}` (optionally with `errors`, a
+/// list of `{loc, msg}`), or `{"detail": [{loc, msg}]}`. An entry reads
+/// `<loc>: <msg>` (a list `loc` joined with " -> "); entries join with "; "
+/// and follow the text after ": ". `None` when the body is not that shape.
+pub fn detail_message(data: &Value) -> Option<String> {
+    let object = data.as_object()?;
+    if object.contains_key("error") {
+        return None;
+    }
+    fn entries(items: Option<&Value>) -> Vec<String> {
+        let Some(Value::Array(items)) = items else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .filter_map(|item| {
+                let item = item.as_object()?;
+                let msg = item.get("msg")?.as_str()?;
+                let loc = match item.get("loc") {
+                    Some(Value::Array(parts)) => parts
+                        .iter()
+                        .map(|p| match p {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" -> "),
+                    Some(Value::String(s)) => s.clone(),
+                    _ => String::new(),
+                };
+                Some(if loc.is_empty() {
+                    msg.to_string()
+                } else {
+                    format!("{loc}: {msg}")
+                })
+            })
+            .collect()
+    }
+    match object.get("detail") {
+        Some(Value::String(detail)) if !detail.trim().is_empty() => {
+            let found = entries(object.get("errors"));
+            let head = detail.trim().to_string();
+            Some(if found.is_empty() {
+                head
+            } else {
+                format!("{head}: {}", found.join("; "))
+            })
+        }
+        Some(list @ Value::Array(_)) => {
+            let found = entries(Some(list));
+            (!found.is_empty()).then(|| found.join("; "))
+        }
+        _ => None,
+    }
+}
+
 fn normalize_openai_shape(ctx: &Context, status: u16, body: &str, codex: bool) -> Lm15Error {
     if codex {
         if let Some(err) = normalize_detail_error(ctx, status, body) {
@@ -1233,6 +1301,10 @@ fn normalize_openai_shape(ctx: &Context, status: u16, body: &str, codex: bool) -
         }
         _ => (String::new(), String::new(), String::new()),
     };
+    if msg.is_empty() {
+        // MAP-21: FastAPI servers (Tinker) answer {"detail": ...} with no envelope.
+        msg = detail_message(&data).unwrap_or_default();
+    }
     let provider_code = if !code.is_empty() {
         Some(code.clone())
     } else if !err_type.is_empty() {
@@ -1381,6 +1453,10 @@ fn normalize_anthropic(ctx: &Context, status: u16, body: &str) -> Lm15Error {
             }
         }),
     };
+    if msg.is_empty() {
+        // MAP-21: FastAPI's {"detail": ...} (Tinker's Messages door, 401 and 404).
+        msg = detail_message(&Value::Object(data.clone())).unwrap_or_default();
+    }
     let request_id = Some(scalar_text(data.get("request_id")));
     let provider_code = Some(err_type.clone());
     if ctx.provider == "claude-code" {

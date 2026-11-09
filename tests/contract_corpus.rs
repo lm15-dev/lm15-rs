@@ -116,6 +116,6 @@ fn error_cases_normalize_to_pinned_class_and_code() {
             }
         }
     }
-    assert_eq!(total, 110, "all error vectors at the target CONTRACT_PIN"); // +1 2026-10-15: typesafe.box_older_model
+    assert_eq!(total, 127, "all error vectors at the target CONTRACT_PIN"); // +1 2026-10-15: typesafe.box_older_model; +17 2026-11-09: tinker, tinker-anthropic
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -179,6 +179,10 @@ pub struct BuildContext<'a> {
     /// The ChatGPT account id bound to this adapter (the `chatgpt-codex`
     /// backend); `None` lets `emit` read it from the token's claim.
     pub account_id: Option<&'a str>,
+    /// What `model` was fine-tuned from, when the caller declared it
+    /// (`RouterConfig::base_models`; 2026-11-09): per-model rules match the
+    /// model first, then this.
+    pub base_model: Option<&'a str>,
 }
 
 /// A wire codec. Implementations are stateless values; everything that
@@ -650,8 +654,11 @@ pub trait Surfaces {
 /// `provider:` prefix naming this binding (either spelling) is removed.
 pub fn wire_model<'m>(provider: &str, model: &'m str) -> &'m str {
     match model.split_once(':') {
+        // A URI (`tinker://…`) is one name, never a prefix (2026-11-09).
         Some((head, rest))
-            if crate::registry::canonical_provider(head) == provider && !rest.is_empty() =>
+            if crate::registry::canonical_provider(head) == provider
+                && !rest.is_empty()
+                && !rest.starts_with("//") =>
         {
             rest
         }
@@ -675,8 +682,16 @@ impl<'a> BuildContext<'a> {
     /// This context for a nested request (a batch entry): the same
     /// binding, that request's wire model.
     pub fn for_model(&self, model: &'a str) -> BuildContext<'a> {
+        let model = wire_model(self.provider, model);
         BuildContext {
-            model: wire_model(self.provider, model),
+            // The declared base model is the outer request's: kept for the
+            // same model only (a batch entry naming another model has none).
+            base_model: if model == self.model {
+                self.base_model
+            } else {
+                None
+            },
+            model,
             ..self.clone()
         }
     }
@@ -720,14 +735,30 @@ pub fn model_infos_from_entries(
         .filter_map(|entry| {
             let object = entry.as_object()?;
             let id = id_of(object).filter(|id| !id.is_empty())?;
+            // MAP-23: an entry naming the model it was trained from (Tinker's
+            // checkpoints) is a fine-tune.
+            let base = object
+                .get("base_model")
+                .and_then(Value::as_str)
+                .filter(|b| !b.is_empty() && *b != id)
+                .map(str::to_string);
+            let origin = match base {
+                Some(base) => ModelOrigin {
+                    r#type: "fine-tune".to_string(),
+                    base_model: Some(base),
+                    provider_data: Some(object.clone()),
+                    ..Default::default()
+                },
+                None => ModelOrigin {
+                    provider_data: Some(object.clone()),
+                    ..Default::default()
+                },
+            };
             Some(ModelInfo {
                 id,
                 provider: provider.to_string(),
                 api_family: api_family.to_string(),
-                origin: ModelOrigin {
-                    provider_data: Some(object.clone()),
-                    ..Default::default()
-                },
+                origin,
                 ..Default::default()
             })
         })
@@ -1183,6 +1214,7 @@ mod tests {
             base_url,
             model: "m",
             account_id: None,
+            base_model: None,
         }
     }
 

@@ -86,6 +86,7 @@ fn direct_dialect_hooks_cannot_bypass_stop_guard() {
         base_url: "https://api.openai.com/v1",
         model: "gpt-4.1",
         account_id: None,
+        base_model: None,
     };
     for policy in [
         AdaptationPolicy::Note,

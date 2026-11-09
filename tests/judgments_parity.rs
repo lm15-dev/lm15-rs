@@ -41,6 +41,7 @@ fn context<'a>(settings: &'a HostSettings, compat: &'a Compat) -> BuildContext<'
         base_url: "https://api.typesafe.ai",
         model: "jev-latest",
         account_id: None,
+        base_model: None,
     }
 }
 fn reply() -> Value {
@@ -455,6 +456,7 @@ async fn scoring_driver_tokenizes_every_candidate_then_batches_once() {
         base_url: "http://server/v1",
         model: "m",
         account_id: None,
+        base_model: None,
     };
     let mut request = Request::new("m", vec![Message::user("state").unwrap()]).unwrap();
     request.config.response_format = Some(judgments(object(json!({"ok":yes_no("Yes?")}))).unwrap());
@@ -512,6 +514,7 @@ async fn mixed_scoring_answers_ordinary_properties_without_scoring_them() {
         base_url: "http://server/v1",
         model: "m",
         account_id: None,
+        base_model: None,
     };
     let mut request = Request::new("m", vec![Message::user("state").unwrap()]).unwrap();
     request.config.response_format =
@@ -568,6 +571,7 @@ async fn malformed_scoring_reply_keeps_http_evidence() {
         base_url: "http://server/v1",
         model: "m",
         account_id: None,
+        base_model: None,
     };
     let mut request = Request::new("m", vec![Message::user("state").unwrap()]).unwrap();
     request.config.response_format = Some(judgments(object(json!({"ok":yes_no("Yes?")}))).unwrap());

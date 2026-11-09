@@ -985,6 +985,7 @@ fn reasoning(
         }
         OpenAIChatThinkingFormat::Qwen => vec!["enable_thinking"],
         OpenAIChatThinkingFormat::QwenChatTemplate => vec!["chat_template_kwargs"],
+        OpenAIChatThinkingFormat::ReasoningEffortSwitch => vec!["reasoning_effort"],
         OpenAIChatThinkingFormat::None => vec![],
     };
     if compat.builtin_tools == OpenAIChatBuiltinTools::Groq {
@@ -1007,8 +1008,37 @@ fn reasoning(
 
     let mut effort: Option<ReasoningEffort> = None;
     let mut off = false;
-    if let Some(word) = body.get("reasoning_effort") {
+    if let Some(Value::Bool(flag)) = body.get("reasoning_effort") {
+        // The switch's spelling (reasoning_effort_switch; reasoning_off
+        // "switch"): false is off; true has no level to read back.
+        let switch_spelled = compat.thinking_format
+            == OpenAIChatThinkingFormat::ReasoningEffortSwitch
+            || (compat.thinking_format == OpenAIChatThinkingFormat::ReasoningEffort
+                && compat.reasoning_off == crate::compat::OpenAIChatReasoningOff::Switch);
+        if !switch_spelled {
+            return Err(refuse(
+                provider,
+                &format!("reasoning_effort = {flag}"),
+                "this server's reasoning_effort is a word, not a switch",
+            ));
+        }
+        if *flag {
+            return Err(refuse(
+                provider,
+                "reasoning_effort = true",
+                "this switch has no effort level; lm15's dial is a level (MAP-7) — set config.reasoning yourself",
+            ));
+        }
+        off = true;
+    } else if let Some(word) = body.get("reasoning_effort") {
         let word = as_str(Some(word), "reasoning_effort")?;
+        if compat.thinking_format == OpenAIChatThinkingFormat::ReasoningEffortSwitch {
+            return Err(refuse(
+                provider,
+                &format!("reasoning_effort = {word:?}"),
+                "this server's reasoning_effort is an on/off switch (true or false)",
+            ));
+        }
         if word == "none" {
             off = true;
         } else {
