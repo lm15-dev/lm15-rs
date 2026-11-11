@@ -187,7 +187,9 @@ fn payload(request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error>
     }
     if plan.resource.is_none() {
         if let Some(system) = &request.system {
-            body.insert("systemInstruction".into(), system_instruction(system, cx)?);
+            if let Some(instruction) = system_instruction(system, cx)? {
+                body.insert("systemInstruction".into(), instruction);
+            }
         }
     }
     let mut generation = generation_config(request, cx)?;

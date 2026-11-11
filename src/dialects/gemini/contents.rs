@@ -11,8 +11,9 @@
 //! and inlined; tool call → `functionCall`; tool result →
 //! `functionResponse` with `{"result": <text>}`; thinking → assistant
 //! text (MAP-7.8 decision G), or a `thought` part when it carries a
-//! `gemini:thought_signature` state; refusal → text; citation → its text
-//! rendering. A `gemini:thought_signature` state on a text or tool-call
+//! `gemini:thought_signature` state; refusal → text; citation → the text
+//! it quotes. A part that would be only `{"text": ""}` writes nothing,
+//! and a message left with no part is not written (MAP-24). A `gemini:thought_signature` state on a text or tool-call
 //! part replays as `thoughtSignature` (MAP-7.8; required on 3.x function
 //! calls).
 //!
@@ -65,6 +66,9 @@ fn text_only(parts: &[Part], slot: &str, cx: &BuildContext<'_>) -> Result<String
     let mut out = Vec::new();
     for part in parts {
         match part {
+            // MAP-24: an empty text part writes nothing, a joining newline
+            // included.
+            Part::Text(t) if t.text.is_empty() => {}
             Part::Text(t) => out.push(t.text.clone()),
             Part::Data(d) => out.push(d.value.to_string()),
             Part::Citation(c) => {
@@ -87,20 +91,24 @@ fn text_only(parts: &[Part], slot: &str, cx: &BuildContext<'_>) -> Result<String
     Ok(out.join("\n"))
 }
 
-/// `systemInstruction: {"parts": [{"text": ...}]}`.
+/// `systemInstruction: {"parts": [{"text": ...}]}`, or `None` for a system
+/// prompt with no characters (MAP-24).
 pub fn system_instruction(
     system: &SystemContent,
     cx: &BuildContext<'_>,
-) -> Result<Value, Lm15Error> {
+) -> Result<Option<Value>, Lm15Error> {
     let text = match system {
         SystemContent::Text(text) => text.clone(),
         SystemContent::Parts(parts) => text_only(parts, "systemInstruction", cx)?,
     };
+    if text.is_empty() {
+        return Ok(None);
+    }
     let mut part = Map::new();
     part.insert("text".into(), Value::String(text));
     let mut out = Map::new();
     out.insert("parts".into(), Value::Array(vec![Value::Object(part)]));
-    Ok(Value::Object(out))
+    Ok(Some(Value::Object(out)))
 }
 
 fn media_part(
@@ -216,8 +224,15 @@ fn function_response(
                 text.push(p.clone());
             }
         }
+        if !media.is_empty() {
+            // MAP-24: beside media, an empty text part writes nothing (the
+            // media is the result); alone, it is the empty output and is
+            // written.
+            text.retain(|p| !matches!(p, Part::Text(t) if t.text.is_empty()));
+        }
         (media, text)
     };
+    let only_media = !media.is_empty() && text.is_empty();
     for p in &media {
         if !matches!(p, Part::Image(_) | Part::Document(_)) {
             return Err(unsupported(
@@ -236,7 +251,7 @@ fn function_response(
     let mut response = Map::new();
     if part.is_error {
         response.insert("error".into(), Value::String(text));
-    } else if !media.is_empty() && text.is_empty() && part.content.iter().all(content::is_media) {
+    } else if only_media {
         // the media IS the result; no fabricated text (live 2026-09-07: accepted)
     } else {
         response.insert("result".into(), Value::String(text));
@@ -332,15 +347,38 @@ fn part(part: &Part, request: &Request, cx: &BuildContext<'_>) -> Result<Value, 
             text_part(&t.text, signature, thought)
         }
         Part::Refusal(r) => text_part(&r.text, None, false),
-        Part::Citation(c) => text_part(&citation_text(c), None, false),
+        // A citation in a message replays as the text it quotes, as the
+        // reference does (one that quotes nothing is an empty part, which
+        // `message` leaves out: MAP-24).
+        Part::Citation(c) => text_part(c.text.as_deref().unwrap_or_default(), None, false),
     })
 }
 
-/// One message on the wire (`_message`, `lm15/providers/gemini.py:604-608`).
-fn message(msg: &Message, request: &Request, cx: &BuildContext<'_>) -> Result<Value, Lm15Error> {
+/// MAP-24 on this wire: a part that is only `{"text": ""}`. One that also
+/// carries a `thoughtSignature` is state this dialect consumes and goes
+/// back as the model sent it.
+fn writes_nothing(wire_part: &Value) -> bool {
+    wire_part.as_object().is_some_and(|part| {
+        part.get("text").and_then(Value::as_str) == Some("")
+            && part.keys().all(|key| key == "text" || key == "thought")
+    })
+}
+
+/// One message on the wire (`_message`), or `None` when it has nothing to
+/// write (MAP-24): a content with no parts is refused ("must include at
+/// least one parts field", live 2026-11-11), so a message whose parts all
+/// write nothing is not written.
+fn message(
+    msg: &Message,
+    request: &Request,
+    cx: &BuildContext<'_>,
+) -> Result<Option<Value>, Lm15Error> {
     let mut out = Map::new();
     if msg.role == Role::Developer {
         let text = text_only(&msg.parts, "a developer turn", cx)?;
+        if text.is_empty() {
+            return Ok(None);
+        }
         out.insert("role".into(), Value::String("user".into()));
         out.insert(
             "parts".into(),
@@ -350,20 +388,25 @@ fn message(msg: &Message, request: &Request, cx: &BuildContext<'_>) -> Result<Va
                 false,
             )]),
         );
-        return Ok(Value::Object(out));
+        return Ok(Some(Value::Object(out)));
     }
     let role = match msg.role {
         Role::Assistant => "model",
         Role::User | Role::Tool | Role::Developer => "user",
     };
-    let parts = msg
-        .parts
-        .iter()
-        .map(|p| part(p, request, cx))
-        .collect::<Result<Vec<Value>, Lm15Error>>()?;
+    let mut parts = Vec::with_capacity(msg.parts.len());
+    for p in &msg.parts {
+        let wire = part(p, request, cx)?;
+        if !writes_nothing(&wire) {
+            parts.push(wire);
+        }
+    }
+    if parts.is_empty() {
+        return Ok(None);
+    }
     out.insert("role".into(), Value::String(role.into()));
     out.insert("parts".into(), Value::Array(parts));
-    Ok(Value::Object(out))
+    Ok(Some(Value::Object(out)))
 }
 
 /// `contents` for the messages the wire carries (`request` is the whole
@@ -373,10 +416,11 @@ pub fn contents(
     request: &Request,
     cx: &BuildContext<'_>,
 ) -> Result<Value, Lm15Error> {
-    Ok(Value::Array(
-        messages
-            .iter()
-            .map(|m| message(m, request, cx))
-            .collect::<Result<Vec<Value>, Lm15Error>>()?,
-    ))
+    let mut out = Vec::with_capacity(messages.len());
+    for m in messages {
+        if let Some(wire) = message(m, request, cx)? {
+            out.push(wire);
+        }
+    }
+    Ok(Value::Array(out))
 }

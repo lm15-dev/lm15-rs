@@ -480,6 +480,7 @@ fn media_addressing_modes_and_citations() {
             ]},
             {"role": "assistant", "parts": [
                 {"type": "citation", "title": "T", "url": "https://u"},
+                {"type": "citation", "title": "T", "url": "https://u", "text": "quoted"},
                 {"type": "refusal", "text": "no"}
             ]}
         ]}),
@@ -493,7 +494,9 @@ fn media_addressing_modes_and_citations() {
     );
     assert_eq!(
         out["contents"][1],
-        json!({"role": "model", "parts": [{"text": "T — https://u"}, {"text": "no"}]})
+        // A citation in a message replays as the text it quotes, as the
+        // reference does; one that quotes nothing writes nothing (MAP-24).
+        json!({"role": "model", "parts": [{"text": "quoted"}, {"text": "no"}]})
     );
 }
 

@@ -76,11 +76,13 @@ pub fn build_payload(
     // (top-level instructions cannot carry one) — the prompt becomes the
     // first developer item (MAP-6 rule 4).
     let mut instructions = None;
-    if let Some(system) = &request.system {
-        let text = match system {
-            SystemContent::Text(text) => text.clone(),
-            SystemContent::Parts(parts) => parts_to_text(parts, provider, "instructions")?,
-        };
+    // MAP-24: a system prompt with no characters writes nothing.
+    let system_text = match &request.system {
+        Some(SystemContent::Text(text)) => Some(text.clone()),
+        Some(SystemContent::Parts(parts)) => Some(parts_to_text(parts, provider, "instructions")?),
+        None => None,
+    };
+    if let Some(text) = system_text.filter(|text| !text.is_empty()) {
         if stable_prefix(request, compat.cache_control) {
             input.insert(
                 0,

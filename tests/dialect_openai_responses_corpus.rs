@@ -183,6 +183,6 @@ fn every_request_case_of_the_responses_providers_builds_its_fixture() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 105, "request cases with a canonical_request"); // +3 2026-11-05: meta.streaming_parallel_tool_calls, meta.streaming_incomplete, moonshotai-responses.streaming_parallel_tool_calls (MAP-20); +1 2026-10-02: openai.tool_no_description; +1 2026-10-06: openai.streaming_long_line (INV-056)
+    assert_eq!(checked, 106, "request cases with a canonical_request"); // +1 2026-11-11: moonshotai-responses.empty_text_history (MAP-24); +3 2026-11-05: meta.streaming_parallel_tool_calls, meta.streaming_incomplete, moonshotai-responses.streaming_parallel_tool_calls (MAP-20); +1 2026-10-02: openai.tool_no_description; +1 2026-10-06: openai.streaming_long_line (INV-056)
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

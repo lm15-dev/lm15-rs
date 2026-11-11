@@ -139,7 +139,7 @@ fn every_recorded_chat_body_reads_back_and_every_foreign_shape_is_pinned() {
     }
     assert_eq!(
         (round_trips, lossy, foreign, refusals),
-        (194, 40, 34, 10), // +18 round trips, +3 lossy, +1 refusal 2026-11-09: tinker; +1 round trip 2026-11-05: deepseek.streaming_parallel_tool_calls (MAP-20); +1 round trip 2026-10-02: openai-chat.tool_no_description
+        (197, 43, 34, 10), // +3 round trips, +3 lossy 2026-11-11: deepseek.{foreign_reasoning_history,empty_message_history}, moonshotai.empty_text_history (MAP-24, lossy class nothing_written); +18 round trips, +3 lossy, +1 refusal 2026-11-09: tinker; +1 round trip 2026-11-05: deepseek.streaming_parallel_tool_calls (MAP-20); +1 round trip 2026-10-02: openai-chat.tool_no_description
         "case counts moved; move CONTRACT_PIN and these constants together"
     );
 }

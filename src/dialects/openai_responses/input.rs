@@ -40,6 +40,8 @@ pub fn build_input(
                 let mut content = Vec::new();
                 for part in &message.parts {
                     match part {
+                        // MAP-24: an empty text block is never written.
+                        Part::Text(text) if text.text.is_empty() => {}
                         Part::Text(text) => content.push(output_text(&text.text)),
                         Part::Data(d) => content.push(output_text(&d.value.to_string())),
                         Part::Refusal(refusal) => {
@@ -94,7 +96,11 @@ pub fn build_input(
                 let mut content = Vec::with_capacity(message.parts.len());
                 for part in &message.parts {
                     if !matches!(part, Part::ToolCall(_) | Part::ToolResult(_)) {
-                        content.push(part_to_input(provider, part)?);
+                        let block = part_to_input(provider, part)?;
+                        // MAP-24: a part whose block is empty text writes nothing.
+                        if !content::is_empty_text_block(&block) {
+                            content.push(block);
+                        }
                     }
                 }
                 push_message(
@@ -216,7 +222,11 @@ fn tool_result_item(
     } else {
         let mut blocks: Vec<Value> = Vec::with_capacity(result.content.len());
         for part in &result.content {
-            blocks.push(part_to_input(provider, part)?);
+            let block = part_to_input(provider, part)?;
+            // MAP-24: the result is written, its empty text block is not.
+            if !content::is_empty_text_block(&block) {
+                blocks.push(block);
+            }
         }
         if result.is_error {
             match blocks

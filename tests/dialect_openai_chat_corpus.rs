@@ -26,9 +26,9 @@ const PROVIDERS: &[(&str, usize)] = &[
     ("openai-chat", 3), // +1 2026-10-02: tool_no_description (MAP-17)
     ("groq", 3),
     ("ollama", 2),
-    ("deepseek", 14), // +1 2026-11-05: streaming_parallel_tool_calls (MAP-20)
+    ("deepseek", 16), // +2 2026-11-11: foreign_reasoning_history, empty_message_history (MAP-24); +1 2026-11-05: streaming_parallel_tool_calls (MAP-20)
     ("zai", 16),
-    ("moonshotai", 18),
+    ("moonshotai", 19), // +1 2026-11-11: empty_text_history (MAP-24)
     ("meta-chat", 11),
     ("azure-chat", 13),
     ("bedrock-chat", 13),

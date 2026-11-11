@@ -52,10 +52,14 @@ pub fn setup_frame(cx: &BuildContext<'_>, config: &LiveConfig) -> Result<Value, 
         ))),
     );
     if let Some(system) = &config.system {
-        setup.insert(
-            "systemInstruction".into(),
-            json!({"parts": [{"text": system_text(cx, system)?}]}),
-        );
+        // MAP-24: a system prompt with no characters writes nothing.
+        let text = system_text(cx, system)?;
+        if !text.is_empty() {
+            setup.insert(
+                "systemInstruction".into(),
+                json!({"parts": [{"text": text}]}),
+            );
+        }
     }
     let functions: Vec<Value> = config
         .tools

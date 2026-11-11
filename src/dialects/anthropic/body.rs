@@ -75,12 +75,19 @@ pub fn payload(
         thinking_replay: compat.thinking_replay,
         tool_result_media: compat.tool_result_media,
     };
-    let mut messages: Vec<Value> = request
-        .messages
-        .iter()
-        .map(|m| parts::message(m, &part_cx))
-        .collect::<Result<_, _>>()?;
-    if let Some(index) = cache.message_mark(messages.len()) {
+    // MAP-24: a message with nothing to write is left out. `written` keeps
+    // each wire message's place in the caller's list, so a cache mark asked
+    // for by message index lands on the message the caller meant (or the
+    // last one written before it).
+    let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len());
+    let mut written: Vec<usize> = Vec::with_capacity(request.messages.len());
+    for (index, message) in request.messages.iter().enumerate() {
+        if let Some(wire) = parts::message(message, &part_cx)? {
+            messages.push(wire);
+            written.push(index);
+        }
+    }
+    if let Some(index) = cache.message_mark(request.messages.len(), &written) {
         mark_last_block(&mut messages[index], cache.marker());
     }
 
@@ -94,7 +101,10 @@ pub fn payload(
     );
 
     if let Some(system) = &request.system {
-        body.insert("system".into(), system_value(system, &cache, &part_cx)?);
+        // MAP-24: a system prompt with no characters writes nothing.
+        if let Some(value) = system_value(system, &cache, &part_cx)? {
+            body.insert("system".into(), value);
+        }
     }
 
     if compat.sampling_params == SendReject::Reject {
@@ -423,16 +433,26 @@ impl CachePlan {
         }
     }
 
-    /// The index of the message to mark, clamped to the last one.
-    fn message_mark(&self, count: usize) -> Option<usize> {
-        if !self.active || count == 0 {
+    /// The index, among the messages written, of the one to mark. `count`
+    /// is how many messages the caller sent and `written` their indexes
+    /// that reached the wire (MAP-24 leaves a message with nothing to write
+    /// out): `prefix_until_index` names the caller's message, clamped to
+    /// the last one, and the mark goes on it, or on the last one written
+    /// before it.
+    fn message_mark(&self, count: usize, written: &[usize]) -> Option<usize> {
+        if !self.active || written.is_empty() {
             return None;
         }
-        let last = count - 1;
         if let Some(index) = self.prefix_until_index {
-            return Some(usize::try_from(index).map_or(last, |i| i.min(last)));
+            let last = count - 1;
+            let until = usize::try_from(index).map_or(last, |i| i.min(last));
+            return written
+                .iter()
+                .filter(|&&i| i <= until)
+                .count()
+                .checked_sub(1);
         }
-        self.history.then_some(last)
+        self.history.then_some(written.len() - 1)
     }
 }
 
@@ -503,16 +523,21 @@ fn system_value(
     system: &SystemContent,
     cache: &CachePlan,
     cx: &PartContext<'_>,
-) -> Result<Value, Lm15Error> {
+) -> Result<Option<Value>, Lm15Error> {
     let mut blocks = match system {
         SystemContent::Text(text) => {
+            if text.is_empty() {
+                return Ok(None);
+            }
             if !cache.active {
-                return Ok(Value::String(text.clone()));
+                return Ok(Some(Value::String(text.clone())));
             }
             vec![text_block(text)]
         }
         SystemContent::Parts(parts) => parts
             .iter()
+            // MAP-24: an empty text part writes no system block.
+            .filter(|part| !matches!(part, Part::Text(t) if t.text.is_empty()))
             .map(|part| match part {
                 Part::Text(t) => Ok(text_block(&t.text)),
                 Part::Data(d) => Ok(text_block(&d.value.to_string())),
@@ -524,12 +549,15 @@ fn system_value(
             })
             .collect::<Result<Vec<_>, _>>()?,
     };
+    if blocks.is_empty() {
+        return Ok(None);
+    }
     if cache.active {
         if let Some(Value::Object(last)) = blocks.last_mut() {
             last.insert("cache_control".into(), cache.marker());
         }
     }
-    Ok(Value::Array(blocks))
+    Ok(Some(Value::Array(blocks)))
 }
 
 // ─── Reasoning (MAP-5, MAP-7) ───────────────────────────────────────

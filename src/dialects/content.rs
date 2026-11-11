@@ -3,6 +3,8 @@
 //! `MEDIA_KINDS`, `parts_to_text`, `check_tool_result_media`,
 //! `tool_result_error_text`). Shared by the four dialects.
 
+use serde_json::Value;
+
 use crate::compat::ToolResultMedia;
 use crate::errors::{ErrorMeta, Lm15Error};
 use crate::types::{Part, ToolResultPart};
@@ -110,6 +112,18 @@ fn unsupported(provider: &str, message: String) -> Lm15Error {
     Lm15Error::UnsupportedFeatureError(meta)
 }
 
+/// MAP-24: a wire block that is text with no characters, in the three
+/// typed spellings (Messages and Chat Completions `text`, Responses
+/// `input_text` / `output_text`). No wire is sent one: a part whose block
+/// is this writes nothing, and a message left with nothing is not written.
+/// (A Gemini part has no `type`; its builder decides.)
+pub(crate) fn is_empty_text_block(block: &Value) -> bool {
+    matches!(
+        block.get("type").and_then(Value::as_str),
+        Some("text" | "input_text" | "output_text")
+    ) && block.get("text").and_then(Value::as_str) == Some("")
+}
+
 /// Text rendering for a wire field that takes text only: text verbatim,
 /// non-empty thinking text, citations as `title — url — text`. A media
 /// part RAISES before any wire (MAP-10 rule 2) — the field cannot carry
@@ -128,6 +142,9 @@ pub fn parts_to_text(parts: &[Part], provider: &str, where_: &str) -> Result<Str
             ));
         }
         match part {
+            // MAP-24: an empty text part writes nothing, a joining
+            // newline included.
+            Part::Text(text) if text.text.is_empty() => {}
             Part::Text(text) => out.push(text.text.clone()),
             Part::Data(data) => out.push(data.value.to_string()),
             Part::Thinking(thinking) if !thinking.text.is_empty() => {

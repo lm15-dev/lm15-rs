@@ -41,8 +41,15 @@ pub struct PartContext<'a> {
     pub tool_result_media: ToolResultMedia,
 }
 
-/// One canonical message as `{"role", "content": [blocks]}`.
-pub fn message(msg: &Message, cx: &PartContext<'_>) -> Result<Value, Lm15Error> {
+/// One canonical message as `{"role", "content": [blocks]}`, or `None`
+/// when it has nothing to write (MAP-24): the Messages API refuses a text
+/// block with no characters (`minLength: 1`; HTTP 400 "text content blocks
+/// must be non-empty", live 2026-11-11), so a part whose block would be one
+/// writes nothing (a hidden thinking part carrying another dialect's state,
+/// an empty text part, a citation that quotes nothing), and a message left
+/// with no block is not written. Consecutive turns of one role are combined
+/// by the server (messages--create.md).
+pub fn message(msg: &Message, cx: &PartContext<'_>) -> Result<Option<Value>, Lm15Error> {
     let role = match msg.role {
         Role::Assistant => "assistant",
         // Tool results ride a user turn; a developer message is a prefixed
@@ -54,11 +61,14 @@ pub fn message(msg: &Message, cx: &PartContext<'_>) -> Result<Value, Lm15Error> 
     } else {
         blocks(&msg.parts, cx)?
     };
-    Ok(json!({"role": role, "content": content}))
+    if content.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(json!({"role": role, "content": content})))
 }
 
-/// Every part of a message, in order, as blocks. A thinking part that has
-/// nothing this wire can carry (empty text, no Anthropic state) renders no
+/// Every part of a message, in order, as blocks. A part with nothing this
+/// wire can carry (MAP-24: empty text and no Anthropic state) renders no
 /// block: it would be an empty text block, which the API refuses.
 fn blocks(parts: &[Part], cx: &PartContext<'_>) -> Result<Vec<Value>, Lm15Error> {
     let mut out = Vec::with_capacity(parts.len());
@@ -78,6 +88,9 @@ fn developer_blocks(parts: &[Part], cx: &PartContext<'_>) -> Result<Vec<Value>, 
     let mut media = Vec::new();
     for part in parts {
         match part {
+            // MAP-24: an empty text part writes nothing, a joining newline
+            // included.
+            Part::Text(t) if t.text.is_empty() => {}
             Part::Text(t) => texts.push(t.text.clone()),
             Part::Data(d) => texts.push(d.value.to_string()),
             other => {
@@ -87,10 +100,14 @@ fn developer_blocks(parts: &[Part], cx: &PartContext<'_>) -> Result<Vec<Value>, 
             }
         }
     }
-    let mut out = vec![text_block(&format!(
-        "{DEVELOPER_PREFIX}\n{}",
-        texts.join("\n")
-    ))];
+    // MAP-24: no prefix with nothing after it.
+    let mut out = Vec::with_capacity(media.len() + 1);
+    if !texts.is_empty() {
+        out.push(text_block(&format!(
+            "{DEVELOPER_PREFIX}\n{}",
+            texts.join("\n")
+        )));
+    }
     out.extend(media);
     Ok(out)
 }
@@ -102,6 +119,8 @@ pub fn text_block(text: &str) -> Value {
 /// One part as a block, or `None` when the part has nothing to carry.
 fn block(part: &Part, cx: &PartContext<'_>) -> Result<Option<Value>, Lm15Error> {
     Ok(Some(match part {
+        // MAP-24: no wire is sent a text block with no characters.
+        Part::Text(t) if t.text.is_empty() => return Ok(None),
         Part::Text(t) => text_block(&t.text),
         Part::Data(d) => text_block(&d.value.to_string()),
         Part::Image(image) => json!({"type": "image", "source": image_source(image, cx.refuse)?}),
@@ -116,7 +135,12 @@ fn block(part: &Part, cx: &PartContext<'_>) -> Result<Option<Value>, Lm15Error> 
         // The wire has no refusal block in a request; the refusal is what
         // the assistant said, so it replays as its text.
         Part::Refusal(refusal) => text_block(&refusal.text),
-        Part::Citation(citation) => text_block(&citation_text(citation)),
+        // A citation in a message replays as the text it quotes, as the
+        // reference does; one that quotes nothing writes nothing (MAP-24).
+        Part::Citation(citation) => match citation.text.as_deref() {
+            Some(quoted) if !quoted.is_empty() => text_block(quoted),
+            _ => return Ok(None),
+        },
         Part::Audio(_) | Part::Video(_) | Part::Binary(_) => {
             return Err(cx.refuse.feature(format!(
                 "{} parts have no content block on the Messages API (text, image and document do); \
@@ -142,6 +166,11 @@ fn tool_result_block(result: &ToolResultPart, cx: &PartContext<'_>) -> Result<Va
     block.insert("type".into(), "tool_result".into());
     block.insert("tool_use_id".into(), Value::String(result.id.clone()));
     match content.as_slice() {
+        // MAP-24: the result is always written; with no block left its
+        // empty output is the string "" (INV-014).
+        [] => {
+            block.insert("content".into(), Value::String(String::new()));
+        }
         [single] if single.get("type") == Some(&Value::String("text".into())) => {
             block.insert("content".into(), single["text"].clone());
         }
@@ -161,6 +190,8 @@ fn tool_result_block(result: &ToolResultPart, cx: &PartContext<'_>) -> Result<Va
 fn tool_result_content(parts: &[Part], cx: &PartContext<'_>) -> Result<Vec<Value>, Lm15Error> {
     parts
         .iter()
+        // MAP-24: an empty text block is never written, in a result either.
+        .filter(|part| !matches!(part, Part::Text(t) if t.text.is_empty()))
         .map(|part| match part {
             Part::Text(t) => Ok(text_block(&t.text)),
             Part::Data(d) => Ok(text_block(&d.value.to_string())),
@@ -434,12 +465,87 @@ mod tests {
         .unwrap();
         assert_eq!(
             message(&developer, &signed).unwrap(),
-            json!({"role": "user", "content": [
+            Some(json!({"role": "user", "content": [
                 {"type": "text", "text": "[developer]\nBe brief."},
                 {"type": "image", "source": {"type": "url", "url": "https://x/i.png"}},
-            ]})
+            ]}))
         );
         let citation = CitationPart::new(Some("https://x"), Some("T"), None::<&str>).unwrap();
         assert_eq!(citation_text(&citation), "T — https://x");
+    }
+
+    /// MAP-24 (lm15-contract changes/2026-11-11-empty-parts.md): a part
+    /// with nothing for this wire writes no block, and a message left with
+    /// no block is not written. The contract's vectors pin the request
+    /// bodies; these pin the pieces.
+    #[test]
+    fn parts_with_nothing_for_this_wire_write_nothing() {
+        let refuse = Refuse {
+            provider: "anthropic",
+        };
+        let signed = cx(&refuse, AnthropicThinkingReplay::Signed);
+        // An empty text part, and a citation that quotes nothing.
+        assert_eq!(block(&Part::text(""), &signed).unwrap(), None);
+        let bare = CitationPart::new(Some("https://x"), Some("T"), None::<&str>).unwrap();
+        assert_eq!(block(&Part::Citation(bare), &signed).unwrap(), None);
+        let quoting = CitationPart::new(Some("https://x"), Some("T"), Some("quoted")).unwrap();
+        assert_eq!(
+            block(&Part::Citation(quoting), &signed).unwrap(),
+            Some(json!({"type": "text", "text": "quoted"}))
+        );
+        // Whitespace is content.
+        assert_eq!(
+            block(&Part::text("\n"), &signed).unwrap(),
+            Some(json!({"type": "text", "text": "\n"}))
+        );
+        // Claude's thinking with display omitted: empty text AND this
+        // dialect's state. Still a thinking block.
+        let omitted = ThinkingPart {
+            text: String::new(),
+            continuation: vec![state(KIND_THINKING_SIGNATURE, "signature", "sig")],
+        };
+        assert_eq!(
+            thinking_block(&omitted, &signed).unwrap(),
+            Some(json!({"type": "thinking", "thinking": "", "signature": "sig"}))
+        );
+        // A message whose only part is another dialect's hidden reasoning.
+        let foreign = Part::Thinking(ThinkingPart {
+            text: String::new(),
+            continuation: vec![ContinuationState::new(
+                "openai",
+                "reasoning_item",
+                JsonObject::new(),
+            )
+            .unwrap()],
+        });
+        let only = Message::assistant(vec![foreign.clone()]).unwrap();
+        assert_eq!(message(&only, &signed).unwrap(), None);
+        let beside = Message::assistant(vec![foreign, Part::text("Deleted.")]).unwrap();
+        assert_eq!(
+            message(&beside, &signed).unwrap(),
+            Some(json!({"role": "assistant", "content": [{"type": "text", "text": "Deleted."}]}))
+        );
+        // No developer prefix with nothing after it.
+        let developer = Message::developer(vec![Part::text("")]).unwrap();
+        assert_eq!(message(&developer, &signed).unwrap(), None);
+        // A tool result is always written: an empty output is "", and an
+        // empty text part beside an image writes no block.
+        let mut result = ToolResultPart::new("call_1", "").unwrap();
+        assert_eq!(
+            tool_result_block(&result, &signed).unwrap(),
+            json!({"type": "tool_result", "tool_use_id": "call_1", "content": ""})
+        );
+        result.content = vec![
+            Part::text(""),
+            Part::Image(ImagePart::from_url("https://x/i.png").unwrap()),
+        ];
+        assert_eq!(
+            tool_result_block(&result, &signed).unwrap(),
+            json!({
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": [{"type": "image", "source": {"type": "url", "url": "https://x/i.png"}}],
+            })
+        );
     }
 }

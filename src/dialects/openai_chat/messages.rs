@@ -39,13 +39,17 @@ pub(super) fn build_messages(
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len() + 1);
     let role = compat.instruction_role.as_str();
 
-    if let Some(system) = &request.system {
-        let text = match system {
-            SystemContent::Text(text) => text.clone(),
-            SystemContent::Parts(parts) => {
-                content::parts_to_text(parts, provider, "the system message")?
-            }
-        };
+    // MAP-24: a system prompt with no characters writes nothing.
+    let system_text = match &request.system {
+        Some(SystemContent::Text(text)) => Some(text.clone()),
+        Some(SystemContent::Parts(parts)) => Some(content::parts_to_text(
+            parts,
+            provider,
+            "the system message",
+        )?),
+        None => None,
+    };
+    if let Some(text) = system_text.filter(|text| !text.is_empty()) {
         if stable_prefix(request, compat.cache_control) {
             // prefix="stable": the mark rides on the system message's text
             // content part (array form; a bare string cannot carry it).
@@ -95,7 +99,12 @@ pub(super) fn build_messages(
                     ]));
                 }
             }
-            Role::Assistant => messages.push(assistant_row(message, compat, provider)?),
+            Role::Assistant => {
+                // MAP-24: a row with nothing to write is not written.
+                if let Some(row) = assistant_row(message, compat, provider)? {
+                    messages.push(row);
+                }
+            }
             Role::User | Role::Developer => {
                 let wire_role = if message.role == Role::Developer {
                     role
@@ -118,6 +127,15 @@ pub(super) fn build_messages(
                     if last_is_text.is_none() {
                         return Err(breakpoint_unsupported(provider, index, message.role));
                     }
+                }
+                // MAP-24: a message with nothing to write is not written.
+                let nothing = match &content {
+                    Value::String(text) => text.is_empty(),
+                    Value::Array(blocks) => blocks.is_empty(),
+                    _ => false,
+                };
+                if nothing {
+                    continue;
                 }
                 messages.push(object(vec![
                     ("role", Value::String(wire_role.into())),
@@ -152,14 +170,18 @@ fn tool_row(
     } else {
         let mut blocks: Vec<Value> = Vec::with_capacity(result.content.len());
         for part in &result.content {
-            blocks.push(match part {
+            let block = match part {
                 Part::Image(image) => image_block(image, provider)?,
                 other => text_block(&content::parts_to_text(
                     std::slice::from_ref(other),
                     provider,
                     "a Chat Completions tool row",
                 )?),
-            });
+            };
+            // MAP-24: the row is written, its empty text block is not.
+            if !content::is_empty_text_block(&block) {
+                blocks.push(block);
+            }
         }
         if result.is_error {
             match blocks
@@ -195,17 +217,22 @@ fn tool_row(
 /// One assistant row (`openai_chat.py:258-284`): text, refusal text and
 /// (per `thinking_replay`) thinking text joined by newlines into
 /// `content` (`null` when there is none), `reasoning_content` on the
-/// native replay, `tool_calls` with compact JSON arguments.
+/// native replay, `tool_calls` with compact JSON arguments. `None` for a
+/// row with no content, no call and no reasoning (MAP-24): it has nothing
+/// to write and is refused where the server checks ("content or tool_calls
+/// must be set", DeepSeek; "must not be empty", Moonshot; live 2026-11-11).
 fn assistant_row(
     message: &Message,
     compat: &ResolvedOpenAIChatCompat,
     provider: &str,
-) -> Result<Value, Lm15Error> {
+) -> Result<Option<Value>, Lm15Error> {
     let mut text_bits: Vec<String> = Vec::new();
     let mut thinking_bits: Vec<&str> = Vec::new();
     let mut tool_calls: Vec<Value> = Vec::new();
     for part in &message.parts {
         match part {
+            // MAP-24: no empty text, and no newline joining one.
+            Part::Text(text) if text.text.is_empty() => {}
             Part::Text(text) => text_bits.push(text.text.clone()),
             Part::Data(d) => text_bits.push(d.value.to_string()),
             Part::Refusal(refusal) if !refusal.text.is_empty() => {
@@ -263,23 +290,26 @@ fn assistant_row(
     } else {
         Value::String(text_bits.join("\n"))
     };
+    let native = compat.thinking_replay == OpenAIChatThinkingReplay::Native;
+    let thinking = thinking_bits.join("\n");
+    if text_bits.is_empty() && tool_calls.is_empty() && !(native && !thinking.is_empty()) {
+        return Ok(None);
+    }
     let mut pairs = vec![
         ("role", Value::String("assistant".into())),
         ("content", content),
     ];
-    if compat.thinking_replay == OpenAIChatThinkingReplay::Native {
-        let thinking = thinking_bits.join("\n");
-        if !thinking.is_empty()
+    if native
+        && (!thinking.is_empty()
             || compat.assistant_reasoning_content
-                == OpenAIChatAssistantReasoningContent::IncludeEmpty
-        {
-            pairs.push(("reasoning_content", Value::String(thinking)));
-        }
+                == OpenAIChatAssistantReasoningContent::IncludeEmpty)
+    {
+        pairs.push(("reasoning_content", Value::String(thinking)));
     }
     if !tool_calls.is_empty() {
         pairs.push(("tool_calls", Value::Array(tool_calls)));
     }
-    Ok(object(pairs))
+    Ok(Some(object(pairs)))
 }
 
 /// User/developer content (`openai_chat.py:89-116`): a lone text part is
@@ -288,18 +318,25 @@ fn assistant_row(
 /// (port.md rule 4; the reference dropped them, stated in
 /// README-openai-chat.md). Prompt parts only reach here (INV-022).
 fn content_parts(message: &Message, force_array: bool, provider: &str) -> Result<Value, Lm15Error> {
-    if let [Part::Text(text)] = message.parts.as_slice() {
+    // MAP-24: an empty text part writes nothing, so it does not turn a lone
+    // text part's string into the array form either.
+    let parts: Vec<&Part> = message
+        .parts
+        .iter()
+        .filter(|part| !matches!(part, Part::Text(t) if t.text.is_empty()))
+        .collect();
+    if let [Part::Text(text)] = parts.as_slice() {
         if !force_array {
             return Ok(Value::String(text.text.clone()));
         }
     }
-    if let [Part::Data(d)] = message.parts.as_slice() {
+    if let [Part::Data(d)] = parts.as_slice() {
         if !force_array {
             return Ok(Value::String(d.value.to_string()));
         }
     }
-    let mut blocks: Vec<Value> = Vec::with_capacity(message.parts.len());
-    for part in &message.parts {
+    let mut blocks: Vec<Value> = Vec::with_capacity(parts.len());
+    for part in parts {
         match part {
             Part::Text(text) => blocks.push(text_block(&text.text)),
             Part::Data(d) => blocks.push(text_block(&d.value.to_string())),
