@@ -17,8 +17,7 @@
 //!
 //! Rungs declared but not implemented raise `NotConfigured` naming the
 //! gap and the fix; they never fall through silently (`aws login`
-//! refresh with a DPoP key; Azure Service Fabric managed identity; GCP
-//! `external_account` with an AWS source).
+//! refresh with a DPoP key; Azure Service Fabric managed identity).
 //!
 //! Design (stated in the README): the family's `CredentialProvider` is
 //! synchronous. A token exchange is a network round trip, and blocking
@@ -2142,6 +2141,233 @@ async fn gcp_impersonate(
     Credential::bearer_token(token, expires)
 }
 
+/// The verification URL of an AWS `credential_source`, checked as google-auth checks it.
+fn gcp_aws_source(source: &Map<String, Value>, where_: &str) -> Result<String, AuthError> {
+    let id = value_str(source.get("environment_id")).unwrap_or_default();
+    let version = id
+        .strip_prefix("aws")
+        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
+    let url = value_str(source.get("regional_cred_verification_url")).filter(|u| !u.is_empty());
+    let (Some(version), Some(url)) = (version, url) else {
+        return Err(not_configured(format!(
+            "{where_}: an AWS credential_source needs environment_id \"aws1\" and regional_cred_verification_url"
+        )));
+    };
+    if version.trim_start_matches('0') != "1" {
+        return Err(not_configured(format!(
+            "{where_}: AWS credential_source version {version} is not supported (only aws1)"
+        )));
+    }
+    Ok(url)
+}
+
+/// IMDSv2's session header when the source names its token URL (google-auth: TTL 300), else
+/// none; asked for once (`cache` holds it).
+async fn gcp_aws_imds_header(
+    ctx: &ChainContext,
+    source: &Map<String, Value>,
+    where_: &str,
+    cache: &mut Option<Vec<(String, String)>>,
+) -> Result<Vec<(String, String)>, AuthError> {
+    if let Some(got) = cache {
+        return Ok(got.clone());
+    }
+    let got = match value_str(source.get("imdsv2_session_token_url")) {
+        Some(url) if !ctx.is_offline() => {
+            let (status, _, raw) = ctx
+                .http(
+                    "PUT",
+                    &url,
+                    vec![("X-aws-ec2-metadata-token-ttl-seconds".into(), "300".into())],
+                    None,
+                    5,
+                )
+                .await?;
+            if status != 200 {
+                return Err(rejected(format!(
+                    "{where_}: AWS IMDSv2 session token: HTTP {status}"
+                )));
+            }
+            vec![(
+                "X-aws-ec2-metadata-token".into(),
+                String::from_utf8_lossy(&raw).into_owned(),
+            )]
+        }
+        _ => Vec::new(),
+    };
+    *cache = Some(got.clone());
+    Ok(got)
+}
+
+/// `AWS_REGION` or `AWS_DEFAULT_REGION`.
+fn env_aws_region(ctx: &ChainContext) -> Option<String> {
+    ["AWS_REGION", "AWS_DEFAULT_REGION"]
+        .into_iter()
+        .find_map(|k| ctx.env(k).filter(|v| !v.is_empty()).map(str::to_string))
+}
+
+/// The environment's region, else the source's `region_url` (an availability zone, its last
+/// letter dropped).
+async fn gcp_aws_region(
+    ctx: &ChainContext,
+    source: &Map<String, Value>,
+    where_: &str,
+    imds: &mut Option<Vec<(String, String)>>,
+) -> Result<String, AuthError> {
+    if let Some(region) = env_aws_region(ctx) {
+        return Ok(region);
+    }
+    let Some(url) = value_str(source.get("region_url")).filter(|_| !ctx.is_offline()) else {
+        return Err(not_configured(format!(
+            "{where_}: no AWS region: set AWS_REGION (the AWS source names no region_url)"
+        )));
+    };
+    let headers = gcp_aws_imds_header(ctx, source, where_, imds).await?;
+    let (status, _, raw) = ctx.http("GET", &url, headers, None, 5).await?;
+    if status != 200 {
+        return Err(rejected(format!(
+            "{where_}: AWS region from {url}: HTTP {status}"
+        )));
+    }
+    let zone = String::from_utf8_lossy(&raw).trim().to_string();
+    let mut region = zone.clone();
+    region.pop();
+    Ok(region)
+}
+
+/// The AWS identity an AWS source signs with: the environment's keys, then (an lm15 addition,
+/// stated: Google's library reads only the other two, and so fails on ECS) the container
+/// endpoint, then EC2 metadata at the source's `url`.
+async fn gcp_aws_credentials(
+    ctx: &ChainContext,
+    source: &Map<String, Value>,
+    where_: &str,
+    imds: &mut Option<Vec<(String, String)>>,
+) -> Result<Credential, AuthError> {
+    if let Some(env) = env_aws(ctx) {
+        return Ok(env);
+    }
+    if container_config(ctx)?.is_some() {
+        if let Some(got) = container_acquire(ctx).await? {
+            return Ok(got);
+        }
+    }
+    let Some(url) = value_str(source.get("url")).filter(|_| !ctx.is_offline()) else {
+        return Err(not_configured(format!(
+            "{where_}: no AWS credentials: neither AWS_ACCESS_KEY_ID nor a container endpoint \
+             is set, and the AWS source names no metadata url"
+        )));
+    };
+    let headers = gcp_aws_imds_header(ctx, source, where_, imds).await?;
+    let (status, _, role) = ctx.http("GET", &url, headers.clone(), None, 5).await?;
+    let role = String::from_utf8_lossy(&role);
+    let name = role.trim().lines().next().unwrap_or("").trim().to_string();
+    if status != 200 || name.is_empty() {
+        return Err(rejected(format!(
+            "{where_}: AWS role name from {url}: HTTP {status}"
+        )));
+    }
+    let (status, _, raw) = ctx
+        .http("GET", &format!("{url}/{name}"), headers, None, 5)
+        .await?;
+    if status != 200 {
+        return Err(rejected(format!(
+            "{where_}: AWS credentials from {url}/{name}: HTTP {status}"
+        )));
+    }
+    aws_from_response(&json_body(&raw))
+}
+
+/// Python's `urllib.parse.quote(text, safe="/")`: what google-auth percent-encodes an AWS
+/// subject token with.
+fn quote_keeping_slash(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 2);
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || b"_.-~/".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// An AWS source's subject token: a signed AWS STS GetCallerIdentity request, serialized as
+/// Google's STS reads it (google-auth aws.py: headers as `[{key, value}]` in signing order, the
+/// pool provider's name added unsigned as `x-goog-cloud-target-resource`, compact JSON with
+/// sorted keys, percent-encoded keeping `/`).
+pub fn gcp_aws_subject_token(
+    info: &Map<String, Value>,
+    template: &str,
+    region: &str,
+    credential: &Credential,
+    now: i64,
+) -> Result<String, AuthError> {
+    let url = template.replace("{region}", region);
+    let host = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(&url)
+        .split(['/', '?', ':', '#'])
+        .next()
+        .unwrap_or("");
+    let service = host.split('.').next().unwrap_or("");
+    let keys =
+        AwsKeys::from_credential(credential).map_err(|err| rejected(err.message().to_string()))?;
+    let signed = sigv4::sign(
+        &SigningRequest {
+            method: "POST",
+            url: &url,
+            headers: &[],
+            payload: &[],
+        },
+        &keys,
+        region,
+        service,
+        now,
+    );
+    let header = |name: &str| {
+        signed
+            .headers
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    let mut headers = vec![
+        json!({"key": "Authorization", "value": signed.authorization}),
+        json!({"key": "host", "value": header("host")}),
+        json!({"key": "x-amz-date", "value": header("x-amz-date")}),
+    ];
+    if let Some(token) = keys.session_token.filter(|t| !t.is_empty()) {
+        headers.push(json!({"key": "x-amz-security-token", "value": token}));
+    }
+    headers.push(json!({
+        "key": "x-goog-cloud-target-resource",
+        "value": value_str(info.get("audience")).unwrap_or_default(),
+    }));
+    // Keys in sorted order at every level, as Python's json.dumps(sort_keys=True).
+    let body = json!({"headers": headers, "method": "POST", "url": url});
+    Ok(quote_keeping_slash(
+        &serde_json::to_string(&body).expect("serializes"),
+    ))
+}
+
+/// The STS token exchange an external_account sends: its URL and JSON body.
+fn gcp_sts_request(info: &Map<String, Value>, subject: &str) -> (String, Value) {
+    (
+        value_str(info.get("token_url")).unwrap_or_else(|| GCP_STS_URL.into()),
+        json!({
+            "grantType": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "audience": value_str(info.get("audience")).unwrap_or_default(),
+            "scope": GCP_SCOPE,
+            "requestedTokenType": "urn:ietf:params:oauth:token-type:access_token",
+            "subjectToken": subject,
+            "subjectTokenType": value_str(info.get("subject_token_type")).unwrap_or_default(),
+        }),
+    )
+}
+
 async fn gcp_external_account(
     ctx: &ChainContext,
     info: &Map<String, Value>,
@@ -2152,18 +2378,26 @@ async fn gcp_external_account(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    if source.contains_key("environment_id") {
-        return Err(not_configured(format!(
-            "{where_}: external_account with an AWS credential_source is a stated gap in lm15; \
-             use a file/url/executable source or a service account"
-        )));
-    }
     let mut fmt = source
         .get("format")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let subject: Option<String> = if let Some(file) = value_str(source.get("file")) {
+    let subject: Option<String> = if source.contains_key("environment_id") {
+        let template = gcp_aws_source(&source, where_)?;
+        let mut imds = None;
+        let region = gcp_aws_region(ctx, &source, where_, &mut imds).await?;
+        let credential = gcp_aws_credentials(ctx, &source, where_, &mut imds).await?;
+        fmt = Map::new();
+        fmt.insert("type".into(), json!("text"));
+        Some(gcp_aws_subject_token(
+            info,
+            &template,
+            &region,
+            &credential,
+            ctx.now,
+        )?)
+    } else if let Some(file) = value_str(source.get("file")) {
         Some(
             ctx.read(&file)
                 .ok_or_else(|| {
@@ -2228,25 +2462,18 @@ async fn gcp_external_account(
     };
     let Some(mut subject) = subject else {
         return Err(not_configured(format!(
-            "{where_}: external_account credential_source is not file/url/executable"
+            "{where_}: external_account credential_source is not file/url/executable/AWS"
         )));
     };
     if fmt.get("type").and_then(Value::as_str) == Some("json") {
         let field = value_str(fmt.get("subject_token_field_name")).unwrap_or_default();
         subject = value_str(json_body(subject.as_bytes()).get(&field)).unwrap_or_default();
     }
-    let body = json!({
-        "grantType": "urn:ietf:params:oauth:grant-type:token-exchange",
-        "audience": value_str(info.get("audience")).unwrap_or_default(),
-        "scope": GCP_SCOPE,
-        "requestedTokenType": "urn:ietf:params:oauth:token-type:access_token",
-        "subjectToken": subject,
-        "subjectTokenType": value_str(info.get("subject_token_type")).unwrap_or_default(),
-    });
+    let (token_url, body) = gcp_sts_request(info, &subject);
     let data = exchange_hint(
         ctx,
         "POST",
-        &value_str(info.get("token_url")).unwrap_or_else(|| GCP_STS_URL.into()),
+        &token_url,
         vec![("content-type".into(), "application/json".into())],
         Some(serde_json::to_vec(&body).expect("serializes")),
         &format!("Google STS exchange ({where_})"),
@@ -2721,12 +2948,6 @@ fn probe(
                 None => (Verdict::Absent, format!("{label} not set")),
                 Some(path) => match gcp_credential_file(ctx, &path)? {
                     None => (Verdict::Absent, format!("{path} missing or unreadable")),
-                    Some(info) if info.get("type").and_then(Value::as_str) == Some("external_account")
-                        && info.get("credential_source").and_then(Value::as_object)
-                            .is_some_and(|source| source.contains_key("environment_id")) => (
-                        Verdict::Absent,
-                        format!("{path}: external_account with an AWS credential_source is not supported; use a file/url/executable source or a service account"),
-                    ),
                     Some(info) => (
                         Verdict::Configured,
                         format!(
@@ -3412,6 +3633,41 @@ pub fn token_exchange_build(
     inputs: &Map<String, Value>,
     ctx: &ChainContext,
 ) -> Result<Value, AuthError> {
+    if let Some(info) = inputs
+        .get("credential_file")
+        .and_then(Value::as_object)
+        .filter(|i| {
+            matches!(rung, "adc-env" | "adc-file")
+                && i.get("type").and_then(Value::as_str) == Some("external_account")
+        })
+    {
+        let source = info
+            .get("credential_source")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        if !source.contains_key("environment_id") {
+            return Err(not_configured(
+                "token_exchange_build: only an AWS-sourced external_account is deterministic"
+                    .into(),
+            ));
+        }
+        let (Some(credential), Some(region)) = (env_aws(ctx), env_aws_region(ctx)) else {
+            return Err(not_configured(
+                "token_exchange_build: an AWS source's vector gives its keys and region in env"
+                    .into(),
+            ));
+        };
+        let template = gcp_aws_source(&source, "credential_file")?;
+        let subject = gcp_aws_subject_token(info, &template, &region, &credential, ctx.now)?;
+        let (url, body) = gcp_sts_request(info, &subject);
+        return Ok(json!({
+            "method": "POST", "url": url,
+            "headers": {"content-type": "application/json"},
+            "body_encoding": "json",
+            "body": body,
+        }));
+    }
     match rung {
         "adc-env" | "adc-file" | "service-account" => {
             let info = inputs
